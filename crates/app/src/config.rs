@@ -9,12 +9,11 @@ use surco_spotify::Credentials;
 const TEMPLATE: &str = r#"# Configuración de Surco.
 
 [spotify]
-# Opcional. Credenciales de una app de https://developer.spotify.com/dashboard
-# (Client Credentials). Sin ellas, Surco lee la página pública de la playlist,
-# que muestra hasta 100 canciones; para playlists más largas, importá un CSV
-# de Exportify (https://exportify.net).
-# Nota: desde 2026 Spotify puede no devolver las canciones de playlists ajenas
-# a apps en "Development Mode"; en ese caso Surco sigue con la página pública.
+# Opcional: no hacen falta. Surco lee las playlists enteras como la web de
+# Spotify (sin sesión). Estas credenciales de una app de
+# https://developer.spotify.com/dashboard (Client Credentials; Spotify pide
+# Premium para crearla) solo se usan si eso falla. Último recurso: la página
+# pública (hasta 100 canciones) o un CSV de Exportify (https://exportify.net).
 client_id = ""
 client_secret = ""
 "#;

@@ -114,7 +114,7 @@ Entrá a **Importar** en la barra lateral (o apretá **Ctrl+L**), pegá el link 
 
 La playlist queda guardada en la barra lateral y sus portadas van apareciendo solas. Hacé clic en una canción para escucharla: Surco busca el video en YouTube y sigue sola con las demás.
 
-**Playlists de Spotify de más de 100 canciones:** la versión oficial de Surco las importa enteras. Si alguna vez solo trae las primeras 100, cargá tus propias claves de Spotify (ver [Preguntas frecuentes](#preguntas-frecuentes)) o importá un CSV de Exportify.
+**Playlists de Spotify grandes:** se importan enteras, aunque tengan miles de canciones, incluso las hechas por Spotify (como "All Out 80s"). Surco las lee igual que la web de Spotify cuando no iniciaste sesión, así que no hace falta cuenta, Premium ni claves. Si alguna vez solo trae las primeras 100, probá de nuevo más tarde o importá un CSV de Exportify.
 
 ### Buscar música
 
@@ -161,7 +161,7 @@ El engranaje de arriba a la izquierda abre los ajustes:
 - **Tema** de colores.
 - **Portadas en la lista** de canciones.
 - **Precargar canciones:** baja de antemano las próximas 5 canciones, o toda la playlist, para que no haya que esperar ni dependan de la conexión. Usa hasta 2 GB de disco. **Vaciar** borra todo lo descargado, y en la lista de abajo podés borrar solo lo de una playlist. También está **Borrar descargas** arriba de cada playlist.
-- **Spotify:** para cargar tus propias claves (ver abajo).
+- **Spotify:** claves propias de la Web API, opcionales (ver abajo).
 
 ### Atajos de teclado
 
@@ -191,10 +191,10 @@ Hacé clic en **Descargar yt-dlp**. Si falla, instalalo a mano siguiendo las [in
 Usá **Cambiar video** y elegí la correcta (ver [Si suena la versión equivocada](#si-suena-la-versión-equivocada)).
 
 **De una playlist de Spotify solo se importaron 100 canciones**
-Cargá tus claves de Spotify en **Ajustes > Spotify** o importá la playlist como CSV desde [Exportify](https://exportify.net).
+Pasa si Spotify no respondió a la lectura completa. Esperá un rato y volvé a importarla (pegá el mismo link). Si sigue igual, importala como CSV desde [Exportify](https://exportify.net) o, si tenés Spotify Premium, cargá tus claves en **Ajustes > Spotify**.
 
 **Algunas playlists de Spotify no se importan**
-Las playlists hechas por Spotify (como "Top 50" o los mixes personales) a veces no se pueden leer. Copiá las canciones a una playlist tuya y probá con esa, o usá Exportify.
+Las playlists privadas y los mixes personales (como "Daily Mix" o "Descubrimiento semanal") no se pueden leer sin tu cuenta. Copiá las canciones a una playlist pública tuya y probá con esa, o usá Exportify.
 
 **En Windows o macOS aparece un aviso de seguridad al abrir**
 Es normal, porque Surco no está firmado con un certificado pago. Ver los pasos de [instalación](#2-instalarlo).
@@ -217,8 +217,8 @@ Sí, es gratis, y no necesitás cuenta de Spotify, YouTube ni de nada.
 **¿De dónde sale el audio?**
 De YouTube. Spotify solo se usa para leer la lista de canciones de una playlist.
 
-**¿Cómo cargo mis propias claves de Spotify?**
-No hace falta para usar Surco. Sirve si la importación de una playlist grande falla. Entrá al [panel de desarrolladores de Spotify](https://developer.spotify.com/dashboard), creá una app (cualquier nombre, y como Redirect URI `http://127.0.0.1:8888/callback`), y copiá el **Client ID** y el **Client secret** en **Ajustes > Spotify > Guardar**. Es gratis.
+**¿Necesito claves de Spotify?**
+No. Surco importa las playlists públicas enteras sin claves. Las claves de la Web API quedan como respaldo opcional, pero Spotify ahora pide **Premium** para crear una app de desarrollador. Si tenés Premium y querés usarlas: entrá al [panel de desarrolladores de Spotify](https://developer.spotify.com/dashboard), creá una app (cualquier nombre, y como Redirect URI `http://127.0.0.1:8888/callback`), y copiá el **Client ID** y el **Client secret** en **Ajustes > Spotify > Guardar**.
 
 **¿Funciona sin internet?**
 Solo con las canciones que ya precargaste (ver Ajustes).

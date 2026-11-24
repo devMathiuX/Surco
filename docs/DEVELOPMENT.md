@@ -6,7 +6,7 @@ Detalles técnicos de Surco: cómo compilarlo, cómo está armado y qué se midi
 
 - **CI** (`.github/workflows/ci.yml`): en cada PR y push a `main` corre en Linux `cargo fmt`, `clippy`, los tests y el build release.
 - **Release** (`.github/workflows/release.yml`): compila y empaqueta en Linux, Windows y macOS. Corre solo con un tag `v*` (y entonces publica un Release de GitHub con todos los archivos) o a mano desde la pestaña Actions ("Run workflow"), que deja los paquetes como artefactos del run.
-- Para publicar una versión: subir `version` en `[workspace.package]` de `Cargo.toml`, y después `git tag v0.2.0 && git push origin v0.2.0`.
+- Para publicar una versión: subir `version` en `[workspace.package]` de `Cargo.toml`, y después `git tag v0.3.0 && git push origin v0.3.0`.
 
 | Archivo | Sale de |
 |---|---|
@@ -57,11 +57,14 @@ En la pantalla **Importar** (o con **Ctrl+L**), pegá cualquiera de estos y Ente
 - `spotify:playlist:{id}`
 - la ruta a un `.csv` exportado con [Exportify](https://exportify.net)
 
-Surco prueba tres estrategias en cascada (trait `PlaylistSource` en `crates/spotify`):
+Surco prueba cuatro estrategias en cascada (trait `PlaylistSource` en `crates/spotify`):
 
-1. **Web API de Spotify** con Client Credentials, solo si pusiste `client_id`/`client_secret` en `config.toml` (`~/.config/surco/config.toml` en Linux, `%APPDATA%\Surco\config\config.toml` en Windows; se crea una plantilla en el primer arranque). Paginación completa y manejo de 429 con `Retry-After`. **Ojo:** desde febrero de 2026 las apps en *Development Mode* tienen restricciones: el endpoint pasó a `/playlists/{id}/items` y, para playlists ajenas, Spotify puede devolver solo los metadatos. En ese caso Surco sigue con la estrategia 2.
-2. **Página embed pública** (`open.spotify.com/embed/playlist/{id}`), sin credenciales. Lee el JSON que trae embebido (`__NEXT_DATA__`). Trae título, artistas y duración, pero **no** álbum ni ISRC, y **solo las primeras 100 canciones** (la app lo avisa). No es una API pública: puede romperse si Spotify cambia el HTML.
-3. **CSV** (Exportify, formato viejo y nuevo, o uno hecho a mano con `title,artist,album,duration`). Trae la playlist completa con álbum e ISRC. Es la vía recomendada para playlists de más de 100 canciones sin credenciales.
+1. **Reproductor web sin sesión** (`webplayer.rs`, ver "Spotify sin claves" más abajo). Playlist entera, con álbum, sin cuenta ni claves. Es la vía normal.
+2. **Web API de Spotify** con Client Credentials, solo si hay claves (Ajustes, `config.toml` o las del build). `config.toml` está en `~/.config/surco/config.toml` en Linux y `%APPDATA%\Surco\config\config.toml` en Windows; se crea una plantilla en el primer arranque. Paginación completa y manejo de 429 con `Retry-After`. **Ojo:** desde febrero de 2026 las apps en *Development Mode* tienen restricciones (endpoint `/playlists/{id}/items`, y para playlists ajenas puede devolver solo los metadatos), y crear una app pide Spotify Premium. Si falla, sigue la estrategia 3.
+3. **Página embed pública** (`open.spotify.com/embed/playlist/{id}`), sin credenciales. Lee el JSON que trae embebido (`__NEXT_DATA__`). Trae título, artistas y duración, pero **no** álbum ni ISRC, y **solo las primeras 100 canciones** (la app lo avisa). No es una API pública: puede romperse si Spotify cambia el HTML.
+4. **CSV** (Exportify, formato viejo y nuevo, o uno hecho a mano con `title,artist,album,duration`). Trae la playlist completa con álbum e ISRC. Sirve si las otras fallan.
+
+Si una estrategia dice que la playlist no existe (404 de la embed o `NotFound` del reproductor web), la cascada corta ahí.
 
 ## Resolver Spotify → YouTube (Fase 4)
 
@@ -193,15 +196,27 @@ El engranaje de arriba a la izquierda abre los ajustes. Todo se guarda en la bib
 - **Cola** ("Cola" en la barra lateral o el botón de la barra de abajo): la que suena y lo que sigue. Se arrastra una canción para cambiarle el lugar, la × la saca, y un clic la pone a sonar. El + de cada canción (en las playlists y en el buscador) la agrega al final.
 - **Playlists de YouTube y YouTube Music:** se pega el link (`youtube.com/playlist?list=…`, `music.youtube.com/playlist?list=…`, o un video con `&list=`) en el mismo campo que los de Spotify. Se importan enteras (hasta 2000), ya resueltas: no hace falta buscar cada canción.
 
-## Spotify sin límite de 100 canciones
+## Spotify sin claves (como open.spotify.com sin sesión)
 
-La página pública de Spotify muestra hasta 100 canciones. Con claves de la Web API (Client Credentials) la playlist se importa entera, de a 100 por página. Las claves se eligen en este orden:
+Desde 2026 Spotify pide Premium para usar la Web API, así que Surco lee las playlists igual que la web de Spotify cuando nadie inició sesión (`crates/spotify/src/webplayer.rs`):
+
+1. Baja `open.spotify.com/embed/playlist/{id}` y saca el token anónimo que trae el HTML (`"accessToken":"BQ…"` y `accessTokenExpirationTimestampMs`). El token se reutiliza hasta un minuto antes de vencer. Un 404 acá es "la playlist no existe".
+2. Pide la playlist a la API interna del reproductor web: `GET api-partner.spotify.com/pathfinder/v1/query` con `operationName=fetchPlaylist`, `variables={"uri":"spotify:playlist:{id}","offset":N,"limit":300,"enableWatchFeedEntrypoint":false}` y `extensions={"persistedQuery":{"version":1,"sha256Hash":"…"}}`, con `Authorization: Bearer <token>`. Pagina con `offset` hasta llegar a `content.totalCount`. Funciona con playlists editoriales (las `37i9dQZF…`) y con las de usuarios.
+3. Cada elemento con `itemV2.__typename == "TrackResponseWrapper"` y `data.__typename == "Track"` es una canción (nombre, `artists.items[].profile.name`, `albumOfTrack.name`, `trackDuration.totalMilliseconds`, `uri`). Episodios, archivos locales y canciones borradas se ignoran.
+
+**Si Spotify cambia la consulta:** el hash de la consulta persistida cambia con cada versión del reproductor. Surco prueba los hashes que conoce (`KNOWN_HASHES`) y, si todos dan `PersistedQueryNotFound` o un error de variables, baja `open.spotify.com/`, busca el script `web-player/web-player.<hash>.js` y saca el hash actual de `"fetchPlaylist","query","<hash>"`. Si nada de eso funciona, sigue la cascada (claves, embed de 100 canciones, CSV). Para actualizar `KNOWN_HASHES` a mano: `curl -s https://open.spotify.com/ | grep -o 'https://[^"]*web-player/web-player\.[0-9a-f]*\.js'`, bajar ese script y buscar `"fetchPlaylist","query","`.
+
+No es una API pública: puede romperse sin aviso, y el resto de la cascada está para eso.
+
+### Claves propias (opcional)
+
+Con claves de la Web API (Client Credentials) la playlist también se importa entera, de a 100 por página. Se usan solo si falla el reproductor web. Las claves se eligen en este orden:
 
 1. Las que el usuario carga en **Ajustes → Spotify**.
 2. Las de `config.toml`.
 3. Las que trae el build oficial: el workflow Release las inyecta al compilar desde los secretos del repo `SPOTIFY_CLIENT_ID` y `SPOTIFY_CLIENT_SECRET` (variables `SURCO_SPOTIFY_CLIENT_ID` / `SURCO_SPOTIFY_CLIENT_SECRET`, leídas con `option_env!`). No están en el código. Un build local sin esas variables sale sin claves.
 
-Si la API falla (403 o 404, como con las playlists editoriales de Spotify para apps nuevas, o 429), la importación sigue con la página pública y, si hace falta, con un CSV de Exportify. Las claves incluidas en un programa que se distribuye se pueden extraer: solo dan acceso a datos públicos, y si se abusa de ellas se cambian.
+Si la API falla (403 o 404, como con las playlists editoriales de Spotify para apps nuevas, o 429), la importación sigue con la página embed y, si hace falta, con un CSV de Exportify. Las claves incluidas en un programa que se distribuye se pueden extraer: solo dan acceso a datos públicos, y si se abusa de ellas se cambian.
 
 ## Inicio, playlists propias y recomendadas
 
@@ -286,9 +301,9 @@ Medido en la Fase 2 (Linux, Xvfb, reproduciendo un m4a de 3 min por HTTP): **~23
 - Tests: parser de la salida de yt-dlp, caché con TTL, `HttpStream` contra un servidor HTTP local (seek antes de terminar la descarga, 403), y el motor de punta a punta con salida nula (sonar, pausar, seek, fin, errores). Hay un test con un yt-dlp falso que primero devuelve una URL vencida.
 - Los archivos de prueba (`crates/player/tests/fixtures/*.m4a`) son tonos generados con ffmpeg (`padded.m4a`: 1,5 s mudos, 2 s de tono y 3 s mudos, para probar que se saltea el silencio). Los de 8 s: `ffmpeg -f lavfi -i sine=frequency=440:duration=8 -ac 2 -c:a aac -b:a 64k tone.m4a` (y `-movflags +dash+global_sidx` para la versión fragmentada, como las de YouTube).
 - `unwrap()` está prohibido por lint (`clippy::unwrap_used = "deny"`) en todo el workspace.
-- Spotify: parser de links (todas las variantes), CSV (comillas, saltos de línea, BOM, formatos de Exportify), página embed, y la Web API contra un servidor local que imita a Spotify (token, 250 canciones en 3 páginas, 429 con `Retry-After`, formato viejo `tracks` y nuevo `items`, y la cascada cayendo a la embed cuando la API esconde las canciones). `crates/spotify/tests/fixtures/exportify_sample.csv` es un CSV de ejemplo de 120 canciones.
+- Spotify: parser de links (todas las variantes), CSV (comillas, saltos de línea, BOM, formatos de Exportify), página embed, el reproductor web (token anónimo, 250 canciones paginadas, hash vencido que se busca en el JavaScript, `NotFound` que corta la cascada, caída a la embed) y la Web API contra un servidor local que imita a Spotify (token, 250 canciones en 3 páginas, 429 con `Retry-After`, formato viejo `tracks` y nuevo `items`, y la cascada cayendo a la embed cuando la API esconde las canciones). `crates/spotify/tests/fixtures/exportify_sample.csv` es un CSV de ejemplo de 120 canciones.
 - Pruebas contra la red real, ignoradas por defecto:
-  - `cargo test -p surco-spotify --test import -- --ignored --nocapture` (embed real; con `SPOTIFY_CLIENT_ID`/`SPOTIFY_CLIENT_SECRET` también la Web API)
+  - `cargo test -p surco-spotify --test import -- --ignored --nocapture` (reproductor web real con "All Out 80s", 150 canciones, y una de usuario con 1837; embed real; con `SPOTIFY_CLIENT_ID`/`SPOTIFY_CLIENT_SECRET` también la Web API)
   - `cargo test -p surco-player --test network -- --ignored --nocapture` (streaming HTTPS real con pausa y seek; con `SURCO_TEST_YOUTUBE=<id>` también YouTube)
 - CI en GitHub Actions (Linux): fmt, clippy, tests y build release. Windows y macOS se compilan en el workflow Release.
 
@@ -299,11 +314,11 @@ Medido en la Fase 2 (Linux, Xvfb, reproduciendo un m4a de 3 min por HTTP): **~23
 - **Linux ARM / Windows ARM:** por ahora solo hay paquetes x86_64 (en macOS el binario es universal).
 - **Opus/WebM:** si YouTube solo ofrece el audio en WebM/Opus, por ahora se muestra un error. El fallback (crate `opus` o ffmpeg) queda pendiente; casi todos los videos tienen m4a.
 - En un MP4 fragmentado sin duración en el contenedor (URLs directas) la barra usa la duración de Spotify; con YouTube la duración la da yt-dlp.
-- La lista de canciones no está virtualizada: con playlists de miles de canciones el scroll puede ponerse pesado.
+- La lista de una playlist solo arma las filas que se ven (alto fijo de 50 px por fila), y las portadas de fondo se buscan para las que se ven y las 30 siguientes. Con 1837 canciones: ~50 MB de RAM (sin esto eran 113 MB).
 - **YouTube y redes "marcadas":** desde IPs de datacenter, VPN o redes con mucho tráfico, YouTube puede pedir "confirmar que no sos un bot" y yt-dlp falla. La app lo muestra como un error claro (no crashea). En una conexión hogareña normal no pasa.
 - **Resolver:** si la grabación exacta no está entre los 5-10 primeros resultados de YouTube (por ejemplo, una versión en vivo poco conocida), puede elegir un cover parecido. Para eso está el selector manual.
 - **Historial:** se guarda, pero todavía no hay una vista para verlo.
-- **Spotify sin credenciales:** máximo 100 canciones por playlist (ver arriba). Para playlists más largas, importar un CSV de Exportify.
+- **Spotify:** la lectura entera depende de la API interna del reproductor web, que no es pública. Si deja de andar, la app cae a la embed (100 canciones) y lo avisa. Las playlists privadas y los mixes personales no se pueden leer sin sesión.
 - La canción entera queda en memoria mientras suena (~4 MB por cada 4 minutos). Para audios de horas habría que limitarlo.
 
 ## Aviso legal
