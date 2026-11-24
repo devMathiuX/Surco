@@ -2,14 +2,14 @@
 
 Reproductor de música de escritorio, ultraliviano, escrito en Rust. Importa playlists de Spotify y reproduce cada canción usando YouTube como fuente de audio (vía `yt-dlp`), sin cuenta Premium. Corre en Linux y Windows (x86_64) con la misma base de código.
 
-> **Estado:** Fase 1 de 7 (esqueleto). La app abre una ventana vacía con el layout base; todavía no reproduce nada.
+> **Estado:** Fase 2 de 7 (audio). La app reproduce un link de YouTube vía `yt-dlp`, con pausa, seek y volumen. Todavía no importa playlists.
 
 ## Requisitos
 
 - Rust estable ≥ 1.88 (`rustup`).
-- **Linux:** un servidor X11 o Wayland con `libxkbcommon` (viene con cualquier escritorio). No hace falta nada más para compilar.
-- **Windows:** toolchain MSVC.
-- Desde la Fase 2: [`yt-dlp`](https://github.com/yt-dlp/yt-dlp) (la app ofrecerá descargarlo). `ffmpeg` opcional.
+- **Linux:** para compilar, `libasound2-dev` (ALSA; en Debian/Ubuntu `sudo apt install libasound2-dev`, en Fedora `alsa-lib-devel`). Para correr, X11 o Wayland con `libxkbcommon` (viene con cualquier escritorio).
+- **Windows:** toolchain MSVC. Nada más.
+- [`yt-dlp`](https://github.com/yt-dlp/yt-dlp): si no está en el `PATH`, la app ofrece descargarlo de los releases oficiales a su carpeta de datos (`~/.local/share/surco/` en Linux, `%APPDATA%\Surco\data\` en Windows). `ffmpeg` no hace falta por ahora.
 
 ## Cómo correrlo
 
@@ -18,6 +18,19 @@ cargo run                 # debug
 cargo run --release       # release (opt-level 3)
 cargo build --profile release-z   # variante optimizada para tamaño
 ```
+
+## Probar el audio (Fase 2)
+
+1. `cargo run --release`
+2. El campo ya trae un link de prueba ("Big Buck Bunny", Blender Foundation, CC BY). Apretá **Reproducir** (o Enter).
+3. Espacio pausa y reanuda; ←/→ mueven 5 s; la barra de progreso también hace seek; el volumen está a la derecha.
+
+El campo acepta también un ID de video, una URL directa a un `.m4a` o una ruta local, útil para probar sin YouTube.
+
+Variables de entorno útiles:
+
+- `RUST_LOG=surco=debug` para más detalle en los logs.
+- `SURCO_NULL_AUDIO=1` para correr sin placa de sonido (descarta el audio en tiempo real; lo usan los tests).
 
 ## Estructura
 
@@ -66,12 +79,36 @@ Quien quiera GPU puede compilar con `cargo build --release --features gpu`.
 
 Por ahora el perfil `release` usa `opt-level = 3`, porque desde la Fase 2 vamos a decodificar audio y ahí la velocidad importa más que 1,5 MB. Lo volvemos a medir en la Fase 7 con todo el código adentro.
 
+### Audio
+
+```
+yt-dlp -f "bestaudio[ext=m4a]/bestaudio" --print ...  ->  URL de googlevideo (caché en memoria, 5 h)
+HttpStream: bloques de 512 KiB con Range, en memoria, prioriza el bloque que pide el seek
+hilo decodificador (symphonia, AAC) -> buffer de muestras (2 s antes de sonar, hasta 5 s)
+RingSource (rodio/cpal): nunca bloquea; si la red no llegó, suena silencio en vez de colgarse
+```
+
+- Si la URL de stream vence (HTTP 403), se re-resuelve una vez con yt-dlp y se retoma desde la misma posición.
+- yt-dlp corre con timeout (45 s) y, en Windows, sin abrir consola (`CREATE_NO_WINDOW`).
+- **rodio** se usa solo como salida y mezclador (feature `playback`, sin decodificadores propios). La decodificación es nuestra, con symphonia 0.5 (la misma versión que usa rodio).
+- Errores (sin yt-dlp, red caída, formato no soportado) quedan en el estado `Error` y se muestran en la UI; la app nunca se cae.
+
+Medido en la Fase 2 (Linux, Xvfb, reproduciendo un m4a de 3 min por HTTP): **~23 MB de RAM** y ~1,5 % de CPU. Binario: **10,1 MB** (opt 3) / **7,8 MB** (opt z). El salto desde 6,4 MB viene de tokio, reqwest + rustls, symphonia y cpal.
+
 ## Calidad
 
 - `cargo clippy --workspace --all-targets -- -D warnings`
 - `cargo test --workspace`
+- Tests: parser de la salida de yt-dlp, caché con TTL, `HttpStream` contra un servidor HTTP local (seek antes de terminar la descarga, 403), y el motor de punta a punta con salida nula (sonar, pausar, seek, fin, errores). Hay un test con un yt-dlp falso que primero devuelve una URL vencida.
+- Los archivos de prueba (`crates/player/tests/fixtures/*.m4a`) son tonos de 8 s generados con ffmpeg: `ffmpeg -f lavfi -i sine=frequency=440:duration=8 -ac 2 -c:a aac -b:a 64k tone.m4a` (y `-movflags +dash+global_sidx` para la versión fragmentada, como las de YouTube).
 - `unwrap()` está prohibido por lint (`clippy::unwrap_used = "deny"`) en todo el workspace.
 - CI en GitHub Actions (Ubuntu y Windows): fmt, clippy, tests y build release.
+
+## Limitaciones conocidas
+
+- **Opus/WebM:** si YouTube solo ofrece el audio en WebM/Opus, por ahora se muestra un error. El fallback (crate `opus` o ffmpeg) queda pendiente; casi todos los videos tienen m4a.
+- En un MP4 fragmentado sin duración en el contenedor (URLs directas) no hay barra de progreso; con YouTube la duración la da yt-dlp.
+- La canción entera queda en memoria mientras suena (~4 MB por cada 4 minutos). Para audios de horas habría que limitarlo.
 
 ## Aviso legal
 

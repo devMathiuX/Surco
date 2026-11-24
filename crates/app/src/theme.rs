@@ -1,7 +1,7 @@
 //! Paleta y estilos de Surco. Un solo acento, sin sombras, bordes de 6 px.
 
 use iced::theme::Palette;
-use iced::widget::{container, text};
+use iced::widget::{button, container, slider, text, text_input};
 use iced::{border, color, Color, Theme};
 
 pub const BACKGROUND: Color = color!(0x111111);
@@ -54,5 +54,71 @@ pub fn outlined(_: &Theme) -> container::Style {
     container::Style {
         border: border::rounded(RADIUS).color(ACCENT).width(1),
         ..container::Style::default()
+    }
+}
+
+pub fn error_text(theme: &Theme) -> text::Style {
+    text::Style {
+        color: Some(theme.palette().danger),
+    }
+}
+
+pub fn input(theme: &Theme, status: text_input::Status) -> text_input::Style {
+    let focused = matches!(status, text_input::Status::Focused { .. });
+    text_input::Style {
+        background: SURFACE.into(),
+        border: border::rounded(RADIUS).width(1).color(if focused {
+            ACCENT
+        } else {
+            color!(0x2A2A2A)
+        }),
+        icon: TEXT_SECONDARY,
+        placeholder: TEXT_SECONDARY,
+        value: theme.palette().text,
+        selection: ACCENT.scale_alpha(0.35),
+    }
+}
+
+pub fn primary_button(_: &Theme, status: button::Status) -> button::Style {
+    let bg = match status {
+        button::Status::Hovered | button::Status::Pressed => color!(0x93AEFF),
+        button::Status::Disabled => SURFACE,
+        button::Status::Active => ACCENT,
+    };
+    button::Style {
+        background: Some(bg.into()),
+        text_color: BACKGROUND,
+        border: border::rounded(RADIUS),
+        ..button::Style::default()
+    }
+}
+
+pub fn ghost_button(_: &Theme, status: button::Status) -> button::Style {
+    let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
+    button::Style {
+        background: hovered.then(|| color!(0x222222).into()),
+        text_color: ACCENT,
+        border: border::rounded(RADIUS).width(1).color(ACCENT),
+        ..button::Style::default()
+    }
+}
+
+pub fn seek_slider(_: &Theme, status: slider::Status) -> slider::Style {
+    let handle = match status {
+        slider::Status::Dragged | slider::Status::Hovered => color!(0x93AEFF),
+        slider::Status::Active => ACCENT,
+    };
+    slider::Style {
+        rail: slider::Rail {
+            backgrounds: (ACCENT.into(), color!(0x333333).into()),
+            width: 4.0,
+            border: border::rounded(2),
+        },
+        handle: slider::Handle {
+            shape: slider::HandleShape::Circle { radius: 6.0 },
+            background: handle.into(),
+            border_width: 0.0,
+            border_color: Color::TRANSPARENT,
+        },
     }
 }

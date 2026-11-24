@@ -30,6 +30,12 @@ thiserror = "2"
 anyhow = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "env-filter", "ansi"] }
+tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "process", "time", "sync", "macros", "fs", "io-util"] }
+reqwest = { version = "0.12.28", default-features = false, features = ["rustls-tls-native-roots"] }
+directories = "6"
+# rodio 0.23 usa symphonia 0.5: decodificamos nosotros con la misma versión.
+symphonia = { version = "0.5.5", default-features = false, features = ["aac", "isomp4"] }
+rodio = { version = "0.23", default-features = false, features = ["playback"] }
 iced = { version = "0.14", default-features = false, features = ["tiny-skia", "crisp", "x11", "wayland", "tokio"] }
 
 [workspace.lints.rust]

@@ -8,6 +8,12 @@ license.workspace = true
 [dependencies]
 surco-core.workspace = true
 thiserror.workspace = true
+tracing.workspace = true
+tokio.workspace = true
+reqwest.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["net", "io-util"] }
 
 [lints]
 workspace = true
