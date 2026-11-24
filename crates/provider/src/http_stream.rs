@@ -245,6 +245,25 @@ async fn download(client: reqwest::Client, url: String, shared: Arc<Shared>, len
     }
 }
 
+/// Baja el archivo entero a memoria, en bloques `Range` uno detrás de otro.
+pub async fn download_all(client: &reqwest::Client, url: &str) -> Result<Vec<u8>> {
+    let first = fetch_range(client, url, 0, CHUNK as u64 - 1).await?;
+    let len = first.total;
+    let mut data = first.body;
+    // Si el servidor ignoró el Range, ya vino todo.
+    while (data.len() as u64) < len {
+        let start = data.len() as u64;
+        let end = (start + CHUNK as u64).min(len) - 1;
+        let body = fetch_with_retries(client, url, start, end).await?;
+        if body.is_empty() {
+            return Err(Error::Parse("el servidor cortó la descarga".into()));
+        }
+        data.extend_from_slice(&body);
+    }
+    data.truncate(len as usize);
+    Ok(data)
+}
+
 /// Elige el próximo bloque: el pedido por el lector, o el primero que falte
 /// desde `cursor` (dando la vuelta).
 fn pick_next(have: &[bool], want: Option<usize>, cursor: usize) -> Option<usize> {

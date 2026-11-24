@@ -3,6 +3,7 @@
 
 pub use surco_core as core;
 
+mod audio_cache;
 mod http_stream;
 mod ytdlp;
 
@@ -11,7 +12,8 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-pub use http_stream::{HttpStream, StreamProgress};
+pub use audio_cache::{is_video_id, AudioCache, CacheUsage, DEFAULT_LIMIT as AUDIO_CACHE_LIMIT};
+pub use http_stream::{download_all, HttpStream, StreamProgress};
 pub use reqwest::Client as HttpClient;
 pub use ytdlp::{SearchResult, StreamInfo, YtDlp, AUDIO_FORMAT, BINARY_NAME};
 
@@ -56,6 +58,7 @@ pub struct Provider {
     ytdlp: YtDlp,
     cache: Mutex<HashMap<String, (StreamInfo, Instant)>>,
     ttl: Duration,
+    audio: Option<AudioCache>,
 }
 
 impl Provider {
@@ -64,7 +67,54 @@ impl Provider {
             ytdlp,
             cache: Mutex::new(HashMap::new()),
             ttl: STREAM_URL_TTL,
+            audio: None,
         }
+    }
+
+    /// Activa la caché de audio en disco (precarga).
+    pub fn with_audio_cache(mut self, cache: AudioCache) -> Self {
+        self.audio = Some(cache);
+        self
+    }
+
+    pub fn audio_cache(&self) -> Option<&AudioCache> {
+        self.audio.as_ref()
+    }
+
+    /// Audio de `video` ya bajado a disco, si está.
+    pub fn cached_audio(&self, video: &str) -> Option<PathBuf> {
+        self.audio.as_ref()?.get(video)
+    }
+
+    /// Baja el audio de `video` a la caché de disco (si no estaba).
+    pub async fn precache(&self, client: &reqwest::Client, video: &str) -> Result<PathBuf> {
+        let cache = self
+            .audio
+            .as_ref()
+            .ok_or_else(|| Error::Parse("no hay caché de audio".into()))?;
+        if let Some(p) = cache.get(video) {
+            return Ok(p);
+        }
+        let mut refresh = false;
+        for attempt in 0..2 {
+            let info = self.stream_info(video, refresh).await?;
+            if !info.is_supported() {
+                return Err(Error::Parse(format!("formato {} no soportado", info.ext)));
+            }
+            match http_stream::download_all(client, &info.url).await {
+                Ok(data) => {
+                    let path = cache.put(video, &data)?;
+                    tracing::info!(video, bytes = data.len(), "audio precargado");
+                    return Ok(path);
+                }
+                Err(Error::Expired) if attempt == 0 => {
+                    self.invalidate(video);
+                    refresh = true;
+                }
+                Err(e) => return Err(e),
+            }
+        }
+        Err(Error::Expired)
     }
 
     pub fn ytdlp(&self) -> &YtDlp {

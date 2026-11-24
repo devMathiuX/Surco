@@ -106,3 +106,59 @@ fn resolves_with_ytdlp_and_recovers_from_expired_url() {
     assert_eq!(s.duration, Some(Duration::from_secs(8)));
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+/// Precarga a disco: `Provider::precache` baja el audio una vez; después
+/// `Load` lo lee del disco aunque yt-dlp ya no funcione.
+#[test]
+fn precached_audio_plays_from_disk() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/tone-dash.m4a");
+    let data = std::fs::read(fixture).unwrap();
+    let base = rt.block_on(serve(Arc::new(data.clone())));
+
+    let dir = std::env::temp_dir().join(format!("surco-precache-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    // yt-dlp falso que funciona una sola vez.
+    let script = dir.join("yt-dlp");
+    std::fs::write(
+        &script,
+        format!(
+            "#!/bin/sh\nif [ -f '{c}' ]; then echo 'ERROR: sin red' >&2; exit 1; fi\ntouch '{c}'\nprintf 'm4a\\n8.0\\nTono\\n{base}/ok/audio.m4a\\n'\n",
+            c = dir.join("called").display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let cache = surco_provider::AudioCache::new(dir.join("audio"), 1 << 30);
+    let provider = Arc::new(Provider::new(YtDlp::new(&script)).with_audio_cache(cache));
+    let client = reqwest::Client::new();
+    let path = rt
+        .block_on(provider.precache(&client, "aqz-KE-bpKQ"))
+        .unwrap();
+    assert_eq!(std::fs::read(&path).unwrap(), data);
+
+    // Sin la URL en memoria, yt-dlp fallaría: tiene que salir del disco.
+    provider.invalidate("aqz-KE-bpKQ");
+    let p = surco_player::spawn(
+        Some(provider),
+        rt.handle().clone(),
+        Options { null_output: true },
+    )
+    .unwrap();
+    p.send(Command::Load(Source::YouTube("aqz-KE-bpKQ".into())));
+    let start = Instant::now();
+    loop {
+        let s = p.status();
+        if s.state == PlayerState::Playing {
+            break;
+        }
+        assert!(
+            !matches!(s.state, PlayerState::Error(_)) && start.elapsed() < Duration::from_secs(10),
+            "{s:?}"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    std::fs::remove_dir_all(dir).unwrap();
+}

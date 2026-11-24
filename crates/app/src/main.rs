@@ -10,6 +10,9 @@ mod icons;
 mod library;
 mod media;
 mod playback;
+mod precache;
+mod radio;
+mod settings;
 mod theme;
 mod view;
 
@@ -23,12 +26,14 @@ use iced::widget::{image, operation, Id};
 use iced::{window, Size, Subscription, Task, Theme};
 use surco_core::{PlayerState, Playlist, RepeatMode};
 use surco_player::{Command, PlayerHandle, Source, Status};
-use surco_provider::{HttpClient, Provider, YtDlp};
+use surco_provider::{AudioCache, HttpClient, Provider, YtDlp, AUDIO_CACHE_LIMIT};
 use surco_resolver::{Match, Resolver};
 use surco_spotify::{Credentials, Importer};
 use surco_storage::Store;
 
-use playback::{Active, TrackRes};
+use playback::{Active, CoverJobs, TrackRes};
+use precache::PrecacheState;
+use settings::Settings;
 
 /// Video de prueba de la Fase 2: "Big Buck Bunny" (Blender Foundation, CC BY 3.0).
 const TEST_URL: &str = "https://www.youtube.com/watch?v=aqz-KE-bpKQ";
@@ -115,6 +120,20 @@ fn window_icon() -> Option<window::Icon> {
     window::icon::from_rgba(img.into_raw(), w, h).ok()
 }
 
+/// Carpeta del audio precargado.
+fn audio_cache_dir() -> Option<PathBuf> {
+    directories::ProjectDirs::from("", "", "Surco").map(|d| d.cache_dir().join("audio"))
+}
+
+/// Provider (yt-dlp + caché de URLs) con la caché de audio en disco.
+fn make_provider(ytdlp: YtDlp) -> Arc<Provider> {
+    let p = Provider::new(ytdlp);
+    Arc::new(match audio_cache_dir() {
+        Some(dir) => p.with_audio_cache(AudioCache::new(dir, AUDIO_CACHE_LIMIT)),
+        None => p,
+    })
+}
+
 fn data_dir() -> Option<PathBuf> {
     directories::ProjectDirs::from("", "", "Surco").map(|d| d.data_dir().to_path_buf())
 }
@@ -168,6 +187,17 @@ struct Surco {
     store: Option<Store>,
     /// Última fuente anotada en el historial.
     recorded: Option<Source>,
+    /// Ajustes de la pantalla de ajustes.
+    settings: Settings,
+    show_settings: bool,
+    theme: Theme,
+    /// yt-dlp + caché de audio (para la precarga y la radio).
+    provider: Option<Arc<Provider>>,
+    precache: PrecacheState,
+    /// Hay que revisar qué precargar (cambió la cola, una resolución o un ajuste).
+    precache_dirty: bool,
+    radio_loading: bool,
+    cover_jobs: CoverJobs,
 }
 
 /// Aviso discreto en la barra lateral.
@@ -213,6 +243,14 @@ enum Message {
     ToggleShuffle,
     CycleRepeat,
     Cover(String, Result<image::Handle, String>),
+    /// Mostrar u ocultar la pantalla de ajustes.
+    ToggleSettings,
+    Setting(settings::Change),
+    ClearAudioCache,
+    /// Radio de canciones parecidas a la que suena.
+    StartRadio,
+    RadioLoaded(bool, radio::RadioResult),
+    Precached(String, Result<Match, String>),
     OpenFilter,
     FilterChanged(String),
     CloseFilter,
@@ -224,12 +262,12 @@ impl Surco {
     fn new() -> (Self, Task<Message>) {
         let ytdlp = YtDlp::locate(data_dir().as_deref());
         let resolver = ytdlp.clone().map(|y| Arc::new(Resolver::new(Arc::new(y))));
-        let provider = ytdlp.clone().map(|y| Arc::new(Provider::new(y)));
+        let provider = ytdlp.clone().map(make_provider);
         let options = surco_player::Options {
             null_output: std::env::var_os("SURCO_NULL_AUDIO").is_some(),
         };
         let (player, fatal) = match RUNTIME.get() {
-            Some(rt) => match surco_player::spawn(provider, rt.handle().clone(), options) {
+            Some(rt) => match surco_player::spawn(provider.clone(), rt.handle().clone(), options) {
                 Ok(p) => (Some(p), None),
                 Err(e) => (None, Some(e.to_string())),
             },
@@ -268,8 +306,18 @@ impl Surco {
             media: None,
             store: library::open(),
             recorded: None,
+            settings: Settings::default(),
+            show_settings: false,
+            theme: theme::iced_theme(),
+            provider,
+            precache: PrecacheState::default(),
+            precache_dirty: false,
+            radio_loading: false,
+            cover_jobs: CoverJobs::default(),
         };
         state.restore();
+        state.load_settings();
+        let covers = state.queue_list_covers();
         // Los controles del sistema necesitan la ventana (HWND en Windows).
         let handle = window::oldest()
             .then(|id| match id {
@@ -277,7 +325,7 @@ impl Surco {
                 None => Task::done(None),
             })
             .map(Message::WindowHandle);
-        (state, handle)
+        (state, Task::batch([handle, covers]))
     }
 
     fn send(&self, cmd: Command) {
@@ -288,8 +336,9 @@ impl Surco {
 
     fn update(&mut self, message: Message) -> Task<Message> {
         let task = self.handle(message);
+        let precache = self.pump_precache();
         self.sync_media();
-        task
+        Task::batch([task, precache])
     }
 
     fn handle(&mut self, message: Message) -> Task<Message> {
@@ -331,9 +380,9 @@ impl Surco {
             Message::YtDlpDownloaded(Ok(path)) => {
                 self.set_resolver(Some(Arc::new(Resolver::new(Arc::new(YtDlp::new(&path))))));
                 self.seed_resolver();
-                self.send(Command::SetProvider(Arc::new(Provider::new(YtDlp::new(
-                    &path,
-                )))));
+                let provider = make_provider(YtDlp::new(&path));
+                self.provider = Some(Arc::clone(&provider));
+                self.send(Command::SetProvider(provider));
                 self.ytdlp = YtDlpState::Found(path);
             }
             Message::YtDlpDownloaded(Err(e)) => self.ytdlp = YtDlpState::Failed(e),
@@ -361,7 +410,9 @@ impl Surco {
             Message::SelectPlaylist(i) => {
                 self.selected = i;
                 self.filter = None;
+                self.show_settings = false;
                 self.persist_selected();
+                return self.queue_list_covers();
             }
             Message::RemovePlaylist(i) => self.remove_playlist(i),
             Message::FocusImport => return operation::focus(Id::new(IMPORT_INPUT)),
@@ -372,10 +423,16 @@ impl Surco {
             Message::Skip(dir) => return self.skip(dir),
             Message::ToggleShuffle => return self.toggle_shuffle(),
             Message::CycleRepeat => return self.cycle_repeat(),
-            Message::Cover(id, Ok(handle)) => {
-                self.covers.insert(id, handle);
+            Message::Cover(id, result) => return self.on_cover(id, result),
+            Message::ToggleSettings => {
+                self.show_settings = !self.show_settings;
+                self.filter = None;
             }
-            Message::Cover(id, Err(e)) => tracing::debug!(%id, error = %e, "sin portada"),
+            Message::Setting(change) => return self.change_setting(change),
+            Message::ClearAudioCache => self.clear_audio_cache(),
+            Message::StartRadio => return self.start_radio(false),
+            Message::RadioLoaded(autostart, result) => return self.on_radio(autostart, result),
+            Message::Precached(key, result) => return self.on_precached(key, result),
             Message::OpenFilter => {
                 if self.selected.is_some() {
                     self.filter.get_or_insert_with(String::new);
@@ -538,7 +595,7 @@ impl Surco {
     }
 
     fn theme(&self) -> Theme {
-        theme::dark()
+        self.theme.clone()
     }
 }
 
