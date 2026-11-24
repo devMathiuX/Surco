@@ -2,7 +2,7 @@
 
 Reproductor de música de escritorio, ultraliviano, escrito en Rust. Importa playlists de Spotify y reproduce cada canción usando YouTube como fuente de audio (vía `yt-dlp`), sin cuenta Premium. Corre en Linux y Windows (x86_64) con la misma base de código.
 
-> **Estado:** Fase 2 de 7 (audio). La app reproduce un link de YouTube vía `yt-dlp`, con pausa, seek y volumen. Todavía no importa playlists.
+> **Estado:** Fase 3 de 7 (Spotify). La app importa playlists de Spotify (Web API, página pública o CSV) y las muestra. Reproducir cada canción desde YouTube llega con el resolver (Fase 4); por ahora el panel de prueba de audio sigue disponible en la pantalla de inicio.
 
 ## Requisitos
 
@@ -10,6 +10,7 @@ Reproductor de música de escritorio, ultraliviano, escrito en Rust. Importa pla
 - **Linux:** para compilar, `libasound2-dev` (ALSA; en Debian/Ubuntu `sudo apt install libasound2-dev`, en Fedora `alsa-lib-devel`). Para correr, X11 o Wayland con `libxkbcommon` (viene con cualquier escritorio).
 - **Windows:** toolchain MSVC. Nada más.
 - [`yt-dlp`](https://github.com/yt-dlp/yt-dlp): si no está en el `PATH`, la app ofrece descargarlo de los releases oficiales a su carpeta de datos (`~/.local/share/surco/` en Linux, `%APPDATA%\Surco\data\` en Windows). `ffmpeg` no hace falta por ahora.
+- Un runtime de JavaScript para yt-dlp: desde fines de 2025 yt-dlp lo necesita para YouTube. Recomendado [`deno`](https://deno.com); si no está, Surco usa `node`, `bun` o QuickJS si los encuentra en el `PATH`.
 
 ## Cómo correrlo
 
@@ -31,6 +32,22 @@ Variables de entorno útiles:
 
 - `RUST_LOG=surco=debug` para más detalle en los logs.
 - `SURCO_NULL_AUDIO=1` para correr sin placa de sonido (descarta el audio en tiempo real; lo usan los tests).
+
+## Importar playlists (Fase 3)
+
+En la barra lateral, pegá en el campo de abajo (o apretá **Ctrl+L**) cualquiera de estos y Enter / **+ Importar**:
+
+- `https://open.spotify.com/playlist/{id}` (con o sin `?si=…`, también `/intl-es/…` y `/embed/…`)
+- `spotify:playlist:{id}`
+- la ruta a un `.csv` exportado con [Exportify](https://exportify.net)
+
+Surco prueba tres estrategias en cascada (trait `PlaylistSource` en `crates/spotify`):
+
+1. **Web API de Spotify** con Client Credentials, solo si pusiste `client_id`/`client_secret` en `config.toml` (`~/.config/surco/config.toml` en Linux, `%APPDATA%\Surco\config\config.toml` en Windows; se crea una plantilla en el primer arranque). Paginación completa y manejo de 429 con `Retry-After`. **Ojo:** desde febrero de 2026 las apps en *Development Mode* tienen restricciones: el endpoint pasó a `/playlists/{id}/items` y, para playlists ajenas, Spotify puede devolver solo los metadatos. En ese caso Surco sigue con la estrategia 2.
+2. **Página embed pública** (`open.spotify.com/embed/playlist/{id}`), sin credenciales. Lee el JSON que trae embebido (`__NEXT_DATA__`). Trae título, artistas y duración, pero **no** álbum ni ISRC, y **solo las primeras 100 canciones** (la app lo avisa). No es una API pública: puede romperse si Spotify cambia el HTML.
+3. **CSV** (Exportify, formato viejo y nuevo, o uno hecho a mano con `title,artist,album,duration`). Trae la playlist completa con álbum e ISRC. Es la vía recomendada para playlists de más de 100 canciones sin credenciales.
+
+Las playlists importadas viven en memoria hasta la Fase 6 (persistencia).
 
 ## Estructura
 
@@ -102,12 +119,18 @@ Medido en la Fase 2 (Linux, Xvfb, reproduciendo un m4a de 3 min por HTTP): **~23
 - Tests: parser de la salida de yt-dlp, caché con TTL, `HttpStream` contra un servidor HTTP local (seek antes de terminar la descarga, 403), y el motor de punta a punta con salida nula (sonar, pausar, seek, fin, errores). Hay un test con un yt-dlp falso que primero devuelve una URL vencida.
 - Los archivos de prueba (`crates/player/tests/fixtures/*.m4a`) son tonos de 8 s generados con ffmpeg: `ffmpeg -f lavfi -i sine=frequency=440:duration=8 -ac 2 -c:a aac -b:a 64k tone.m4a` (y `-movflags +dash+global_sidx` para la versión fragmentada, como las de YouTube).
 - `unwrap()` está prohibido por lint (`clippy::unwrap_used = "deny"`) en todo el workspace.
+- Spotify: parser de links (todas las variantes), CSV (comillas, saltos de línea, BOM, formatos de Exportify), página embed, y la Web API contra un servidor local que imita a Spotify (token, 250 canciones en 3 páginas, 429 con `Retry-After`, formato viejo `tracks` y nuevo `items`, y la cascada cayendo a la embed cuando la API esconde las canciones). `crates/spotify/tests/fixtures/exportify_sample.csv` es un CSV de ejemplo de 120 canciones.
+- Pruebas contra la red real, ignoradas por defecto:
+  - `cargo test -p surco-spotify --test import -- --ignored --nocapture` (embed real; con `SPOTIFY_CLIENT_ID`/`SPOTIFY_CLIENT_SECRET` también la Web API)
+  - `cargo test -p surco-player --test network -- --ignored --nocapture` (streaming HTTPS real con pausa y seek; con `SURCO_TEST_YOUTUBE=<id>` también YouTube)
 - CI en GitHub Actions (Ubuntu y Windows): fmt, clippy, tests y build release.
 
 ## Limitaciones conocidas
 
 - **Opus/WebM:** si YouTube solo ofrece el audio en WebM/Opus, por ahora se muestra un error. El fallback (crate `opus` o ffmpeg) queda pendiente; casi todos los videos tienen m4a.
 - En un MP4 fragmentado sin duración en el contenedor (URLs directas) no hay barra de progreso; con YouTube la duración la da yt-dlp.
+- **YouTube y redes "marcadas":** desde IPs de datacenter, VPN o redes con mucho tráfico, YouTube puede pedir "confirmar que no sos un bot" y yt-dlp falla. La app lo muestra como un error claro (no crashea). En una conexión hogareña normal no pasa.
+- **Spotify sin credenciales:** máximo 100 canciones por playlist (ver arriba). Para importar un CSV hay que pegar la ruta; el selector de archivos llega con la UI completa (Fase 5).
 - La canción entera queda en memoria mientras suena (~4 MB por cada 4 minutos). Para audios de horas habría que limitarlo.
 
 ## Aviso legal
