@@ -502,11 +502,12 @@ fn status_stream(feed: &StatusFeed) -> impl iced::futures::Stream<Item = Message
 }
 
 /// Atajos globales (solo si ningún widget usó la tecla, p. ej. el campo de texto).
+/// "Ctrl" es Cmd en macOS (`Modifiers::command`).
 fn on_key(event: keyboard::Event) -> Option<Message> {
     let keyboard::Event::KeyPressed { key, modifiers, .. } = event else {
         return None;
     };
-    if modifiers.control() && !modifiers.alt() {
+    if modifiers.command() && !modifiers.alt() {
         return match key.as_ref() {
             Key::Character("l") | Key::Character("L") => Some(Message::FocusImport),
             Key::Character("f") | Key::Character("F") => Some(Message::OpenFilter),
@@ -515,7 +516,7 @@ fn on_key(event: keyboard::Event) -> Option<Message> {
             _ => None,
         };
     }
-    if modifiers.control() || modifiers.alt() {
+    if modifiers.command() || modifiers.control() || modifiers.alt() || modifiers.logo() {
         return None;
     }
     match key {
