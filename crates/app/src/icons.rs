@@ -21,6 +21,14 @@ pub enum Kind {
     /// Radio: canciones parecidas.
     Radio,
     Settings,
+    /// Cola de reproducción (lista con una nota).
+    Queue,
+    /// Agregar (+).
+    Add,
+    /// Cerrar / quitar (×).
+    Close,
+    /// Agarre para arrastrar (tres rayas).
+    Grip,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -181,6 +189,29 @@ impl<Message> canvas::Program<Message> for Icon {
                     }
                 }
             }
+            Kind::Queue => {
+                let st = line(1.8);
+                for y in [6.0, 11.0] {
+                    frame.stroke(&Path::line(p(4.0, y), p(15.0, y)), st);
+                }
+                frame.stroke(&Path::line(p(4.0, 16.0), p(10.0, 16.0)), st);
+                // Nota musical.
+                frame.stroke(&Path::line(p(18.5, 7.0), p(18.5, 16.5)), line(1.8));
+                frame.fill(&Path::circle(p(16.5, 17.0), 2.3 * s), self.color);
+            }
+            Kind::Add => {
+                frame.stroke(&Path::line(p(12.0, 5.0), p(12.0, 19.0)), line(2.0));
+                frame.stroke(&Path::line(p(5.0, 12.0), p(19.0, 12.0)), line(2.0));
+            }
+            Kind::Close => {
+                frame.stroke(&Path::line(p(6.0, 6.0), p(18.0, 18.0)), line(2.0));
+                frame.stroke(&Path::line(p(18.0, 6.0), p(6.0, 18.0)), line(2.0));
+            }
+            Kind::Grip => {
+                for y in [8.0, 12.0, 16.0] {
+                    frame.stroke(&Path::line(p(6.0, y), p(18.0, y)), line(1.6));
+                }
+            }
             Kind::Settings => {
                 // Engranaje: aro y 8 dientes.
                 frame.stroke(&Path::circle(p(12.0, 12.0), 5.0 * s), line(2.0));
@@ -243,5 +274,26 @@ pub fn toggle_button<'a, Message: Clone + 'a>(
         .on_press(on_press)
         .padding(6)
         .style(theme::icon_button)
+        .into()
+}
+
+/// Ícono como texto, para filas dentro de listas con scroll.
+///
+/// El renderer por CPU (tiny-skia) de iced 0.14 a veces no repinta la zona de
+/// un `canvas` que salió de la vista al hacer scroll y deja "fantasmas"; con
+/// texto no pasa. Son caracteres que traen las fuentes de todos los sistemas.
+pub fn glyph<'a, Message: 'a>(kind: Kind, color: Color, size: f32) -> Element<'a, Message> {
+    let c = match kind {
+        Kind::Add => "+",
+        Kind::Close => "×",
+        Kind::Grip => "≡",
+        Kind::Volume => "♪",
+        _ => "•",
+    };
+    iced::widget::text(c)
+        .size(size)
+        .color(color)
+        .width(Length::Fixed(size))
+        .align_x(iced::alignment::Horizontal::Center)
         .into()
 }
