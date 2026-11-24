@@ -12,6 +12,7 @@ thiserror.workspace = true
 tracing.workspace = true
 tokio.workspace = true
 strsim.workspace = true
+serde.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros"] }

@@ -160,6 +160,7 @@ impl Surco {
             .is_some_and(|t| cache_key(t) == key);
         match result {
             Ok(m) => {
+                self.persist_match(&key, &m);
                 let mut task = Task::none();
                 if is_now {
                     self.send(Command::Load(Source::YouTube(m.youtube_id.clone())));
@@ -197,6 +198,7 @@ impl Surco {
             if let Some(a) = &mut self.active {
                 a.queue.advance();
             }
+            self.record_history();
             let cover = self
                 .now()
                 .and_then(|n| self.video_of(n))
@@ -208,7 +210,10 @@ impl Surco {
             return Task::batch([cover, prefetch]);
         }
         match &self.status.state {
-            PlayerState::Playing => self.failures_in_a_row = 0,
+            PlayerState::Playing => {
+                self.failures_in_a_row = 0;
+                self.record_history();
+            }
             // Terminó sin pre-carga lista: siguiente "a la antigua".
             PlayerState::Idle
                 if matches!(old.state, PlayerState::Playing | PlayerState::Paused) =>
@@ -289,6 +294,7 @@ impl Surco {
             a.queue.set_shuffle(self.shuffle);
         }
         self.update_preload();
+        self.persist_modes();
         self.prefetch()
     }
 
@@ -302,6 +308,7 @@ impl Surco {
             a.queue.set_repeat(self.repeat);
         }
         self.update_preload();
+        self.persist_modes();
         self.prefetch()
     }
 
@@ -329,8 +336,9 @@ impl Surco {
         let Some(m) = resolver.choose(&track, video) else {
             return Task::none();
         };
-        self.resolutions
-            .insert(cache_key(&track), TrackRes::Done(m));
+        let key = cache_key(&track);
+        self.persist_match(&key, &m);
+        self.resolutions.insert(key, TrackRes::Done(m));
         let mut task = Task::none();
         if self.now() == Some(at) {
             self.send(Command::Load(Source::YouTube(video.to_owned())));
