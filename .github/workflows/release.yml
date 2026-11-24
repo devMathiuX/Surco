@@ -1,23 +1,20 @@
 name: Release
 
-# Arma los paquetes de los 3 sistemas y los deja como artefactos del run.
-# Con un tag `v*` además crea un Release de GitHub con todos los archivos.
+# Arma los paquetes de los 3 sistemas al publicar una versión (tag `v*`) y
+# crea un Release de GitHub con todos los archivos. No corre en PRs.
 on:
   push:
     tags: ["v*"]
+  # A mano desde la pestaña Actions, si hace falta un build sin publicar versión.
   workflow_dispatch:
-  pull_request:
-    paths:
-      - "packaging/**"
-      - ".github/workflows/release.yml"
-      - "crates/app/build.rs"
-      - "crates/app/Cargo.toml"
-      # El perfil release y las dependencias cambian los binarios.
-      - "Cargo.toml"
-      - "Cargo.lock"
 
 env:
   CARGO_TERM_COLOR: always
+  # Claves de la Web API de Spotify que trae el build oficial (ver
+  # crates/app/src/spotify_keys.rs). Si los secretos no están, el build sale
+  # sin claves y la importación usa la página pública.
+  SURCO_SPOTIFY_CLIENT_ID: ${{ secrets.SPOTIFY_CLIENT_ID }}
+  SURCO_SPOTIFY_CLIENT_SECRET: ${{ secrets.SPOTIFY_CLIENT_SECRET }}
 
 defaults:
   run:

@@ -5,8 +5,8 @@
 //! prendido, al terminar la cola se arma sola a partir de la última canción.
 
 use iced::Task;
-use surco_core::{PlayerState, Playlist, Track};
-use surco_player::{Queue, Source};
+use surco_core::{PlayerState, Playlist, RepeatMode, Track};
+use surco_player::Source;
 use surco_provider::SearchResult;
 use surco_resolver::{cache_key, Match};
 
@@ -17,6 +17,8 @@ use crate::{Message, Notice, Surco, RUNTIME};
 pub const RADIO_ID: &str = "radio";
 /// Videos que se piden al Mix.
 const MIX_SIZE: usize = 30;
+/// Cola sin fin: con menos de estas por delante se piden más.
+const ENDLESS_AHEAD: usize = 3;
 
 /// Resultado de pedir el Mix: video semilla, nombre para mostrar y videos.
 pub type RadioResult = Result<(String, String, Vec<SearchResult>), String>;
@@ -24,9 +26,8 @@ pub type RadioResult = Result<(String, String, Vec<SearchResult>), String>;
 impl Surco {
     /// Video y nombre de lo que suena (o sonó por última vez).
     fn radio_seed(&self) -> Option<(String, String)> {
-        if let Some(at) = self.now() {
-            let track = self.track(at)?;
-            let video = self.video_of(at)?.to_owned();
+        if let Some(track) = self.now_track() {
+            let video = self.video_of_track(track)?.to_owned();
             return Some((video, track.title.clone()));
         }
         match &self.status.source {
@@ -121,7 +122,6 @@ impl Surco {
             tracks,
         };
         self.persist_playlist(&playlist, "radio");
-        let len = playlist.tracks.len();
         let index = match self.playlists.iter().position(|(p, _)| p.id == RADIO_ID) {
             Some(i) => {
                 self.playlists[i] = (playlist, "radio".into());
@@ -133,7 +133,7 @@ impl Surco {
             }
         };
         self.selected = Some(index);
-        self.show_settings = false;
+        self.screen = crate::Screen::Library;
         self.filter = None;
         self.persist_selected();
 
@@ -145,16 +145,12 @@ impl Surco {
             );
         if !autostart && seed_playing {
             // La semilla (primera de la radio) ya está sonando: no se corta.
-            let first = self.playlists[index]
-                .0
-                .tracks
+            let tracks = self.playlists[index].0.tracks.clone();
+            let first = tracks
                 .iter()
                 .position(|t| self.video_is(t, &seed))
                 .unwrap_or(0);
-            self.active = Some(Active {
-                playlist: index,
-                queue: Queue::new(len, first, false, self.repeat, 0),
-            });
+            self.active = Some(Active::new(Some(index), tracks, first, false, self.repeat));
             self.update_preload();
             let prefetch_covers = self.queue_list_covers();
             return prefetch_covers;
@@ -162,6 +158,108 @@ impl Surco {
         self.active = None;
         let play = self.play_track(index, 0);
         Task::batch([play, self.queue_list_covers()])
+    }
+
+    /// Cola sin fin: cuando quedan pocas, agrega parecidas a la última.
+    /// Pasa con la cola del buscador (`endless`) y, con "seguir con
+    /// canciones parecidas", con cualquier cola sin repetir.
+    pub(crate) fn extend_endless(&mut self) -> Task<Message> {
+        let Some(a) = &self.active else {
+            return Task::none();
+        };
+        let wanted = a.endless || (self.settings.autoplay && self.repeat == RepeatMode::Off);
+        if !wanted || self.extending || a.upcoming(ENDLESS_AHEAD).len() >= ENDLESS_AHEAD {
+            return Task::none();
+        }
+        // Semilla: la última de la cola que ya tenga video.
+        let seed = a
+            .queue
+            .order()
+            .iter()
+            .rev()
+            .filter_map(|&i| a.tracks.get(i))
+            .find_map(|t| self.video_of_track(t))
+            .map(str::to_owned);
+        let (Some(seed), Some(provider), Some(rt)) = (seed, self.provider.clone(), RUNTIME.get())
+        else {
+            return Task::none();
+        };
+        if self.extend_failed.as_deref() == Some(seed.as_str()) {
+            return Task::none();
+        }
+        self.extending = true;
+        tracing::info!(%seed, "agregando canciones parecidas a la cola");
+        let job = rt.spawn(async move {
+            let list = provider
+                .ytdlp()
+                .mix(&seed, MIX_SIZE)
+                .await
+                .map_err(|e| e.to_string());
+            (seed, list)
+        });
+        Task::perform(
+            async move {
+                job.await
+                    .unwrap_or_else(|e| (String::new(), Err(e.to_string())))
+            },
+            |(seed, r)| Message::QueueExtended(seed, r),
+        )
+    }
+
+    pub(crate) fn on_extended(
+        &mut self,
+        seed: String,
+        result: Result<Vec<SearchResult>, String>,
+    ) -> Task<Message> {
+        self.extending = false;
+        let list = match result {
+            Ok(l) => l,
+            Err(e) => {
+                tracing::warn!(error = %e, "no se pudieron traer parecidas");
+                self.extend_failed = Some(seed);
+                return Task::none();
+            }
+        };
+        let Some(a) = &self.active else {
+            return Task::none();
+        };
+        let known: std::collections::HashSet<String> = a
+            .tracks
+            .iter()
+            .filter_map(|t| self.video_of_track(t).map(str::to_owned))
+            .collect();
+        let fresh: Vec<&SearchResult> = list
+            .iter()
+            .filter(|r| r.id != seed && !known.contains(&r.id))
+            .collect();
+        if fresh.is_empty() {
+            self.extend_failed = Some(seed);
+            return Task::none();
+        }
+        let mut added = Vec::new();
+        for r in fresh {
+            let track = track_from(r);
+            let m = Match {
+                youtube_id: r.id.clone(),
+                score: 100,
+                manual: true,
+                candidates: Vec::new(),
+            };
+            self.persist_match(&cache_key(&track), &m);
+            self.resolutions
+                .insert(cache_key(&track), TrackRes::Done(m));
+            added.push(track);
+        }
+        let n = added.len();
+        if let Some(a) = &mut self.active {
+            for t in added {
+                a.tracks.push(t);
+                a.queue.push(a.tracks.len() - 1);
+            }
+        }
+        tracing::info!(n, "parecidas agregadas a la cola");
+        self.update_preload();
+        Task::none()
     }
 
     fn video_is(&self, track: &Track, video: &str) -> bool {
@@ -243,7 +341,7 @@ fn strip_noise(s: &str) -> String {
     out.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-fn clean_channel(c: &str) -> String {
+pub fn clean_channel(c: &str) -> String {
     let mut c = c.trim();
     for suffix in [" - Topic", "VEVO", " (official)", " Official"] {
         if let Some(s) = c.strip_suffix(suffix) {
