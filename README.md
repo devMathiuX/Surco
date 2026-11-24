@@ -2,7 +2,27 @@
 
 Reproductor de música de escritorio, ultraliviano, escrito en Rust. Importa playlists de Spotify y reproduce cada canción usando YouTube como fuente de audio (vía `yt-dlp`), sin cuenta Premium. Corre en Linux, Windows y macOS (Intel y Apple Silicon) con la misma base de código.
 
-> **Estado:** Fase 6 de 7 (persistencia). La app importa playlists de Spotify y las reproduce buscando cada canción en YouTube, con cola (shuffle, repetir), paso sin silencio a la siguiente, portadas, atajos de teclado y controles del sistema (MPRIS, SMTC, "Está sonando" en macOS). Las playlists, los videos elegidos, el historial y los ajustes se guardan entre sesiones. Empaquetado en la Fase 7.
+> **Estado:** las 7 fases están completas. La app importa playlists de Spotify y las reproduce buscando cada canción en YouTube, con cola (shuffle, repetir), paso sin silencio a la siguiente, portadas, atajos y controles del sistema (MPRIS, SMTC, "Está sonando" en macOS). Guarda playlists, videos elegidos, historial y ajustes, y hay paquetes para Linux, Windows y macOS.
+
+## Instalar
+
+Los paquetes salen del workflow **Release** (`.github/workflows/release.yml`): en cada tag `v*` se publican en [Releases](https://github.com/devMathiuX/Surco/releases), y en cualquier run quedan como artefactos en la pestaña Actions.
+
+| Sistema | Archivo | Cómo |
+|---|---|---|
+| Linux (Debian/Ubuntu) | `surco_<v>-1_amd64.deb` | `sudo apt install ./surco_*.deb` |
+| Linux (cualquiera) | `Surco-<v>-x86_64.AppImage` | `chmod +x Surco-*.AppImage && ./Surco-*.AppImage` |
+| Linux (portable) | `surco-<v>-linux-x86_64.tar.gz` | descomprimir y correr `./surco` |
+| Windows 10/11 | `Surco-<v>-windows-x64-setup.exe` | instalador por usuario (no pide administrador) |
+| Windows (portable) | `Surco-<v>-windows-x64-portable.zip` | descomprimir y abrir `surco.exe` |
+| macOS 11+ (Intel y Apple Silicon) | `Surco-<v>-macos-universal.dmg` | arrastrar Surco a Aplicaciones |
+
+- **macOS:** la app no está firmada con una cuenta de Apple Developer (va firmada "ad hoc"). La primera vez, clic derecho sobre Surco > **Abrir** > **Abrir**. Si dice que "está dañada", en la Terminal: `xattr -dr com.apple.quarantine /Applications/Surco.app`.
+- **Windows:** SmartScreen puede avisar que el editor es desconocido: **Más información** > **Ejecutar de todas formas**.
+- Los binarios de Linux se compilan en Ubuntu 22.04 (glibc 2.35), así que corren en Debian 12, Ubuntu 22.04 y más nuevas.
+- En los tres, si no hay yt-dlp, la app ofrece bajar el oficial.
+
+Para armar un release: subir la versión en `Cargo.toml` (`[workspace.package]`), y después `git tag v0.2.0 && git push origin v0.2.0`.
 
 ## Requisitos
 
@@ -134,6 +154,33 @@ Todo se guarda en un archivo SQLite (`rusqlite` con SQLite embebido, sin depende
 
 Medido en la Fase 6 (Linux, Xvfb, playlist de 100 canciones restaurada desde la base): **~27-30 MB de RAM** y ~2,8 % de CPU reproduciendo. Binario release: **12,3 MB** (ver "Perfil release").
 
+## Empaquetado (Fase 7)
+
+```
+packaging/
+├─ icons/     surco.ico, surco.icns, PNG de 16 a 1024 px (make_icons.py los genera)
+├─ linux/     surco.desktop, build-appimage.sh (el .deb lo arma cargo-deb, ver crates/app/Cargo.toml)
+├─ windows/   surco.iss (Inno Setup)
+└─ macos/     Info.plist, build-app.sh (lipo + codesign ad hoc + .dmg)
+```
+
+- El `.exe` lleva el ícono y los datos de versión embebidos (`crates/app/build.rs` con `winresource`) y no abre consola.
+- La ventana usa el ícono en Linux y Windows; en macOS lo pone el `.app`.
+- El `.deb` depende solo de `libasound2` y `libxkbcommon0`, y *sugiere* `yt-dlp` y `deno`. No los pide como dependencia porque el yt-dlp de las distros suele estar viejo y YouTube lo rompe.
+
+Medido en la Fase 7 (Linux, Xvfb, binario release con la biblioteca de 100 canciones guardada):
+
+| | Valor | Límite |
+|---|---|---|
+| Binario | **12,5 MB** | < 15 MB |
+| `.deb` | 4,3 MB | |
+| RAM al abrir | **~24 MB** | < 80 MB |
+| RAM reproduciendo, portadas cargadas | ~27-30 MB | < 80 MB |
+| Arranque hasta la ventana visible | **35-55 ms** (6 corridas) | < 1 s |
+| CPU reproduciendo | ~2,8 % | |
+
+Tamaños en los otros sistemas (workflow Release, paso "Tamaños"): `surco.exe` **8,6 MB** (`.zip` portable 4,2 MB); macOS **7,9 MB** en Apple Silicon y 8,7 MB en Intel (`.dmg` universal de 9,0 MB). En Linux pesa más por `zbus` (MPRIS) y el portal de archivos de XDG.
+
 ## Estructura
 
 ```
@@ -212,7 +259,9 @@ Medido en la Fase 2 (Linux, Xvfb, reproduciendo un m4a de 3 min por HTTP): **~23
 
 ## Limitaciones conocidas
 
-- **macOS:** por ahora se corre el binario (`cargo run --release`); el paquete `.app` firmado llega con el empaquetado (Fase 7). Una app abierta desde el Finder no hereda el `PATH` de la terminal, así que Surco además busca yt-dlp y deno en `/opt/homebrew/bin`, `/usr/local/bin` y `~/.deno/bin`.
+- **Firmas:** la app de macOS va firmada ad hoc (sin notarizar) y el `.exe` de Windows sin firmar: los dos muestran un aviso la primera vez (ver "Instalar"). Firmar requiere cuentas pagas de Apple y un certificado de código.
+- **macOS:** una app abierta desde el Finder no hereda el `PATH` de la terminal, así que Surco además busca yt-dlp y deno en `/opt/homebrew/bin`, `/usr/local/bin` y `~/.deno/bin`.
+- **Linux ARM / Windows ARM:** por ahora solo hay paquetes x86_64 (en macOS el binario es universal).
 - **Opus/WebM:** si YouTube solo ofrece el audio en WebM/Opus, por ahora se muestra un error. El fallback (crate `opus` o ffmpeg) queda pendiente; casi todos los videos tienen m4a.
 - En un MP4 fragmentado sin duración en el contenedor (URLs directas) la barra usa la duración de Spotify; con YouTube la duración la da yt-dlp.
 - La lista de canciones no está virtualizada: con playlists de miles de canciones el scroll puede ponerse pesado. Se revisa en la Fase 7.
