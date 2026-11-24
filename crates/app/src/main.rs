@@ -58,6 +58,7 @@ fn main() -> anyhow::Result<()> {
         .window(window::Settings {
             size: Size::new(1000.0, 640.0),
             min_size: Some(Size::new(800.0, 500.0)),
+            icon: window_icon(),
             ..window::Settings::default()
         })
         .run()?;
@@ -100,6 +101,16 @@ fn init_logging() -> Option<tracing_appender::non_blocking::WorkerGuard> {
 
 fn log_dir() -> Option<PathBuf> {
     directories::ProjectDirs::from("", "", "Surco").map(|d| d.data_local_dir().join("logs"))
+}
+
+/// Ícono de la ventana (Linux y Windows; en macOS lo pone el `.app`).
+fn window_icon() -> Option<window::Icon> {
+    const PNG: &[u8] = include_bytes!("../../../packaging/icons/surco-64.png");
+    let img = ::image::load_from_memory_with_format(PNG, ::image::ImageFormat::Png)
+        .ok()?
+        .to_rgba8();
+    let (w, h) = img.dimensions();
+    window::icon::from_rgba(img.into_raw(), w, h).ok()
 }
 
 fn data_dir() -> Option<PathBuf> {
