@@ -14,14 +14,14 @@ const COVER: f32 = 56.0;
 impl Surco {
     pub(crate) fn view_player_bar(&self) -> Element<'_, Message> {
         let s = &self.status;
-        let at = self.now();
-        let now = at.and_then(|n| self.track(n));
+        let at = self.now_in_playlist();
+        let now = self.now_track();
         let resolving =
             now.is_some_and(|t| matches!(self.resolution(t), Some(TrackRes::Resolving)));
 
         // Portada (o un cuadrado vacío).
-        let cover: Element<'_, Message> = match at
-            .and_then(|n| self.video_of(n))
+        let cover: Element<'_, Message> = match now
+            .and_then(|t| self.video_of_track(t))
             .and_then(|v| self.covers.get(v))
         {
             Some(h) => image(h.clone())
@@ -166,10 +166,17 @@ impl Surco {
             .style(theme::card),
             tooltip::Position::Top,
         );
+        let queue = icons::toggle_button(
+            Kind::Queue,
+            18.0,
+            self.screen == crate::Screen::Queue,
+            Message::ToggleQueue,
+        );
         let right = row![
             Space::new().width(Length::Fill),
             change,
             radio,
+            queue,
             icons::icon(Kind::Volume, theme::colors().text_secondary, 18.0),
             volume,
         ]

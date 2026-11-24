@@ -188,6 +188,42 @@ pub fn secondary_text(_: &Theme) -> text::Style {
     }
 }
 
+pub fn accent_text(_: &Theme) -> text::Style {
+    text::Style {
+        color: Some(colors().accent),
+    }
+}
+
+pub fn plain_text(_: &Theme) -> text::Style {
+    text::Style {
+        color: Some(colors().text),
+    }
+}
+
+/// Fila de la cola: la que suena resaltada, el destino del arrastre con una
+/// línea de acento arriba, la arrastrada más tenue.
+pub fn queue_row(current: bool, target: bool, lifted: bool) -> impl Fn(&Theme) -> container::Style {
+    move |_| {
+        let c = colors();
+        let background = if lifted {
+            Some(c.hover.into())
+        } else if current {
+            Some(c.raised.into())
+        } else {
+            None
+        };
+        container::Style {
+            background,
+            border: if target {
+                border::rounded(RADIUS).width(2).color(c.accent)
+            } else {
+                border::rounded(RADIUS)
+            },
+            ..container::Style::default()
+        }
+    }
+}
+
 pub fn error_text(_: &Theme) -> text::Style {
     text::Style {
         color: Some(colors().danger),
