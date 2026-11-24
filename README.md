@@ -24,6 +24,32 @@ Todo lo que importás queda guardado en tu computadora: playlists, videos elegid
 
 ## Instalación
 
+### Ubuntu, Debian y derivadas: una sola línea
+
+Abrí una terminal y pegá:
+
+```sh
+curl -fsSL https://devmathiux.github.io/Surco/install.sh | sudo sh
+```
+
+Esto agrega el repositorio de Surco e instala la app. Después se actualiza sola con el resto del sistema (`sudo apt upgrade` o el Actualizador de software), y para volver a instalarla alcanza con `sudo apt install surco`. Seguí con el [paso 3](#3-instalar-yt-dlp-y-deno).
+
+<details>
+<summary>Prefiero hacerlo a mano</summary>
+
+```sh
+sudo install -d -m 0755 /etc/apt/keyrings
+sudo curl -fsSL https://devmathiux.github.io/Surco/surco.gpg -o /etc/apt/keyrings/surco.gpg
+echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/surco.gpg] https://devmathiux.github.io/Surco stable main" \
+  | sudo tee /etc/apt/sources.list.d/surco.list
+sudo apt update
+sudo apt install surco
+```
+
+</details>
+
+Para el resto de los sistemas (o si preferís bajar el archivo), seguí los pasos de abajo.
+
 ### 1. Descargar Surco
 
 Entrá a [Releases](https://github.com/devMathiuX/Surco/releases) y bajá, de la última versión, el archivo que corresponde a tu sistema:
@@ -65,6 +91,8 @@ Si preferís no instalar nada, descomprimí el `.zip` portable y abrí `surco.ex
 
 <details>
 <summary><b>Linux</b></summary>
+
+**Con el repositorio (Ubuntu, Debian y derivadas, recomendado):** ver [arriba](#ubuntu-debian-y-derivadas-una-sola-línea). Así recibís las actualizaciones solas.
 
 **Con el `.deb` (Ubuntu, Debian y derivadas):** abrí una terminal en la carpeta de descargas y corré:
 
@@ -219,6 +247,9 @@ De YouTube. Spotify solo se usa para leer la lista de canciones de una playlist.
 
 **¿Necesito claves de Spotify?**
 No. Surco importa las playlists públicas enteras sin claves. Las claves de la Web API quedan como respaldo opcional, pero Spotify ahora pide **Premium** para crear una app de desarrollador. Si tenés Premium y querés usarlas: entrá al [panel de desarrolladores de Spotify](https://developer.spotify.com/dashboard), creá una app (cualquier nombre, y como Redirect URI `http://127.0.0.1:8888/callback`), y copiá el **Client ID** y el **Client secret** en **Ajustes > Spotify > Guardar**.
+
+**¿Cómo desinstalo Surco en Linux si lo instalé con la línea de `curl`?**
+`sudo apt remove surco`. Si además querés sacar el repositorio: `sudo rm /etc/apt/sources.list.d/surco.sources /etc/apt/keyrings/surco.gpg`.
 
 **¿Funciona sin internet?**
 Solo con las canciones que ya precargaste (ver Ajustes).
