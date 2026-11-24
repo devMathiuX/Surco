@@ -12,6 +12,9 @@ on:
       - ".github/workflows/release.yml"
       - "crates/app/build.rs"
       - "crates/app/Cargo.toml"
+      # El perfil release y las dependencias cambian los binarios.
+      - "Cargo.toml"
+      - "Cargo.lock"
 
 env:
   CARGO_TERM_COLOR: always
