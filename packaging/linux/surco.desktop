@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Surco
+GenericName=Reproductor de música
+Comment=Escuchá tus playlists de Spotify con audio de YouTube
+Exec=surco
+Icon=surco
+Terminal=false
+Categories=AudioVideo;Audio;Player;
+Keywords=music;spotify;youtube;playlist;música;
+StartupWMClass=surco
