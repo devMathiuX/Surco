@@ -121,3 +121,35 @@ pub fn list_button(selected: bool) -> impl Fn(&Theme, button::Status) -> button:
         }
     }
 }
+
+/// Botón redondo de ícono (controles de reproducción).
+pub fn icon_button(_: &Theme, status: button::Status) -> button::Style {
+    let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
+    button::Style {
+        background: hovered.then(|| color!(0x262626).into()),
+        border: border::rounded(999),
+        ..button::Style::default()
+    }
+}
+
+/// Botón principal redondo (play/pausa).
+pub fn play_button(_: &Theme, status: button::Status) -> button::Style {
+    let bg = match status {
+        button::Status::Hovered | button::Status::Pressed => color!(0xFFFFFF),
+        _ => TEXT,
+    };
+    button::Style {
+        background: Some(bg.into()),
+        border: border::rounded(999),
+        ..button::Style::default()
+    }
+}
+
+/// Lugar de la portada mientras no hay imagen.
+pub fn cover_placeholder(_: &Theme) -> container::Style {
+    container::Style {
+        background: Some(color!(0x262626).into()),
+        border: border::rounded(RADIUS),
+        ..container::Style::default()
+    }
+}

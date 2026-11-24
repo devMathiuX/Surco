@@ -2,7 +2,7 @@
 
 Reproductor de música de escritorio, ultraliviano, escrito en Rust. Importa playlists de Spotify y reproduce cada canción usando YouTube como fuente de audio (vía `yt-dlp`), sin cuenta Premium. Corre en Linux y Windows (x86_64) con la misma base de código.
 
-> **Estado:** Fase 4 de 7 (resolver). La app importa playlists de Spotify y reproduce cada canción buscándola en YouTube: clic en una canción, pasa sola a la siguiente, y si el match es dudoso deja elegir otro video. Cola completa, atajos y MPRIS/SMTC llegan en la Fase 5.
+> **Estado:** Fase 5 de 7 (UI completa). La app importa playlists de Spotify y las reproduce buscando cada canción en YouTube, con cola (shuffle, repetir), paso sin silencio a la siguiente, portadas, atajos de teclado y controles del sistema (MPRIS en Linux, SMTC en Windows). Persistencia (biblioteca, caché, historial) llega en la Fase 6.
 
 ## Requisitos
 
@@ -87,6 +87,31 @@ Resultados del 2026-11-24 (las búsquedas de YouTube cambian entre corridas):
 
 Resolver las 50 tarda ~25 s (3 búsquedas en paralelo). Si un ✗ resulta ser un video correcto que no estaba en la lista, se agrega a `labels.txt`.
 
+## Reproductor (Fase 5)
+
+![Reproductor](docs/fase5-reproductor.png)
+
+- **Barra inferior:** portada, título y artista, shuffle, anterior, play/pausa, siguiente, repetir (apagado → toda la playlist → una canción), barra de progreso con tiempos, volumen y "Cambiar video".
+- **Cola:** clic en una canción arma la cola desde ahí. Con shuffle se mezcla todo menos la actual (Fisher-Yates); con "repetir todo" se vuelve a mezclar en cada vuelta. "Anterior" con más de 3 s reproducidos vuelve al principio de la canción.
+- **Sin silencio entre canciones:** se resuelven de antemano las próximas 3 y el motor abre y decodifica la siguiente mientras suena la actual; al terminar, la pega sin corte (test `preloaded_track_follows_without_gap`).
+- **Errores:** si una canción falla se saltea con un aviso discreto; después de 3 errores seguidos (por ejemplo, sin internet) frena.
+- **Portadas:** la miniatura del video de YouTube, recortada al cuadrado (sin las franjas negras) y guardada en 64 y 256 px en la caché (`~/.cache/surco/covers/`, `%LOCALAPPDATA%\Surco\cache\covers\`). Sin credenciales Spotify no da la portada del álbum, así que se usa siempre la de YouTube.
+- **Controles del sistema:** con [`souvlaki`](https://crates.io/crates/souvlaki). En Linux aparece como `org.mpris.MediaPlayer2.surco` (teclas multimedia, widget de GNOME/KDE, `playerctl`); en Windows, en el panel de medios (SMTC). `SURCO_NO_MEDIA_KEYS=1` los desactiva.
+- **Importar CSV:** botón "Elegir CSV…" (diálogo nativo con `rfd`; en Linux usa el portal de XDG).
+
+| Atajo | Acción |
+|---|---|
+| Espacio | Play / pausa (sin nada sonando, arranca la playlist abierta) |
+| ← / → | −5 s / +5 s |
+| Ctrl+← / Ctrl+→ | Anterior / siguiente |
+| Ctrl+L | Ir al campo para pegar un link |
+| Ctrl+F | Buscar en la playlist (sin distinguir mayúsculas ni tildes) |
+| Esc | Cerrar la búsqueda o el selector de video |
+
+Los íconos se dibujan con `canvas` para no depender de qué fuentes tenga el sistema.
+
+Medido en la Fase 5 (Linux, Xvfb, playlist de 100 canciones importada, 10 resueltas, portadas cargadas): **~24 MB de RAM**. Binario release: **12,3 MB** (sube por `image`, `souvlaki` + `zbus` y `rfd`).
+
 ## Estructura
 
 ```
@@ -166,10 +191,11 @@ Medido en la Fase 2 (Linux, Xvfb, reproduciendo un m4a de 3 min por HTTP): **~23
 ## Limitaciones conocidas
 
 - **Opus/WebM:** si YouTube solo ofrece el audio en WebM/Opus, por ahora se muestra un error. El fallback (crate `opus` o ffmpeg) queda pendiente; casi todos los videos tienen m4a.
-- En un MP4 fragmentado sin duración en el contenedor (URLs directas) no hay barra de progreso; con YouTube la duración la da yt-dlp.
+- En un MP4 fragmentado sin duración en el contenedor (URLs directas) la barra usa la duración de Spotify; con YouTube la duración la da yt-dlp.
+- La lista de canciones no está virtualizada: con playlists de miles de canciones el scroll puede ponerse pesado. Se revisa en la Fase 7.
 - **YouTube y redes "marcadas":** desde IPs de datacenter, VPN o redes con mucho tráfico, YouTube puede pedir "confirmar que no sos un bot" y yt-dlp falla. La app lo muestra como un error claro (no crashea). En una conexión hogareña normal no pasa.
 - **Resolver:** si la grabación exacta no está entre los 5-10 primeros resultados de YouTube (por ejemplo, una versión en vivo poco conocida), puede elegir un cover parecido. Para eso está el selector manual.
-- **Spotify sin credenciales:** máximo 100 canciones por playlist (ver arriba). Para importar un CSV hay que pegar la ruta; el selector de archivos llega con la UI completa (Fase 5).
+- **Spotify sin credenciales:** máximo 100 canciones por playlist (ver arriba). Para playlists más largas, importar un CSV de Exportify.
 - La canción entera queda en memoria mientras suena (~4 MB por cada 4 minutos). Para audios de horas habría que limitarlo.
 
 ## Aviso legal
