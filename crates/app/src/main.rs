@@ -74,6 +74,8 @@ fn init_logging() -> Option<tracing_appender::non_blocking::WorkerGuard> {
     let filter =
         EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("surco=info,warn"));
     let (file_layer, guard) = match log_dir().and_then(|dir| {
+        // Si la carpeta no existe, tracing-appender se queja al limpiar logs viejos.
+        std::fs::create_dir_all(&dir).ok()?;
         tracing_appender::rolling::Builder::new()
             .rotation(tracing_appender::rolling::Rotation::DAILY)
             .filename_prefix("surco")
