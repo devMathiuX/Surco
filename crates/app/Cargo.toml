@@ -1,0 +1,32 @@
+[package]
+name = "surco"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Reproductor de música ultraliviano: playlists de Spotify, audio desde YouTube."
+
+[[bin]]
+name = "surco"
+path = "src/main.rs"
+
+[dependencies]
+surco-core.workspace = true
+surco-spotify.workspace = true
+surco-resolver.workspace = true
+surco-provider.workspace = true
+surco-player.workspace = true
+surco-storage.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+iced.workspace = true
+
+[features]
+default = []
+# Render por GPU (wgpu). Desactivado por defecto: suma ~3 MB al binario y
+# 50-100 MB de RAM por los drivers. Ver README, "Render".
+gpu = ["iced/wgpu"]
+
+[lints]
+workspace = true
