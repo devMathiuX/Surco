@@ -31,6 +31,8 @@ const RELEASES_URL: &str = "https://github.com/yt-dlp/yt-dlp/releases/latest/dow
 pub const AUDIO_FORMAT: &str = "bestaudio[ext=m4a]/bestaudio";
 
 const RESOLVE_TIMEOUT: Duration = Duration::from_secs(45);
+/// Una playlist larga tarda: yt-dlp pide las páginas de a 100.
+const PLAYLIST_TIMEOUT: Duration = Duration::from_secs(120);
 const UPDATE_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// Resultado de pedirle a yt-dlp la URL del audio de un video.
@@ -157,6 +159,61 @@ impl YtDlp {
         Ok(parse_search(&out))
     }
 
+    /// Playlists de YouTube que coinciden con `query`.
+    pub async fn search_playlists(&self, query: &str, n: usize) -> Result<Vec<Listing>> {
+        self.search_filtered(query, "EgIQAw%3D%3D", n).await
+    }
+
+    /// Canales (artistas) que coinciden con `query`.
+    pub async fn search_channels(&self, query: &str, n: usize) -> Result<Vec<Listing>> {
+        self.search_filtered(query, "EgIQAg%3D%3D", n).await
+    }
+
+    /// Búsqueda de YouTube con filtro de tipo (`sp`).
+    async fn search_filtered(&self, query: &str, sp: &str, n: usize) -> Result<Vec<Listing>> {
+        let url = format!(
+            "https://www.youtube.com/results?search_query={}&sp={sp}",
+            encode_query(query)
+        );
+        let end = n.clamp(1, 20).to_string();
+        let out = self
+            .run(
+                [
+                    "--flat-playlist",
+                    "--dump-json",
+                    "--no-warnings",
+                    "--playlist-end",
+                    &end,
+                    "--",
+                    &url,
+                ],
+                RESOLVE_TIMEOUT,
+            )
+            .await?;
+        Ok(parse_listings(&out))
+    }
+
+    /// Videos de una playlist (link de YouTube o YouTube Music): título y canciones.
+    pub async fn playlist(&self, url: &str, max: usize) -> Result<(String, Vec<SearchResult>)> {
+        let end = max.clamp(1, 5000).to_string();
+        let out = self
+            .run(
+                [
+                    "--flat-playlist",
+                    "--yes-playlist",
+                    "-J",
+                    "--no-warnings",
+                    "--playlist-end",
+                    &end,
+                    "--",
+                    url,
+                ],
+                PLAYLIST_TIMEOUT,
+            )
+            .await?;
+        parse_playlist(&out)
+    }
+
     /// Videos parecidos a `video`: el "Mix" de YouTube (`list=RD<id>`), sin
     /// resolver cada uno. El primero suele ser el mismo video.
     pub async fn mix(&self, video: &str, n: usize) -> Result<Vec<SearchResult>> {
@@ -235,29 +292,88 @@ pub struct SearchResult {
     pub views: Option<u64>,
 }
 
+/// Un canal o una playlist en resultados de búsqueda.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Listing {
+    pub id: String,
+    pub title: String,
+    pub url: String,
+    /// Dueño de la playlist (para canales, vacío).
+    pub channel: Option<String>,
+    pub followers: Option<u64>,
+}
+
+fn parse_listings(out: &str) -> Vec<Listing> {
+    out.lines()
+        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+        .filter_map(|v| {
+            let text = |k: &str| v[k].as_str().filter(|s| !s.is_empty()).map(str::to_owned);
+            Some(Listing {
+                id: text("id")?,
+                title: text("title")?,
+                url: text("url")?,
+                channel: text("channel").or_else(|| text("uploader")),
+                followers: v["channel_follower_count"].as_u64(),
+            })
+        })
+        .collect()
+}
+
+/// Salida de `-J --flat-playlist`: un objeto con `title` y `entries`.
+fn parse_playlist(out: &str) -> Result<(String, Vec<SearchResult>)> {
+    let v: serde_json::Value =
+        serde_json::from_str(out.trim()).map_err(|e| Error::Parse(e.to_string()))?;
+    let title = v["title"]
+        .as_str()
+        .unwrap_or("Playlist de YouTube")
+        .to_owned();
+    let entries = v["entries"]
+        .as_array()
+        .map(|a| a.iter().filter_map(search_result).collect())
+        .unwrap_or_default();
+    Ok((title, entries))
+}
+
+/// Para la URL de búsqueda: espacios como `+` y el resto con `%XX`.
+fn encode_query(q: &str) -> String {
+    let mut out = String::with_capacity(q.len() * 2);
+    for b in q.trim().bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char)
+            }
+            b' ' => out.push('+'),
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
+}
+
 /// Una línea JSON por resultado. Las líneas que no se entienden se ignoran.
 fn parse_search(out: &str) -> Vec<SearchResult> {
     out.lines()
         .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
-        .filter_map(|v| {
-            let id = v["id"].as_str()?.to_owned();
-            // Los resultados de canales o playlists no sirven.
-            if id.len() != 11 {
-                return None;
-            }
-            let text = |k: &str| v[k].as_str().filter(|s| !s.is_empty()).map(str::to_owned);
-            Some(SearchResult {
-                id,
-                title: text("title")?,
-                channel: text("channel").or_else(|| text("uploader")),
-                duration: v["duration"]
-                    .as_f64()
-                    .filter(|d| d.is_finite() && *d > 0.0)
-                    .map(Duration::from_secs_f64),
-                views: v["view_count"].as_u64(),
-            })
-        })
+        .filter_map(|v| search_result(&v))
         .collect()
+}
+
+fn search_result(v: &serde_json::Value) -> Option<SearchResult> {
+    let id = v["id"].as_str()?.to_owned();
+    // Los resultados de canales o playlists no sirven.
+    if id.len() != 11 {
+        return None;
+    }
+    let text = |k: &str| v[k].as_str().filter(|s| !s.is_empty()).map(str::to_owned);
+    Some(SearchResult {
+        id,
+        title: text("title")?,
+        channel: text("channel").or_else(|| text("uploader")),
+        duration: v["duration"]
+            .as_f64()
+            .filter(|d| d.is_finite() && *d > 0.0)
+            .map(Duration::from_secs_f64),
+        views: v["view_count"].as_u64(),
+    })
 }
 
 /// Parsea la salida de `--print ext --print duration --print title --print url`.
@@ -374,6 +490,34 @@ async fn make_executable(_: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_playlist_and_listings() {
+        let out = r#"{"id":"PLx","title":"Grandes éxitos","entries":[
+            {"id":"AVEDgT_lG60","title":"Soda Stereo - En la Ciudad de la Furia","channel":"Soda Stereo","duration":377},
+            {"id":"PLnested","title":"no es un video"},
+            {"id":"OX-us7PEfkc","title":"De Música Ligera","duration":290.0}]}"#;
+        let (title, list) = parse_playlist(out).unwrap();
+        assert_eq!(title, "Grandes éxitos");
+        assert_eq!(list.len(), 2);
+        assert_eq!(list[1].duration, Some(Duration::from_secs(290)));
+
+        let out = concat!(
+            r#"{"id":"UC_x","title":"Soda Stereo","url":"https://www.youtube.com/channel/UC_x","channel_follower_count":3040000}"#,
+            "\n",
+            r#"{"id":"PLy","title":"Mix","url":"https://www.youtube.com/playlist?list=PLy","channel":"Alguien"}"#,
+        );
+        let l = parse_listings(out);
+        assert_eq!(l.len(), 2);
+        assert_eq!(l[0].followers, Some(3_040_000));
+        assert_eq!(l[1].channel.as_deref(), Some("Alguien"));
+    }
+
+    #[test]
+    fn encodes_queries() {
+        assert_eq!(encode_query(" soda stereo "), "soda+stereo");
+        assert_eq!(encode_query("ñ&?"), "%C3%B1%26%3F");
+    }
 
     #[test]
     fn parses_stream_info() {

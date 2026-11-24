@@ -57,12 +57,10 @@ impl Surco {
         let Some(cache) = provider.audio_cache() else {
             return Task::none();
         };
-        let p = a.playlist;
         let tracks: Vec<Track> = a
-            .queue
             .upcoming(n.min(a.queue.len()))
             .into_iter()
-            .filter_map(|i| self.track((p, i)).cloned())
+            .cloned()
             .collect();
 
         let mut ready = 0;

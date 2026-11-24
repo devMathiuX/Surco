@@ -11,8 +11,11 @@ mod library;
 mod media;
 mod playback;
 mod precache;
+mod queue_view;
 mod radio;
+mod search;
 mod settings;
+mod spotify_keys;
 mod theme;
 mod view;
 
@@ -155,6 +158,8 @@ struct Surco {
     seeking: Option<f32>,
     fatal: Option<String>,
     spotify_creds: Option<Credentials>,
+    spotify_source: spotify_keys::KeySource,
+    keys_form: spotify_keys::KeysForm,
     http: HttpClient,
     /// Playlists importadas en esta sesión (se guardan en disco en la Fase 6),
     /// con la estrategia que funcionó.
@@ -189,7 +194,8 @@ struct Surco {
     recorded: Option<Source>,
     /// Ajustes de la pantalla de ajustes.
     settings: Settings,
-    show_settings: bool,
+    /// Qué muestra el panel principal.
+    screen: Screen,
     theme: Theme,
     /// yt-dlp + caché de audio (para la precarga y la radio).
     provider: Option<Arc<Provider>>,
@@ -198,6 +204,23 @@ struct Surco {
     precache_dirty: bool,
     radio_loading: bool,
     cover_jobs: CoverJobs,
+    /// Pidiendo parecidas para la cola sin fin.
+    extending: bool,
+    /// Semilla con la que no se consiguieron parecidas (no reintentar en bucle).
+    extend_failed: Option<String>,
+    /// Arrastre en la cola: posición tomada y posición sobre la que está.
+    drag: Option<(usize, usize)>,
+    search: search::SearchState,
+}
+
+/// Panel principal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Screen {
+    /// Playlist abierta (o la pantalla de inicio).
+    Library,
+    Settings,
+    Queue,
+    Search,
 }
 
 /// Aviso discreto en la barra lateral.
@@ -251,6 +274,18 @@ enum Message {
     StartRadio,
     RadioLoaded(bool, radio::RadioResult),
     Precached(String, Result<Match, String>),
+    /// Llegaron parecidas para la cola sin fin (semilla, videos).
+    QueueExtended(String, Result<Vec<surco_provider::SearchResult>, String>),
+    /// Mostrar u ocultar la cola.
+    ToggleQueue,
+    /// Agregar a la cola: al final, o para que suene después de la actual.
+    Enqueue(Box<surco_core::Track>, bool),
+    QueueRemove(usize),
+    DragStart(usize),
+    DragOver(usize),
+    DragEnd,
+    Search(search::SearchMsg),
+    Keys(spotify_keys::KeysMsg),
     OpenFilter,
     FilterChanged(String),
     CloseFilter,
@@ -286,7 +321,9 @@ impl Surco {
             },
             seeking: None,
             fatal,
-            spotify_creds: config::Config::load().spotify_credentials(),
+            spotify_creds: None,
+            spotify_source: spotify_keys::KeySource::None,
+            keys_form: spotify_keys::KeysForm::default(),
             http: HttpClient::new(),
             playlists: Vec::new(),
             selected: None,
@@ -307,16 +344,21 @@ impl Surco {
             store: library::open(),
             recorded: None,
             settings: Settings::default(),
-            show_settings: false,
+            screen: Screen::Library,
             theme: theme::iced_theme(),
             provider,
             precache: PrecacheState::default(),
             precache_dirty: false,
             radio_loading: false,
             cover_jobs: CoverJobs::default(),
+            extending: false,
+            extend_failed: None,
+            drag: None,
+            search: search::SearchState::default(),
         };
         state.restore();
         state.load_settings();
+        state.load_spotify_keys();
         let covers = state.queue_list_covers();
         // Los controles del sistema necesitan la ventana (HWND en Windows).
         let handle = window::oldest()
@@ -337,8 +379,9 @@ impl Surco {
     fn update(&mut self, message: Message) -> Task<Message> {
         let task = self.handle(message);
         let precache = self.pump_precache();
+        let endless = self.extend_endless();
         self.sync_media();
-        Task::batch([task, precache])
+        Task::batch([task, precache, endless])
     }
 
     fn handle(&mut self, message: Message) -> Task<Message> {
@@ -410,7 +453,7 @@ impl Surco {
             Message::SelectPlaylist(i) => {
                 self.selected = i;
                 self.filter = None;
-                self.show_settings = false;
+                self.screen = Screen::Library;
                 self.persist_selected();
                 return self.queue_list_covers();
             }
@@ -425,7 +468,11 @@ impl Surco {
             Message::CycleRepeat => return self.cycle_repeat(),
             Message::Cover(id, result) => return self.on_cover(id, result),
             Message::ToggleSettings => {
-                self.show_settings = !self.show_settings;
+                self.screen = if self.screen == Screen::Settings {
+                    Screen::Library
+                } else {
+                    Screen::Settings
+                };
                 self.filter = None;
             }
             Message::Setting(change) => return self.change_setting(change),
@@ -433,6 +480,26 @@ impl Surco {
             Message::StartRadio => return self.start_radio(false),
             Message::RadioLoaded(autostart, result) => return self.on_radio(autostart, result),
             Message::Precached(key, result) => return self.on_precached(key, result),
+            Message::QueueExtended(seed, result) => return self.on_extended(seed, result),
+            Message::ToggleQueue => {
+                self.screen = if self.screen == Screen::Queue {
+                    Screen::Library
+                } else {
+                    Screen::Queue
+                };
+                self.drag = None;
+            }
+            Message::Enqueue(track, next) => return self.enqueue(*track, next),
+            Message::QueueRemove(pos) => self.queue_remove(pos),
+            Message::DragStart(pos) => self.drag = Some((pos, pos)),
+            Message::DragOver(pos) => {
+                if let Some((from, _)) = self.drag {
+                    self.drag = Some((from, pos));
+                }
+            }
+            Message::DragEnd => return self.drag_end(),
+            Message::Search(msg) => return self.on_search(msg),
+            Message::Keys(msg) => self.on_keys(msg),
             Message::OpenFilter => {
                 if self.selected.is_some() {
                     self.filter.get_or_insert_with(String::new);
@@ -493,8 +560,8 @@ impl Surco {
                 {
                     Some(i) => {
                         self.playlists[i] = (imp.playlist, imp.source.to_owned());
-                        if self.active.as_ref().is_some_and(|a| a.playlist == i) {
-                            self.active = None;
+                        if let Some(a) = self.active.as_mut().filter(|a| a.origin == Some(i)) {
+                            a.origin = None;
                         }
                         i
                     }
@@ -525,11 +592,15 @@ impl Surco {
         let Some(rt) = RUNTIME.get() else {
             return Task::none();
         };
+        if let Some(id) = search::youtube_playlist_id(&input) {
+            return self.import_youtube(input, id);
+        }
         let csv = csv_path(&input);
         if csv.is_none() && surco_spotify::parse_playlist_id(&input).is_none() {
             self.notice = Some(Notice {
                 error: true,
-                text: "Eso no parece un link de playlist de Spotify ni un archivo .csv.".into(),
+                text: "Eso no parece un link de playlist de Spotify o YouTube, ni un archivo .csv."
+                    .into(),
             });
             return Task::none();
         }
@@ -556,17 +627,15 @@ impl Surco {
 
     /// Le cuenta al sistema (MPRIS/SMTC) qué suena.
     fn sync_media(&mut self) {
-        let Some(media) = &mut self.media else {
+        if self.media.is_none() {
             return;
-        };
-        let now = self.active.as_ref().and_then(|a| {
-            let at = (a.playlist, a.queue.current()?);
-            let t = self.playlists.get(at.0)?.0.tracks.get(at.1)?;
+        }
+        let now = self.now_track().map(|t| {
             let video = match self.resolutions.get(&surco_resolver::cache_key(t)) {
                 Some(TrackRes::Done(m)) => Some(m.youtube_id.clone()),
                 _ => None,
             };
-            Some(media::NowPlaying {
+            media::NowPlaying {
                 title: t.title.clone(),
                 artist: t.artists.join(", "),
                 album: t.album.clone(),
@@ -574,10 +643,13 @@ impl Surco {
                 cover_url: video.and_then(|v| {
                     covers::large_path(&v).map(|p| format!("file://{}", p.display()))
                 }),
-            })
+            }
         });
         let playing = matches!(self.status.state, PlayerState::Playing);
-        media.update(now.as_ref(), playing, self.status.position);
+        let position = self.status.position;
+        if let Some(media) = &mut self.media {
+            media.update(now.as_ref(), playing, position);
+        }
     }
 
     fn subscription(&self) -> Subscription<Message> {
@@ -590,6 +662,15 @@ impl Surco {
         }
         if self.media.is_some() {
             subs.push(Subscription::run(media::events));
+        }
+        if self.drag.is_some() {
+            // Soltar el botón en cualquier lado termina el arrastre.
+            subs.push(iced::event::listen_with(|event, _, _| match event {
+                iced::Event::Mouse(iced::mouse::Event::ButtonReleased(
+                    iced::mouse::Button::Left,
+                )) => Some(Message::DragEnd),
+                _ => None,
+            }));
         }
         Subscription::batch(subs)
     }
