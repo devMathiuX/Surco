@@ -133,7 +133,10 @@ impl WebApi {
                     tokio::time::sleep(wait).await;
                 }
                 429 => return Err(Error::RateLimited(Duration::ZERO)),
-                404 => return Err(Error::NotFound),
+                // 404: o no existe, o es una playlist editorial/algorítmica que
+                // Spotify no le muestra a apps nuevas. No cortamos la cascada:
+                // la página embed decide si de verdad no existe.
+                404 => return Err(Error::Status(404)),
                 // 403: típico de las restricciones de Development Mode.
                 403 => return Err(Error::NoTracks),
                 _ => return Err(Error::Status(status)),

@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 pub use audio_cache::{is_video_id, AudioCache, CacheUsage, DEFAULT_LIMIT as AUDIO_CACHE_LIMIT};
 pub use http_stream::{download_all, HttpStream, StreamProgress};
 pub use reqwest::Client as HttpClient;
-pub use ytdlp::{SearchResult, StreamInfo, YtDlp, AUDIO_FORMAT, BINARY_NAME};
+pub use ytdlp::{Listing, SearchResult, StreamInfo, YtDlp, AUDIO_FORMAT, BINARY_NAME};
 
 /// Errores de este crate.
 #[derive(Debug, thiserror::Error)]

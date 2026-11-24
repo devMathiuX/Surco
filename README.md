@@ -193,6 +193,23 @@ El engranaje de arriba a la izquierda abre los ajustes. Todo se guarda en la bib
 - **Precargar canciones:** "Las próximas 5" o "Toda la playlist" bajan el audio a disco antes de que suene, de a una canción por vez, así no hay que esperar a que cargue ni depende de la red en ese momento. Van a `~/.cache/surco/audio/` (`%LOCALAPPDATA%\Surco\cache\audio\`, `~/Library/Caches/Surco/audio/`), con un tope de 2 GB: al pasarse se borran las menos escuchadas. "Vaciar" borra todo. Por defecto está apagado.
 - **Radio (canciones parecidas):** el botón de ondas de la barra de abajo arma una playlist "Radio" con ~25 canciones parecidas a la que suena, sacadas del Mix de YouTube (sin buscar una por una), y sigue sin cortar la actual. Con "Al terminar, seguir con canciones parecidas" (prendido por defecto), cuando se termina la cola, o un video suelto, arranca sola una radio a partir de la última canción. Hay una sola playlist de radio: una nueva reemplaza a la anterior.
 
+## Buscador, cola y playlists de YouTube
+
+- **Buscador** ("Buscar" en la barra lateral): canciones, artistas y playlists de YouTube, con yt-dlp (`ytsearch` y la búsqueda de YouTube con filtro de canales y de playlists). Un artista muestra sus canciones más escuchadas; una playlist se puede escuchar o "Guardar en la biblioteca".
+- **Música sin fin:** lo que se escucha desde el buscador nunca se corta. Cuando quedan menos de 3 canciones en la cola, se agregan unas 25 parecidas a la última (el Mix de YouTube). Con "Al terminar, seguir con canciones parecidas" lo mismo pasa con cualquier cola sin "repetir".
+- **Cola** ("Cola" en la barra lateral o el botón de la barra de abajo): la que suena y lo que sigue. Se arrastra una canción para cambiarle el lugar, la × la saca, y un clic la pone a sonar. El + de cada canción (en las playlists y en el buscador) la agrega al final.
+- **Playlists de YouTube y YouTube Music:** se pega el link (`youtube.com/playlist?list=…`, `music.youtube.com/playlist?list=…`, o un video con `&list=`) en el mismo campo que los de Spotify. Se importan enteras (hasta 2000), ya resueltas: no hace falta buscar cada canción.
+
+## Spotify sin límite de 100 canciones
+
+La página pública de Spotify muestra hasta 100 canciones. Con claves de la Web API (Client Credentials) la playlist se importa entera, de a 100 por página. Las claves se eligen en este orden:
+
+1. Las que el usuario carga en **Ajustes → Spotify**.
+2. Las de `config.toml`.
+3. Las que trae el build oficial: el workflow Release las inyecta al compilar desde los secretos del repo `SPOTIFY_CLIENT_ID` y `SPOTIFY_CLIENT_SECRET` (variables `SURCO_SPOTIFY_CLIENT_ID` / `SURCO_SPOTIFY_CLIENT_SECRET`, leídas con `option_env!`). No están en el código. Un build local sin esas variables sale sin claves.
+
+Si la API falla (403 o 404, como con las playlists editoriales de Spotify para apps nuevas, o 429), la importación sigue con la página pública y, si hace falta, con un CSV de Exportify. Las claves incluidas en un programa que se distribuye se pueden extraer: solo dan acceso a datos públicos, y si se abusa de ellas se cambian.
+
 ## Estructura
 
 ```
