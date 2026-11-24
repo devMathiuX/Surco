@@ -1,21 +1,12 @@
 name: Release
 
-# Arma los paquetes de los 3 sistemas y los deja como artefactos del run.
-# Con un tag `v*` además crea un Release de GitHub con todos los archivos.
+# Arma los paquetes de los 3 sistemas al publicar una versión (tag `v*`) y
+# crea un Release de GitHub con todos los archivos. No corre en PRs.
 on:
   push:
     tags: ["v*"]
+  # A mano desde la pestaña Actions, si hace falta un build sin publicar versión.
   workflow_dispatch:
-  pull_request:
-    paths:
-      - "packaging/**"
-      - ".github/workflows/release.yml"
-      - "crates/app/build.rs"
-      - "crates/app/Cargo.toml"
-      # El perfil release y las dependencias cambian los binarios.
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - "crates/**"
 
 env:
   CARGO_TERM_COLOR: always
