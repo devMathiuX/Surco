@@ -1,0 +1,53 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/core",
+    "crates/spotify",
+    "crates/resolver",
+    "crates/provider",
+    "crates/player",
+    "crates/storage",
+    "crates/app",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.88"
+license = "MIT"
+repository = "https://github.com/devMathiuX/Ferro"
+
+[workspace.dependencies]
+surco-core = { path = "crates/core" }
+surco-spotify = { path = "crates/spotify" }
+surco-resolver = { path = "crates/resolver" }
+surco-provider = { path = "crates/provider" }
+surco-player = { path = "crates/player" }
+surco-storage = { path = "crates/storage" }
+
+serde = { version = "1", features = ["derive"] }
+thiserror = "2"
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "env-filter", "ansi"] }
+iced = { version = "0.14", default-features = false, features = ["tiny-skia", "crisp", "x11", "wayland", "tokio"] }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+unwrap_used = "deny"
+expect_used = "warn"
+
+# Perfil release: tamaño y velocidad. Ver README, sección "Perfil release".
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true
+
+# Variante optimizada para tamaño, para comparar: `cargo build --profile release-z`
+[profile.release-z]
+inherits = "release"
+opt-level = "z"
