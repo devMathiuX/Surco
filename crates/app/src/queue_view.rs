@@ -12,7 +12,7 @@ use surco_core::{format_duration, Track};
 
 use crate::icons::{self, Kind};
 use crate::playback::{Active, TrackRes};
-use crate::{theme, Message, Notice, Surco};
+use crate::{theme, Drag, DragList, Message, Notice, Surco};
 
 impl Surco {
     /// Agrega una canción a la cola (al final, o después de la actual).
@@ -70,9 +70,17 @@ impl Surco {
 
     /// Se soltó el botón: mover la fila arrastrada o, si no se movió, saltar a ella.
     pub(crate) fn drag_end(&mut self) -> Task<Message> {
-        let Some((from, to)) = self.drag.take() else {
+        let Some(Drag { list, from, to }) = self.drag.take() else {
             return Task::none();
         };
+        if list == DragList::Sidebar {
+            // Sin moverse es un clic: abrir la playlist.
+            if from == to {
+                return self.handle(Message::SelectPlaylist(Some(from)));
+            }
+            self.move_playlist(from, to);
+            return Task::none();
+        }
         if from == to {
             return self.queue_jump(from);
         }
@@ -119,16 +127,14 @@ impl Surco {
             }
             list = list.push(self.queue_row(p, p == pos, t));
         }
-        if a.endless || self.extending {
+        if self.extending {
+            list = list.push(crate::skeleton::song_rows(3, self.pulse));
+        } else if a.endless {
             list = list.push(
                 container(
-                    text(if self.extending {
-                        "Buscando canciones parecidas…"
-                    } else {
-                        "Cuando se acerque el final se agregan canciones parecidas."
-                    })
-                    .size(theme::SIZE_S)
-                    .style(theme::secondary_text),
+                    text("Cuando se acerque el final se agregan canciones parecidas.")
+                        .size(theme::SIZE_S)
+                        .style(theme::secondary_text),
                 )
                 .padding([10, 8]),
             );
@@ -154,8 +160,9 @@ impl Surco {
     }
 
     fn queue_row<'a>(&'a self, pos: usize, current: bool, t: &'a Track) -> Element<'a, Message> {
-        let target = self.drag.is_some_and(|(from, to)| to == pos && from != pos);
-        let lifted = self.drag.is_some_and(|(from, _)| from == pos);
+        let drag = self.drag.filter(|d| d.list == DragList::Queue);
+        let target = drag.is_some_and(|d| d.to == pos && d.from != pos);
+        let lifted = drag.is_some_and(|d| d.from == pos);
         let status: Element<'_, Message> = match self.resolution(t) {
             Some(TrackRes::Resolving) => text("buscando…")
                 .size(theme::SIZE_S)
@@ -230,8 +237,11 @@ impl Surco {
             .width(Length::Fill)
             .style(theme::queue_row(current, target, lifted));
         mouse_area(row)
-            .on_press(Message::DragStart(pos))
-            .on_enter(Message::DragOver(pos))
+            .on_press(Message::DragStart(DragList::Queue, pos))
+            // Soltar encima de una fila (el evento global puede no estar
+            // suscripto todavía si el clic fue muy rápido).
+            .on_release(Message::DragEnd)
+            .on_enter(Message::DragOver(DragList::Queue, pos))
             .interaction(if self.drag.is_some() {
                 mouse::Interaction::Grabbing
             } else {

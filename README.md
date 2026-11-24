@@ -9,7 +9,9 @@ Funciona en **Linux**, **Windows** y **macOS** (Intel y Apple Silicon).
 ## Qué podés hacer
 
 - **Importar playlists** de Spotify, YouTube o YouTube Music pegando el link, o desde un archivo CSV.
-- **Buscar** canciones, artistas y playlists de YouTube sin salir de la app.
+- **Buscar** canciones, artistas y playlists de YouTube sin salir de la app: los resultados aparecen mientras escribís.
+- **Armar tus playlists**: creá las tuyas, agregá canciones desde el buscador o desde otras playlists, cambiales el nombre y ordenalas arrastrando.
+- **Descubrir canciones**: al final de cada playlist hay recomendaciones parecidas para sumarle.
 - **Escuchar sin cortes**: la próxima canción se prepara mientras suena la actual.
 - **Música sin fin**: si escuchás desde el buscador, Surco va sumando canciones parecidas a la cola para que nunca se termine.
 - **Radio**: armá una lista de canciones parecidas a la que está sonando.
@@ -18,7 +20,7 @@ Funciona en **Linux**, **Windows** y **macOS** (Intel y Apple Silicon).
 - **Usar las teclas multimedia** del teclado y los controles de música del sistema.
 - **Cambiar el tema**: oscuro, verde, rosa, claro y claro rosa.
 
-Todo lo que importás queda guardado en tu computadora: playlists, videos elegidos, historial y ajustes.
+Todo lo que importás queda guardado en tu computadora: playlists, videos elegidos, historial y ajustes. La pantalla de **Inicio** te muestra tus playlists y lo último que escuchaste.
 
 ## Instalación
 
@@ -100,15 +102,17 @@ Después de instalar deno, cerrá y volvé a abrir Surco. Si ya tenés `node` o 
 
 ## Cómo se usa
 
+![Inicio](docs/inicio.png)
+
 ### Importar una playlist
 
-Pegá el link en el campo de abajo a la izquierda (o apretá **Ctrl+L**) y apretá **Enter** o **+ Importar**. Sirven:
+Entrá a **Importar** en la barra lateral (o apretá **Ctrl+L**), pegá el link y apretá **Enter** o **Importar**. Sirven:
 
 - **Spotify:** `https://open.spotify.com/playlist/…` (el link de "Compartir > Copiar enlace").
 - **YouTube y YouTube Music:** `https://www.youtube.com/playlist?list=…`, `https://music.youtube.com/playlist?list=…` o un video que esté dentro de una playlist.
 - **Un archivo CSV:** con el botón **Elegir CSV…**. Por ejemplo, uno exportado desde [Exportify](https://exportify.net).
 
-La playlist queda guardada en la barra lateral. Hacé clic en una canción para escucharla: Surco busca el video en YouTube y sigue sola con las demás.
+La playlist queda guardada en la barra lateral y sus portadas van apareciendo solas. Hacé clic en una canción para escucharla: Surco busca el video en YouTube y sigue sola con las demás.
 
 **Playlists de Spotify de más de 100 canciones:** la versión oficial de Surco las importa enteras. Si alguna vez solo trae las primeras 100, cargá tus propias claves de Spotify (ver [Preguntas frecuentes](#preguntas-frecuentes)) o importá un CSV de Exportify.
 
@@ -116,12 +120,21 @@ La playlist queda guardada en la barra lateral. Hacé clic en una canción para 
 
 ![Buscador](docs/buscador.png)
 
-Entrá a **Buscar** en la barra lateral, escribí y apretá **Enter**. Aparecen canciones, artistas y playlists:
+Escribí en el buscador del **Inicio** o entrá a **Buscar** en la barra lateral. Cuando dejás de escribir aparecen canciones, artistas y playlists:
 
 - Clic en una **canción** para escucharla. Surco sigue con canciones parecidas, así que la música no se corta.
 - Clic en un **artista** para ver sus canciones más escuchadas.
 - Clic en una **playlist** para verla, escucharla o **Guardar en la biblioteca**.
-- El **+** al lado de cada canción la agrega al final de la cola.
+- El **+** al lado de cada canción la agrega a la cola o a una de tus playlists.
+
+### Tus playlists
+
+- **Crear una:** el **+** al lado de "Tu biblioteca", en la barra lateral, o "+ Nueva playlist" en el menú del **+** de cualquier canción.
+- **Agregar canciones:** el **+** de una canción (en el buscador, en otra playlist o en el inicio) y elegí la playlist.
+- **Quitar una canción:** el **+** de la canción dentro de la playlist, y **Quitar de…**.
+- **Cambiar el nombre:** **Renombrar**, arriba de la playlist. También sirve para guardar una radio: con nombre deja de reemplazarse por la próxima.
+- **Cambiar el orden:** arrastrá la playlist en la barra lateral.
+- **Recomendadas:** al final de cada playlist hay canciones parecidas. **Agregar** la suma a la playlist, un clic la escucha, y **Otras** trae más.
 
 ### La cola de reproducción
 
@@ -147,7 +160,7 @@ El engranaje de arriba a la izquierda abre los ajustes:
 
 - **Tema** de colores.
 - **Portadas en la lista** de canciones.
-- **Precargar canciones:** baja de antemano las próximas 5 canciones, o toda la playlist, para que no haya que esperar ni dependan de la conexión. Usa hasta 2 GB de disco. **Vaciar** borra lo descargado.
+- **Precargar canciones:** baja de antemano las próximas 5 canciones, o toda la playlist, para que no haya que esperar ni dependan de la conexión. Usa hasta 2 GB de disco. **Vaciar** borra todo lo descargado, y en la lista de abajo podés borrar solo lo de una playlist. También está **Borrar descargas** arriba de cada playlist.
 - **Spotify:** para cargar tus propias claves (ver abajo).
 
 ### Atajos de teclado
@@ -157,9 +170,9 @@ El engranaje de arriba a la izquierda abre los ajustes:
 | Espacio | Reproducir / pausar |
 | ← / → | Retroceder / adelantar 5 segundos |
 | Ctrl+← / Ctrl+→ | Canción anterior / siguiente |
-| Ctrl+L | Ir al campo para pegar un link |
+| Ctrl+L | Importar una playlist (pegar un link) |
 | Ctrl+F | Buscar dentro de la playlist abierta |
-| Esc | Cerrar la búsqueda o el selector de video |
+| Esc | Cerrar la búsqueda, el selector de video o el menú de una canción |
 
 En macOS, usá **Cmd** en lugar de Ctrl. Las teclas multimedia del teclado también funcionan, y Surco aparece en los controles de música del sistema (el panel de medios de Windows, "Está sonando" en macOS y el widget de música en Linux).
 

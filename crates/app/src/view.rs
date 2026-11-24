@@ -1,56 +1,99 @@
-//! Vistas: barra lateral, estado vacío, lista de la playlist (con búsqueda),
-//! selector de video y panel de prueba.
+//! Vistas: barra lateral, importar, lista de la playlist (con búsqueda y
+//! recomendadas), ajustes y selector de video.
 
 use iced::widget::{
-    button, column, container, image, row, scrollable, text, text_input, toggler, tooltip, Column,
-    Id, Space,
+    button, column, container, image, mouse_area, row, scrollable, stack, text, text_input,
+    toggler, tooltip, Column, Id, Space,
 };
-use iced::{Alignment, Element, Length};
-use surco_core::{format_duration, PlayerState, Playlist, Track};
+use iced::{mouse, Alignment, Element, Length};
+use surco_core::{format_duration, Playlist, Track};
 
 use crate::icons::{self, Kind};
 use crate::playback::TrackRes;
+use crate::playlists::{OWN_SOURCE, RENAME_INPUT};
 use crate::settings::{Change, Precache};
-use crate::{theme, Message, Screen, Surco, YtDlpState, FILTER_INPUT, IMPORT_INPUT};
+use crate::{skeleton, theme, DragList, Message, Screen, Surco, FILTER_INPUT, IMPORT_INPUT};
 
 impl Surco {
     pub(crate) fn view(&self) -> Element<'_, Message> {
-        let main: Element<'_, Message> = match self.selected.and_then(|i| self.playlists.get(i)) {
-            _ if self.screen == Screen::Settings => self.view_settings(),
-            _ if self.screen == Screen::Queue => self.view_queue(),
-            _ if self.screen == Screen::Search => self.view_search(),
-            Some((playlist, source)) => {
-                self.view_playlist(self.selected.unwrap_or(0), playlist, source)
-            }
-            None => self.view_empty(),
+        let main: Element<'_, Message> = match self.screen {
+            Screen::Settings => self.view_settings(),
+            Screen::Queue => self.view_queue(),
+            Screen::Search => self.view_search(),
+            Screen::Import => self.view_import(),
+            Screen::Home => self.view_home(),
+            Screen::Library if self.radio_waiting => column![
+                skeleton::header(self.pulse),
+                skeleton::song_rows(10, self.pulse)
+            ]
+            .spacing(24)
+            .into(),
+            Screen::Library => match self.selected.and_then(|i| self.playlists.get(i)) {
+                Some((playlist, source)) => {
+                    self.view_playlist(self.selected.unwrap_or(0), playlist, source)
+                }
+                None => self.view_home(),
+            },
         };
         let main = container(main)
             .padding([24, 32])
             .width(Length::Fill)
             .height(Length::Fill);
 
-        column![
+        let app: Element<'_, Message> = column![
             row![self.view_sidebar(), main].height(Length::Fill),
             self.view_player_bar()
         ]
-        .into()
+        .into();
+        match &self.song_menu {
+            Some(menu) => stack![app, self.view_song_menu(menu)].into(),
+            None => app,
+        }
     }
 
     pub(crate) fn view_sidebar(&self) -> Element<'_, Message> {
+        let drag = self.drag.filter(|d| d.list == DragList::Sidebar);
         let mut list = Column::new().spacing(2);
         for (i, (p, _)) in self.playlists.iter().enumerate() {
+            let selected = self.screen == Screen::Library && self.selected == Some(i);
+            let target = drag.is_some_and(|d| d.to == i && d.from != i);
+            let lifted = drag.is_some_and(|d| d.from == i);
+            let hovered = self.sidebar_hover == Some(i);
+            let playing = self.active.as_ref().is_some_and(|a| a.origin == Some(i));
+            let label = text(&p.name)
+                .size(theme::SIZE_S)
+                .wrapping(text::Wrapping::None)
+                .width(Length::Fill);
+            let content: Element<'_, Message> = if playing {
+                row![
+                    label,
+                    icons::glyph(Kind::Volume, theme::colors().accent, 13.0)
+                ]
+                .align_y(Alignment::Center)
+                .into()
+            } else {
+                label.into()
+            };
             list = list.push(
-                button(
-                    text(&p.name)
-                        .size(theme::SIZE_S)
-                        .wrapping(text::Wrapping::None),
+                mouse_area(
+                    container(content)
+                        .padding([6, 8])
+                        .width(Length::Fill)
+                        .clip(true)
+                        .style(theme::drag_row(selected, hovered, target, lifted)),
                 )
-                .on_press(Message::SelectPlaylist(Some(i)))
-                .width(Length::Fill)
-                .padding([6, 8])
-                .style(theme::list_button(
-                    self.screen == Screen::Library && self.selected == Some(i),
-                )),
+                .on_press(Message::DragStart(DragList::Sidebar, i))
+                // Soltar encima de una fila (el evento global puede no estar
+                // suscripto todavía si el clic fue muy rápido).
+                .on_release(Message::DragEnd)
+                .on_enter(Message::SidebarHover(Some(i)))
+                .on_exit(Message::SidebarHover(None))
+                .on_move(move |_| Message::DragOver(DragList::Sidebar, i))
+                .interaction(if drag.is_some() {
+                    mouse::Interaction::Grabbing
+                } else {
+                    mouse::Interaction::Pointer
+                }),
             );
         }
         let nav = |kind: Kind, label: &'static str, screen: Screen, msg: Message| {
@@ -82,6 +125,7 @@ impl Surco {
             .map(|a| a.queue.len().saturating_sub(a.queue.pos() + 1))
             .unwrap_or(0);
         let nav = column![
+            nav(Kind::Home, "Inicio", Screen::Home, Message::GoHome),
             nav(
                 Kind::Search,
                 "Buscar",
@@ -98,33 +142,14 @@ impl Surco {
                 Screen::Queue,
                 Message::ToggleQueue
             ),
+            nav(
+                Kind::Import,
+                "Importar",
+                Screen::Import,
+                Message::OpenImport
+            ),
         ]
         .spacing(2);
-
-        let input = text_input("Link de Spotify, YouTube o .csv", &self.import_input)
-            .id(Id::new(IMPORT_INPUT))
-            .on_input(Message::ImportInputChanged)
-            .on_submit(Message::Import)
-            .padding(8)
-            .size(theme::SIZE_S)
-            .style(theme::input);
-        let import = button(
-            text(if self.importing {
-                "Importando…"
-            } else {
-                "+ Importar"
-            })
-            .size(theme::SIZE_S),
-        )
-        .on_press_maybe((!self.importing).then_some(Message::Import))
-        .width(Length::Fill)
-        .padding([6, 10])
-        .style(theme::ghost_button);
-        let pick_csv = button(text("Elegir CSV…").size(theme::SIZE_S))
-            .on_press_maybe((!self.importing).then_some(Message::PickCsv))
-            .width(Length::Fill)
-            .padding([6, 10])
-            .style(theme::ghost_button);
 
         let gear = tooltip(
             button(icons::icon(
@@ -144,22 +169,43 @@ impl Surco {
                 .style(theme::card),
             tooltip::Position::Bottom,
         );
-        let mut col = column![
-            row![
-                button(text("Surco").size(theme::SIZE_L))
-                    .on_press(Message::SelectPlaylist(None))
-                    .padding(0)
-                    .style(theme::list_button(false)),
-                Space::new().width(Length::Fill),
-                gear,
-            ]
-            .align_y(Alignment::Center),
-            nav,
-            scrollable(list).height(Length::Fill),
-            input,
-            column![import, pick_csv].spacing(4),
+        let logo: Element<'_, Message> = match &self.logo {
+            Some(h) => image(h.clone()).width(26).height(26).into(),
+            None => Space::new().into(),
+        };
+        let brand = button(
+            row![logo, text("Surco").size(theme::SIZE_L)]
+                .spacing(8)
+                .align_y(Alignment::Center),
+        )
+        .on_press(Message::GoHome)
+        .padding(0)
+        .style(theme::list_button(false));
+        let library_header = row![
+            text("Tu biblioteca")
+                .size(theme::SIZE_S)
+                .style(theme::secondary_text)
+                .width(Length::Fill),
+            tooltip(
+                button(icons::icon(Kind::Add, theme::colors().text_secondary, 14.0))
+                    .on_press(Message::NewPlaylist)
+                    .padding(4)
+                    .style(theme::icon_button),
+                container(text("Nueva playlist").size(theme::SIZE_S))
+                    .padding(6)
+                    .style(theme::card),
+                tooltip::Position::Bottom,
+            ),
         ]
-        .spacing(12);
+        .align_y(Alignment::Center)
+        .padding(iced::Padding::ZERO.left(8));
+        let mut col = column![
+            row![brand, Space::new().width(Length::Fill), gear].align_y(Alignment::Center),
+            nav,
+            column![library_header, scrollable(list).height(Length::Fill)].spacing(6),
+        ]
+        .spacing(16)
+        .height(Length::Fill);
         if let Some(n) = &self.notice {
             col = col.push(text(&n.text).size(theme::SIZE_S).style(if n.error {
                 theme::error_text
@@ -175,20 +221,56 @@ impl Surco {
             .into()
     }
 
-    pub(crate) fn view_empty(&self) -> Element<'_, Message> {
-        column![
-            text("Pegá un link de playlist de Spotify para empezar").size(theme::SIZE_L),
-            text("Usá el campo de la izquierda (Ctrl+L) o elegí un CSV exportado con Exportify. Clic en una canción para escucharla.")
-                .size(theme::SIZE_S)
-                .style(theme::secondary_text),
-            text("Atajos: Espacio pausa · ←/→ 5 s · Ctrl+←/→ anterior/siguiente · Ctrl+F buscar · Esc cierra")
-                .size(theme::SIZE_S)
-                .style(theme::secondary_text),
-            Space::new().height(24),
-            self.view_test_panel(),
+    /// Pantalla "Importar": pegar un link o elegir un CSV.
+    pub(crate) fn view_import(&self) -> Element<'_, Message> {
+        let input = text_input("Pegá el link de la playlist", &self.import_input)
+            .id(Id::new(IMPORT_INPUT))
+            .on_input(Message::ImportInputChanged)
+            .on_submit(Message::Import)
+            .padding(10)
+            .size(theme::SIZE_M)
+            .style(theme::input);
+        let import = button(text("Importar").size(theme::SIZE_S))
+            .on_press_maybe((!self.importing).then_some(Message::Import))
+            .padding([10, 16])
+            .style(theme::primary_button);
+        let pick_csv = button(text("Elegir CSV…").size(theme::SIZE_S))
+            .on_press_maybe((!self.importing).then_some(Message::PickCsv))
+            .padding([6, 12])
+            .style(theme::ghost_button);
+        let hint = |t: &'static str| text(t).size(theme::SIZE_S).style(theme::secondary_text);
+        let mut col = column![
+            column![
+                text("Importar").size(theme::SIZE_L),
+                hint("Traé tus playlists de Spotify, YouTube o YouTube Music pegando el link (Ctrl+L)."),
+            ]
+            .spacing(4),
+            row![input, import].spacing(8).align_y(Alignment::Center),
+            column![
+                hint("• Spotify: Compartir > Copiar enlace a la playlist."),
+                hint("• YouTube y YouTube Music: el link de la playlist, o un video que esté dentro de una."),
+                hint("• Un archivo CSV, por ejemplo exportado desde exportify.net."),
+            ]
+            .spacing(4),
+            pick_csv,
         ]
-        .spacing(8)
-        .into()
+        .spacing(16)
+        .max_width(760);
+        if let Some(n) = self.notice.as_ref().filter(|n| n.error) {
+            col = col.push(text(&n.text).size(theme::SIZE_S).style(theme::error_text));
+        }
+        if self.importing {
+            col = col.push(
+                column![
+                    text("Importando…")
+                        .size(theme::SIZE_S)
+                        .style(theme::secondary_text),
+                    skeleton::song_rows(6, self.pulse),
+                ]
+                .spacing(10),
+            );
+        }
+        col.into()
     }
 
     pub(crate) fn view_playlist<'a>(
@@ -198,14 +280,14 @@ impl Surco {
         source: &str,
     ) -> Element<'a, Message> {
         let total_ms: u64 = p.tracks.iter().map(|t| t.duration_ms).sum();
-        let origin = if source == "radio" {
-            "canciones parecidas, del Mix de YouTube".to_owned()
-        } else {
-            format!("importada desde {source}")
+        let origin = match source {
+            "radio" => "canciones parecidas, del Mix de YouTube".to_owned(),
+            OWN_SOURCE => "playlist tuya".to_owned(),
+            _ => format!("importada desde {source}"),
         };
         let mut info = format!(
-            "{} canciones · {} · {origin}",
-            p.tracks.len(),
+            "{} · {} · {origin}",
+            songs(p.tracks.len()),
             format_duration(total_ms)
         );
         if self
@@ -225,19 +307,56 @@ impl Surco {
                 }
             ));
         }
-        let header = row![
-            column![
-                text(&p.name).size(theme::SIZE_L),
-                text(info).size(theme::SIZE_S).style(theme::secondary_text),
+        let name: Element<'_, Message> = match &self.renaming {
+            Some((r, value)) if *r == index => row![
+                text_input("Nombre de la playlist", value)
+                    .id(Id::new(RENAME_INPUT))
+                    .on_input(Message::RenameInput)
+                    .on_submit(Message::RenameCommit)
+                    .padding(6)
+                    .size(theme::SIZE_L)
+                    .style(theme::input),
+                button(text("Guardar").size(theme::SIZE_S))
+                    .on_press(Message::RenameCommit)
+                    .padding([6, 12])
+                    .style(theme::primary_button),
             ]
-            .spacing(4)
-            .width(Length::Fill),
-            button(text("Quitar").size(theme::SIZE_S))
-                .on_press(Message::RemovePlaylist(index))
+            .spacing(8)
+            .align_y(Alignment::Center)
+            .into(),
+            _ => text(&p.name).size(theme::SIZE_L).into(),
+        };
+        let small = |label: String, msg: Message| {
+            button(text(label).size(theme::SIZE_S))
+                .on_press(msg)
                 .padding([4, 10])
-                .style(theme::ghost_button),
+                .style(theme::ghost_button)
+        };
+        let mut actions = row![].spacing(8);
+        if self.renaming.as_ref().is_none_or(|(r, _)| *r != index) {
+            actions = actions.push(small("Renombrar".into(), Message::StartRename(index)));
+        }
+        if let Some((files, bytes)) = self.downloads.get(&p.id) {
+            actions = actions.push(small(
+                format!(
+                    "Borrar descargas ({}, {})",
+                    songs(*files),
+                    format_bytes(*bytes)
+                ),
+                Message::DeleteDownloads(index),
+            ));
+        }
+        actions = actions.push(small("Quitar".into(), Message::RemovePlaylist(index)));
+        let header = column![
+            row![container(name).width(Length::Fill), actions]
+                .spacing(16)
+                .align_y(Alignment::Center),
+            text(info)
+                .size(theme::SIZE_S)
+                .style(theme::secondary_text)
+                .wrapping(text::Wrapping::None),
         ]
-        .align_y(Alignment::Center);
+        .spacing(4);
 
         let query = self.filter.as_deref().unwrap_or("");
         let shown = p
@@ -288,6 +407,12 @@ impl Surco {
                         .height(LIST_COVER)
                         .border_radius(4.0)
                         .into(),
+                    // Buscándose o bajando la portada: late.
+                    None if matches!(self.resolution(t), Some(TrackRes::Resolving))
+                        || self.video_of((index, i)).is_some() =>
+                    {
+                        skeleton::block(LIST_COVER, LIST_COVER, self.pulse)
+                    }
                     None => container(Space::new())
                         .width(LIST_COVER)
                         .height(LIST_COVER)
@@ -311,9 +436,10 @@ impl Surco {
                             .wrapping(text::Wrapping::None),
                     ]
                     .spacing(2)
-                    .width(Length::Fill),
+                    .width(Length::Fill)
+                    .clip(true),
                     badge,
-                    crate::search::add_button(t),
+                    crate::search::add_button(t, Some((index, i))),
                     text(format_duration(t.duration_ms))
                         .size(theme::SIZE_S)
                         .style(theme::secondary_text),
@@ -327,7 +453,8 @@ impl Surco {
             .style(theme::list_button(playing))
             .into()
         }))
-        .padding(iced::Padding::ZERO.right(16));
+        .push(self.view_recs(index, p))
+        .padding(iced::Padding::ZERO.right(16).bottom(16));
 
         let mut col = column![header].spacing(20);
         if let Some(q) = &self.filter {
@@ -352,6 +479,13 @@ impl Surco {
         if !query.trim().is_empty() && !p.tracks.iter().any(|t| matches_filter(t, query)) {
             col = col.push(
                 text(format!("Nada coincide con «{}».", query.trim()))
+                    .size(theme::SIZE_S)
+                    .style(theme::secondary_text),
+            );
+        }
+        if p.tracks.is_empty() {
+            col = col.push(
+                text("Está vacía. Buscá canciones y agregalas con el + de cada una, o sumá de las recomendadas.")
                     .size(theme::SIZE_S)
                     .style(theme::secondary_text),
             );
@@ -411,6 +545,29 @@ impl Surco {
             .and_then(|p| p.audio_cache())
             .map(|c| c.usage())
             .unwrap_or_default();
+        let mut per_playlist = Column::new().spacing(4);
+        for (i, (p, _)) in self.playlists.iter().enumerate() {
+            let Some((files, bytes)) = self.downloads.get(&p.id) else {
+                continue;
+            };
+            per_playlist = per_playlist.push(
+                row![
+                    text(&p.name)
+                        .size(theme::SIZE_S)
+                        .wrapping(text::Wrapping::None)
+                        .width(Length::Fill),
+                    text(format!("{}, {}", songs(*files), format_bytes(*bytes)))
+                        .size(theme::SIZE_S)
+                        .style(theme::secondary_text),
+                    button(text("Borrar").size(theme::SIZE_S))
+                        .on_press(Message::DeleteDownloads(i))
+                        .padding([4, 10])
+                        .style(theme::ghost_button),
+                ]
+                .spacing(12)
+                .align_y(Alignment::Center),
+            );
+        }
         let cache_row = row![
             text(format!(
                 "En disco: {} canciones, {}",
@@ -426,6 +583,18 @@ impl Surco {
         ]
         .spacing(12)
         .align_y(Alignment::Center);
+        let downloads: Element<'_, Message> = if self.downloads.is_empty() {
+            Space::new().into()
+        } else {
+            column![
+                text("Descargas por playlist (una canción puede estar en varias)")
+                    .size(theme::SIZE_S)
+                    .style(theme::secondary_text),
+                container(per_playlist).max_width(560),
+            ]
+            .spacing(8)
+            .into()
+        };
 
         let switch = |label: &'static str, on: bool, f: fn(bool) -> Change| {
             toggler(on)
@@ -463,6 +632,7 @@ impl Surco {
                 ),
                 precache,
                 cache_row,
+                downloads,
             ]
             .spacing(10),
             column![
@@ -478,6 +648,12 @@ impl Surco {
             ]
             .spacing(10),
             self.view_spotify_keys(),
+            text(match &self.ytdlp {
+                crate::YtDlpState::Found(p) => format!("yt-dlp: {}", p.display()),
+                _ => "yt-dlp: no encontrado".to_owned(),
+            })
+            .size(theme::SIZE_S)
+            .style(theme::secondary_text),
         ]
         .spacing(28)
         .max_width(760)
@@ -610,75 +786,14 @@ impl Surco {
                 .into(),
         )
     }
+}
 
-    /// Panel de prueba de la Fase 2: pegar una URL y reproducir.
-    pub(crate) fn view_test_panel(&self) -> Element<'_, Message> {
-        let input = text_input(
-            "URL de YouTube, ID de video, URL directa o archivo local",
-            &self.input,
-        )
-        .on_input(Message::InputChanged)
-        .on_submit(Message::PlayInput)
-        .padding(10)
-        .size(theme::SIZE_M)
-        .style(theme::input);
-
-        let play = button(text("Reproducir").size(theme::SIZE_M))
-            .on_press(Message::PlayInput)
-            .padding([10, 16])
-            .style(theme::primary_button);
-
-        let ytdlp: Element<'_, Message> = match &self.ytdlp {
-            YtDlpState::Found(p) => text(format!("yt-dlp: {}", p.display()))
-                .size(theme::SIZE_S)
-                .style(theme::secondary_text)
-                .into(),
-            YtDlpState::Missing => row![
-                text("No encontré yt-dlp. Hace falta para reproducir desde YouTube.")
-                    .size(theme::SIZE_S)
-                    .style(theme::secondary_text),
-                button(text("Descargar yt-dlp").size(theme::SIZE_S))
-                    .on_press(Message::DownloadYtDlp)
-                    .style(theme::ghost_button),
-            ]
-            .spacing(12)
-            .align_y(Alignment::Center)
-            .into(),
-            YtDlpState::Downloading => text("Descargando yt-dlp…")
-                .size(theme::SIZE_S)
-                .style(theme::secondary_text)
-                .into(),
-            YtDlpState::Failed(e) => row![
-                text(format!("No se pudo descargar yt-dlp: {e}"))
-                    .size(theme::SIZE_S)
-                    .style(theme::error_text),
-                button(text("Reintentar").size(theme::SIZE_S))
-                    .on_press(Message::DownloadYtDlp)
-                    .style(theme::ghost_button),
-            ]
-            .spacing(12)
-            .align_y(Alignment::Center)
-            .into(),
-        };
-
-        let mut col = column![
-            text("Prueba de audio").size(theme::SIZE_M),
-            text("Pegá un link de YouTube y dale a Reproducir. Espacio pausa, ←/→ mueven 5 s.")
-                .size(theme::SIZE_S)
-                .style(theme::secondary_text),
-            row![input, play].spacing(8).align_y(Alignment::Center),
-            ytdlp,
-        ]
-        .spacing(16)
-        .max_width(720);
-
-        if let Some(e) = &self.fatal {
-            col = col.push(text(e).size(theme::SIZE_S).style(theme::error_text));
-        }
-        if let PlayerState::Error(e) = &self.status.state {
-            col = col.push(text(e).size(theme::SIZE_S).style(theme::error_text));
-        }
-        col.into()
+/// "1 canción", "12 canciones".
+pub(crate) fn songs(n: usize) -> String {
+    if n == 1 {
+        "1 canción".to_owned()
+    } else {
+        format!("{n} canciones")
     }
 }
 
@@ -686,7 +801,7 @@ impl Surco {
 const LIST_COVER: f32 = 36.0;
 
 /// `1536000` → `1,5 MB`.
-fn format_bytes(b: u64) -> String {
+pub(crate) fn format_bytes(b: u64) -> String {
     const MB: f64 = 1024.0 * 1024.0;
     let mb = b as f64 / MB;
     if mb >= 1024.0 {

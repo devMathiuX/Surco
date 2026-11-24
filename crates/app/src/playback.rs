@@ -26,6 +26,24 @@ pub struct CoverJobs {
     failed: std::collections::HashSet<String>,
     running: usize,
 }
+/// Canciones que se buscan a la vez en segundo plano (para las portadas).
+const BACKGROUND_JOBS: usize = 2;
+
+/// Búsqueda en segundo plano de las canciones de la playlist abierta, para
+/// que aparezcan sus portadas (y después suenen sin esperar).
+#[derive(Debug, Default)]
+pub struct Background {
+    queue: std::collections::VecDeque<Track>,
+    /// Claves que se están buscando.
+    running: std::collections::HashSet<String>,
+}
+
+impl Background {
+    pub fn is_running(&self) -> bool {
+        !self.queue.is_empty() || !self.running.is_empty()
+    }
+}
+
 /// Errores seguidos antes de dejar de saltar a la siguiente.
 const MAX_FAILURES_IN_A_ROW: u32 = 3;
 /// "Anterior" con más de esto reproducido vuelve al principio de la canción.
@@ -240,6 +258,7 @@ impl Surco {
         key: String,
         result: Result<Match, String>,
     ) -> Task<Message> {
+        self.background.running.remove(&key);
         let is_now = self.now_track().is_some_and(|t| cache_key(t) == key);
         match result {
             Ok(m) => {
@@ -256,7 +275,8 @@ impl Surco {
                 };
                 self.resolutions.insert(key, TrackRes::Done(m));
                 self.update_preload();
-                Task::batch([task, cover])
+                let recs = self.maybe_load_recs();
+                Task::batch([task, cover, recs])
             }
             Err(e) => {
                 self.resolutions.insert(key, TrackRes::Failed(e.clone()));
@@ -544,6 +564,50 @@ impl Surco {
         )
     }
 
+    /// Encola la búsqueda de las canciones sin video de la playlist abierta
+    /// (solo con "portadas en la lista": es para eso).
+    pub(crate) fn resolve_in_background(&mut self) -> Task<Message> {
+        self.background.queue.clear();
+        if !self.settings.covers_in_list || self.resolver.is_none() {
+            return Task::none();
+        }
+        let Some((p, _)) = self.selected.and_then(|i| self.playlists.get(i)) else {
+            return Task::none();
+        };
+        let todo: Vec<Track> = p
+            .tracks
+            .iter()
+            .filter(|t| self.resolution(t).is_none())
+            .cloned()
+            .collect();
+        self.background.queue.extend(todo);
+        self.pump_background()
+    }
+
+    /// Lanza búsquedas de fondo hasta `BACKGROUND_JOBS`. Espera mientras se
+    /// busca la que tiene que sonar, para no demorarla.
+    pub(crate) fn pump_background(&mut self) -> Task<Message> {
+        if self.background.queue.is_empty()
+            || self
+                .now_track()
+                .is_some_and(|t| matches!(self.resolution(t), Some(TrackRes::Resolving)))
+        {
+            return Task::none();
+        }
+        let mut tasks = Vec::new();
+        while self.background.running.len() < BACKGROUND_JOBS {
+            let Some(t) = self.background.queue.pop_front() else {
+                break;
+            };
+            if self.resolution(&t).is_some() {
+                continue;
+            }
+            self.background.running.insert(cache_key(&t));
+            tasks.push(self.spawn_resolve(t));
+        }
+        Task::batch(tasks)
+    }
+
     /// yt-dlp quedó disponible: armar el resolver.
     pub(crate) fn set_resolver(&mut self, resolver: Option<Arc<Resolver>>) {
         self.resolver = resolver;
@@ -551,7 +615,7 @@ impl Surco {
 }
 
 /// Semilla para el shuffle (no necesita ser criptográfica).
-fn seed() -> u64 {
+pub(crate) fn seed() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos() as u64)
