@@ -2,7 +2,7 @@
 
 Reproductor de música de escritorio, ultraliviano, escrito en Rust. Importa playlists de Spotify y reproduce cada canción usando YouTube como fuente de audio (vía `yt-dlp`), sin cuenta Premium. Corre en Linux y Windows (x86_64) con la misma base de código.
 
-> **Estado:** Fase 3 de 7 (Spotify). La app importa playlists de Spotify (Web API, página pública o CSV) y las muestra. Reproducir cada canción desde YouTube llega con el resolver (Fase 4); por ahora el panel de prueba de audio sigue disponible en la pantalla de inicio.
+> **Estado:** Fase 4 de 7 (resolver). La app importa playlists de Spotify y reproduce cada canción buscándola en YouTube: clic en una canción, pasa sola a la siguiente, y si el match es dudoso deja elegir otro video. Cola completa, atajos y MPRIS/SMTC llegan en la Fase 5.
 
 ## Requisitos
 
@@ -48,6 +48,44 @@ Surco prueba tres estrategias en cascada (trait `PlaylistSource` en `crates/spot
 3. **CSV** (Exportify, formato viejo y nuevo, o uno hecho a mano con `title,artist,album,duration`). Trae la playlist completa con álbum e ISRC. Es la vía recomendada para playlists de más de 100 canciones sin credenciales.
 
 Las playlists importadas viven en memoria hasta la Fase 6 (persistencia).
+
+## Resolver Spotify → YouTube (Fase 4)
+
+Clic en una canción de la playlist: Surco la busca en YouTube, la reproduce y resuelve de antemano las 3 siguientes (como mucho 3 búsquedas a la vez). Al terminar pasa sola a la siguiente; **Ctrl+←/→** va a la anterior/siguiente. Si una canción falla, la saltea con un aviso; después de 3 errores seguidos frena (típico cuando YouTube bloquea la red).
+
+Cómo elige el video (`crates/resolver`):
+
+1. **Limpia el título**: saca "- Remastered 2011", "(Remastered 2009)", "- Radio Edit", "- From \"Footloose\"", "[From …: Original Score]"; separa los "(feat. X)", "(with X)", "ft. X". Lo que marca otra versión ("- Live", "(Versión Reggae)", "- Acústico") se conserva.
+2. **Busca** `"{artista principal} - {título}"` con `yt-dlp "ytsearch5:…" --flat-playlist --dump-json` (no resuelve cada video, es rápido).
+3. **Puntúa** cada candidato de 0 a 100:
+   - Duración (35): ±3 s puntaje completo; baja hasta 15 s; más de 30 s de diferencia resta.
+   - Título (30): el título limpio aparece en el del video, o similitud Jaro-Winkler (`strsim`).
+   - Artista (20): en el título o en el canal.
+   - Canal (15): "Artista - Topic", VEVO, canal oficial, o "Official Audio" en el título.
+   - Penalización (40 por palabra, tope 60): live, cover, karaoke, 8D, slowed, sped up, reverb, nightcore, remix, instrumental, 432 Hz… **salvo** que el original también lo diga (con sinónimos: "en vivo" = "live", "acústico" = "unplugged").
+4. Si el mejor queda **por debajo de 60**, hace una segunda búsqueda (`"… audio"`) y suma esos candidatos. Si sigue abajo de 60, la canción se marca **"dudosa"** en la lista: clic en "dudosa" (o **Cambiar video** en la barra de abajo) muestra los candidatos con su puntaje para elegir otro a mano.
+
+Los matches se guardan en memoria durante la sesión (en SQLite desde la Fase 6).
+
+### Evaluación (`tools/eval_resolver`)
+
+```sh
+cargo run -p eval_resolver --release                       # necesita yt-dlp e internet
+cargo run -p eval_resolver --release -- --report /tmp/r.tsv  # además, un TSV con todos los candidatos
+```
+
+`songs.csv` tiene 50 canciones tomadas tal cual de 4 playlists públicas de Spotify (80s, clásicos del rock con títulos "Remaster", rock en español y hits actuales con "feat." y "[From GTAVI]"). `labels.txt` tiene, para cada una, los videos que cuentan como correctos, etiquetados a mano con este criterio: la grabación de estudio correcta (Topic, audio oficial, video con letra o video oficial con el audio de estudio), a menos de ~15 s de la duración de Spotify; no cuentan en vivo, covers, remixes, otras ediciones ni afinación alterada.
+
+Resultados del 2026-11-24 (las búsquedas de YouTube cambian entre corridas):
+
+| Corrida | Correctas | Notas |
+|---|---|---|
+| 1 (sin etiquetas) | 49/50 a ojo | Rocket Man eligió una versión "432hz": se agregó a las penalizaciones. |
+| 2 | 45/50 (90 %) | Los 5 ✗ eran videos correctos nuevos que no estaban en las etiquetas; se agregaron. |
+| 3 y 4 | 50/50 (100 %) | |
+| 5 | 49/50 (98 %) | Otra vez un video correcto sin etiquetar; se agregó. |
+
+Resolver las 50 tarda ~25 s (3 búsquedas en paralelo). Si un ✗ resulta ser un video correcto que no estaba en la lista, se agrega a `labels.txt`.
 
 ## Estructura
 
@@ -130,6 +168,7 @@ Medido en la Fase 2 (Linux, Xvfb, reproduciendo un m4a de 3 min por HTTP): **~23
 - **Opus/WebM:** si YouTube solo ofrece el audio en WebM/Opus, por ahora se muestra un error. El fallback (crate `opus` o ffmpeg) queda pendiente; casi todos los videos tienen m4a.
 - En un MP4 fragmentado sin duración en el contenedor (URLs directas) no hay barra de progreso; con YouTube la duración la da yt-dlp.
 - **YouTube y redes "marcadas":** desde IPs de datacenter, VPN o redes con mucho tráfico, YouTube puede pedir "confirmar que no sos un bot" y yt-dlp falla. La app lo muestra como un error claro (no crashea). En una conexión hogareña normal no pasa.
+- **Resolver:** si la grabación exacta no está entre los 5-10 primeros resultados de YouTube (por ejemplo, una versión en vivo poco conocida), puede elegir un cover parecido. Para eso está el selector manual.
 - **Spotify sin credenciales:** máximo 100 canciones por playlist (ver arriba). Para importar un CSV hay que pegar la ruta; el selector de archivos llega con la UI completa (Fase 5).
 - La canción entera queda en memoria mientras suena (~4 MB por cada 4 minutos). Para audios de horas habría que limitarlo.
 

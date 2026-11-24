@@ -4,22 +4,27 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 mod config;
+mod playback;
 mod theme;
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use iced::keyboard::{self, key, Key};
 use iced::widget::{
-    button, column, container, operation, row, scrollable, slider, text, text_input, Column, Id,
-    Space,
+    button, column, container, operation, row, scrollable, slider, text, text_input, tooltip,
+    Column, Id, Space,
 };
 use iced::{window, Alignment, Element, Length, Size, Subscription, Task, Theme};
 use surco_core::{format_duration, PlayerState, Playlist};
 use surco_player::{Command, PlayerHandle, Source, Status};
 use surco_provider::{HttpClient, Provider, YtDlp};
+use surco_resolver::{Match, Resolver};
 use surco_spotify::{Credentials, Importer};
+
+use playback::TrackRes;
 
 /// Video de prueba de la Fase 2: "Big Buck Bunny" (Blender Foundation, CC BY 3.0).
 const TEST_URL: &str = "https://www.youtube.com/watch?v=aqz-KE-bpKQ";
@@ -90,6 +95,15 @@ struct Surco {
     import_input: String,
     importing: bool,
     notice: Option<Notice>,
+    /// `None` si no hay yt-dlp.
+    resolver: Option<Arc<Resolver>>,
+    /// Resoluciones por clave de canción (`surco_resolver::cache_key`).
+    resolutions: HashMap<String, TrackRes>,
+    /// Canción de playlist sonando: (playlist, índice).
+    now: Option<(usize, usize)>,
+    /// Canción cuyo selector de video está abierto.
+    choosing: Option<(usize, usize)>,
+    failures_in_a_row: u32,
 }
 
 /// Aviso discreto en la barra lateral.
@@ -118,11 +132,19 @@ enum Message {
     Imported(ImportResult),
     SelectPlaylist(Option<usize>),
     FocusImport,
+    PlayTrack(usize, usize),
+    Resolved(String, Result<Match, String>),
+    /// Abrir (o cerrar, con `None`) el selector de video de una canción.
+    OpenChooser(Option<(usize, usize)>),
+    ChooseVideo(String),
+    /// Siguiente (`1`) o anterior (`-1`).
+    Skip(isize),
 }
 
 impl Surco {
     fn new() -> (Self, Task<Message>) {
         let ytdlp = YtDlp::locate(data_dir().as_deref());
+        let resolver = ytdlp.clone().map(|y| Arc::new(Resolver::new(Arc::new(y))));
         let provider = ytdlp.clone().map(|y| Arc::new(Provider::new(y)));
         let options = surco_player::Options {
             null_output: std::env::var_os("SURCO_NULL_AUDIO").is_some(),
@@ -153,6 +175,11 @@ impl Surco {
             import_input: String::new(),
             importing: false,
             notice: None,
+            resolver,
+            resolutions: HashMap::new(),
+            now: None,
+            choosing: None,
+            failures_in_a_row: 0,
         };
         (state, Task::none())
     }
@@ -168,6 +195,7 @@ impl Surco {
             Message::InputChanged(s) => self.input = s,
             Message::PlayInput => {
                 if let Some(source) = Source::parse(&self.input) {
+                    self.now = None;
                     self.send(Command::Load(source));
                 }
             }
@@ -187,7 +215,7 @@ impl Surco {
                 self.status.volume = v;
                 self.send(Command::SetVolume(v));
             }
-            Message::Status(status) => self.status = status,
+            Message::Status(status) => return self.on_status(status),
             Message::DownloadYtDlp => {
                 let Some(dir) = data_dir() else {
                     self.ytdlp = YtDlpState::Failed("no hay carpeta de datos".into());
@@ -209,6 +237,7 @@ impl Surco {
                 );
             }
             Message::YtDlpDownloaded(Ok(path)) => {
+                self.set_resolver(Some(Arc::new(Resolver::new(Arc::new(YtDlp::new(&path))))));
                 self.send(Command::SetProvider(Arc::new(Provider::new(YtDlp::new(
                     &path,
                 )))));
@@ -253,6 +282,14 @@ impl Surco {
             }
             Message::SelectPlaylist(i) => self.selected = i,
             Message::FocusImport => return operation::focus(Id::new(IMPORT_INPUT)),
+            Message::PlayTrack(p, i) => {
+                self.failures_in_a_row = 0;
+                return self.play_track(p, i);
+            }
+            Message::Resolved(key, result) => return self.on_resolved(key, result),
+            Message::OpenChooser(at) => self.choosing = at,
+            Message::ChooseVideo(id) => return self.choose_video(&id),
+            Message::Skip(dir) => return self.advance(dir),
         }
         Task::none()
     }
@@ -315,7 +352,9 @@ impl Surco {
 
     fn view(&self) -> Element<'_, Message> {
         let main: Element<'_, Message> = match self.selected.and_then(|i| self.playlists.get(i)) {
-            Some((playlist, source)) => self.view_playlist(playlist, source),
+            Some((playlist, source)) => {
+                self.view_playlist(self.selected.unwrap_or(0), playlist, source)
+            }
             None => self.view_empty(),
         };
         let main = container(main)
@@ -394,7 +433,7 @@ impl Surco {
     fn view_empty(&self) -> Element<'_, Message> {
         column![
             text("Pegá un link de playlist de Spotify para empezar").size(theme::SIZE_L),
-            text("Usá el campo de la izquierda (Ctrl+L). También acepta un CSV exportado con Exportify.")
+            text("Usá el campo de la izquierda (Ctrl+L). También acepta un CSV exportado con Exportify. Clic en una canción para escucharla; Ctrl+←/→ pasa a la anterior/siguiente.")
                 .size(theme::SIZE_S)
                 .style(theme::secondary_text),
             Space::new().height(24),
@@ -404,7 +443,12 @@ impl Surco {
         .into()
     }
 
-    fn view_playlist<'a>(&'a self, p: &'a Playlist, source: &str) -> Element<'a, Message> {
+    fn view_playlist<'a>(
+        &'a self,
+        index: usize,
+        p: &'a Playlist,
+        source: &str,
+    ) -> Element<'a, Message> {
         let total_ms: u64 = p.tracks.iter().map(|t| t.duration_ms).sum();
         let header = column![
             text(&p.name).size(theme::SIZE_L),
@@ -419,36 +463,140 @@ impl Surco {
         .spacing(4);
 
         let rows = Column::with_children(p.tracks.iter().enumerate().map(|(i, t)| {
-            row![
-                text(i + 1)
+            let playing = self.now == Some((index, i));
+            let badge: Element<'_, Message> = match self.resolution(t) {
+                Some(TrackRes::Resolving) => text("buscando…")
                     .size(theme::SIZE_S)
                     .style(theme::secondary_text)
-                    .width(40),
-                column![
-                    text(&t.title)
-                        .size(theme::SIZE_M)
-                        .wrapping(text::Wrapping::None),
-                    text(t.artists.join(", "))
+                    .into(),
+                Some(TrackRes::Done(m)) if m.is_doubtful() => {
+                    button(text("dudosa").size(theme::SIZE_S))
+                        .on_press(Message::OpenChooser(Some((index, i))))
+                        .padding([2, 8])
+                        .style(theme::ghost_button)
+                        .into()
+                }
+                Some(TrackRes::Failed(e)) => tooltip(
+                    text("sin match")
+                        .size(theme::SIZE_S)
+                        .style(theme::error_text),
+                    container(text(e).size(theme::SIZE_S))
+                        .padding(8)
+                        .max_width(360)
+                        .style(theme::surface),
+                    tooltip::Position::Left,
+                )
+                .into(),
+                _ => Space::new().into(),
+            };
+            button(
+                row![
+                    text(i + 1)
                         .size(theme::SIZE_S)
                         .style(theme::secondary_text)
-                        .wrapping(text::Wrapping::None),
+                        .width(40),
+                    column![
+                        text(&t.title)
+                            .size(theme::SIZE_M)
+                            .wrapping(text::Wrapping::None),
+                        text(t.artists.join(", "))
+                            .size(theme::SIZE_S)
+                            .style(theme::secondary_text)
+                            .wrapping(text::Wrapping::None),
+                    ]
+                    .spacing(2)
+                    .width(Length::Fill),
+                    badge,
+                    text(format_duration(t.duration_ms))
+                        .size(theme::SIZE_S)
+                        .style(theme::secondary_text),
                 ]
-                .spacing(2)
-                .width(Length::Fill),
-                text(format_duration(t.duration_ms))
-                    .size(theme::SIZE_S)
-                    .style(theme::secondary_text),
-            ]
-            .spacing(12)
-            .padding([6, 0])
-            .align_y(Alignment::Center)
+                .spacing(12)
+                .align_y(Alignment::Center),
+            )
+            .on_press(Message::PlayTrack(index, i))
+            .padding([6, 8])
+            .width(Length::Fill)
+            .style(theme::list_button(playing))
             .into()
         }))
         .padding(iced::Padding::ZERO.right(16));
 
-        column![header, scrollable(rows).height(Length::Fill)]
-            .spacing(20)
-            .into()
+        let mut col = column![header].spacing(20);
+        if let Some(chooser) = self.view_chooser(index) {
+            col = col.push(chooser);
+        }
+        col.push(scrollable(rows).height(Length::Fill)).into()
+    }
+
+    /// Selector de video para una canción (los candidatos con su puntaje).
+    fn view_chooser(&self, playlist: usize) -> Option<Element<'_, Message>> {
+        let at = self.choosing.filter(|(p, _)| *p == playlist)?;
+        let track = self.track(at)?;
+        let Some(TrackRes::Done(m)) = self.resolution(track) else {
+            return None;
+        };
+        let mut list = Column::new().spacing(2);
+        for c in &m.candidates {
+            let chosen = c.candidate.id == m.youtube_id;
+            let dur = c
+                .candidate
+                .duration_secs
+                .map(|d| format_duration((d * 1000.0) as u64))
+                .unwrap_or_else(|| "--:--".into());
+            list = list.push(
+                button(
+                    row![
+                        column![
+                            text(&c.candidate.title)
+                                .size(theme::SIZE_S)
+                                .wrapping(text::Wrapping::None),
+                            text(
+                                c.candidate
+                                    .channel
+                                    .as_deref()
+                                    .unwrap_or("canal desconocido")
+                            )
+                            .size(theme::SIZE_S)
+                            .style(theme::secondary_text),
+                        ]
+                        .width(Length::Fill),
+                        text(dur).size(theme::SIZE_S).style(theme::secondary_text),
+                        text(format!("{:>3}", c.score))
+                            .size(theme::SIZE_S)
+                            .style(theme::secondary_text)
+                            .width(32),
+                    ]
+                    .spacing(12)
+                    .align_y(Alignment::Center),
+                )
+                .on_press(Message::ChooseVideo(c.candidate.id.clone()))
+                .padding([4, 8])
+                .width(Length::Fill)
+                .style(theme::list_button(chosen)),
+            );
+        }
+        let header = row![
+            text(format!(
+                "Elegí el video para «{}» ({} canciones de YouTube; el número es el puntaje)",
+                track.title,
+                m.candidates.len()
+            ))
+            .size(theme::SIZE_S)
+            .width(Length::Fill),
+            button(text("Cerrar").size(theme::SIZE_S))
+                .on_press(Message::OpenChooser(None))
+                .padding([2, 8])
+                .style(theme::ghost_button),
+        ]
+        .align_y(Alignment::Center);
+        Some(
+            container(column![header, scrollable(list).height(Length::Shrink)].spacing(8))
+                .padding(12)
+                .max_height(260)
+                .style(theme::surface)
+                .into(),
+        )
     }
 
     /// Panel de prueba de la Fase 2: pegar una URL y reproducir.
@@ -531,11 +679,29 @@ impl Surco {
                 .width(110)
                 .style(theme::primary_button);
 
-        let title = match (&s.state, &s.title) {
-            (PlayerState::Loading, _) => "Cargando…".to_owned(),
-            (PlayerState::Idle, _) => "Nada sonando".to_owned(),
-            (_, Some(t)) => t.clone(),
-            (_, None) => "Sin título".to_owned(),
+        let now = self.now.and_then(|n| self.track(n));
+        let resolving =
+            now.is_some_and(|t| matches!(self.resolution(t), Some(TrackRes::Resolving)));
+        let title = match (now, &s.state, &s.title) {
+            (Some(t), _, _) if resolving => format!("{} · buscando en YouTube…", t.title),
+            (Some(t), PlayerState::Loading, _) => format!("{} · cargando…", t.title),
+            (Some(t), _, _) => format!("{} — {}", t.title, t.artists.join(", ")),
+            (None, PlayerState::Loading, _) => "Cargando…".to_owned(),
+            (None, PlayerState::Idle, _) => "Nada sonando".to_owned(),
+            (None, PlayerState::Error(_), _) => "No se pudo reproducir".to_owned(),
+            (None, _, Some(t)) => t.clone(),
+            (None, _, None) => "Sin título".to_owned(),
+        };
+        // Cambiar el video de la canción actual (por si el match no es el correcto).
+        let change: Element<'_, Message> = match (self.now, now.and_then(|t| self.resolution(t))) {
+            (Some(at), Some(TrackRes::Done(_))) => {
+                button(text("Cambiar video").size(theme::SIZE_S))
+                    .on_press(Message::OpenChooser(Some(at)))
+                    .padding([4, 10])
+                    .style(theme::ghost_button)
+                    .into()
+            }
+            _ => Space::new().into(),
         };
 
         let shown = self.seeking.unwrap_or(s.position.as_secs_f32());
@@ -573,6 +739,7 @@ impl Surco {
                 ]
                 .spacing(6)
                 .width(Length::Fill),
+                change,
                 text("Vol").size(theme::SIZE_S).style(theme::secondary_text),
                 volume,
             ]
@@ -613,6 +780,8 @@ fn on_key(event: keyboard::Event) -> Option<Message> {
     if modifiers.control() && !modifiers.alt() {
         return match key.as_ref() {
             Key::Character("l") | Key::Character("L") => Some(Message::FocusImport),
+            Key::Named(key::Named::ArrowLeft) => Some(Message::Skip(-1)),
+            Key::Named(key::Named::ArrowRight) => Some(Message::Skip(1)),
             _ => None,
         };
     }
