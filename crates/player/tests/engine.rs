@@ -116,3 +116,66 @@ fn youtube_without_ytdlp_is_an_error() {
     });
     assert!(matches!(s.state, PlayerState::Error(e) if e.contains("yt-dlp")));
 }
+
+/// Pre-carga: al terminar la primera, la segunda arranca sola sin pasar por
+/// `Idle` (sin silencio entre canciones).
+#[test]
+fn preloaded_track_follows_without_gap() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let p = surco_player::spawn(None, rt.handle().clone(), Options { null_output: true }).unwrap();
+    let first = Source::File(fixture("tone.m4a"));
+    let second = Source::File(fixture("tone-dash.m4a"));
+    p.send(Command::Load(first.clone()));
+    wait_for(&p, "Playing", Duration::from_secs(5), |s| {
+        s.state == PlayerState::Playing
+    });
+    p.send(Command::Preload(Some(second.clone())));
+    // Saltamos casi al final para no esperar 8 s.
+    p.send(Command::Seek(Duration::from_secs(6)));
+
+    let start = Instant::now();
+    let mut rx = p.subscribe();
+    loop {
+        let s = rx.borrow_and_update().clone();
+        assert_ne!(s.state, PlayerState::Idle, "pasó por Idle: hubo corte");
+        assert!(!matches!(s.state, PlayerState::Error(_)), "{s:?}");
+        if s.auto_advances == 1 {
+            assert_eq!(s.source.as_ref(), Some(&second));
+            assert_eq!(s.state, PlayerState::Playing);
+            assert!(s.position < Duration::from_secs(2), "{:?}", s.position);
+            break;
+        }
+        assert!(
+            start.elapsed() < Duration::from_secs(10),
+            "no avanzó: {s:?}"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+/// `Load` de lo mismo que está pre-cargado lo aprovecha (arranca enseguida).
+#[test]
+fn load_reuses_preloaded_source() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let p = surco_player::spawn(None, rt.handle().clone(), Options { null_output: true }).unwrap();
+    let second = Source::File(fixture("tone-dash.m4a"));
+    p.send(Command::Load(Source::File(fixture("tone.m4a"))));
+    wait_for(&p, "Playing", Duration::from_secs(5), |s| {
+        s.state == PlayerState::Playing
+    });
+    p.send(Command::Preload(Some(second.clone())));
+    std::thread::sleep(Duration::from_millis(500));
+    p.send(Command::Load(second.clone()));
+    let s = wait_for(&p, "Playing la segunda", Duration::from_secs(5), |s| {
+        s.state == PlayerState::Playing && s.source.as_ref() == Some(&second)
+    });
+    assert_eq!(s.auto_advances, 0);
+    wait_for(&p, "posición avanza", Duration::from_secs(3), |s| {
+        s.position > Duration::from_millis(300)
+    });
+    // Y termina normalmente.
+    p.send(Command::Seek(Duration::from_secs(7)));
+    wait_for(&p, "fin (Idle)", Duration::from_secs(8), |s| {
+        s.state == PlayerState::Idle
+    });
+}

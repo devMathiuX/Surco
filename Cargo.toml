@@ -8,6 +8,7 @@ members = [
     "crates/player",
     "crates/storage",
     "crates/app",
+    "tools/eval_resolver",
 ]
 
 [workspace.package]
@@ -27,6 +28,7 @@ surco-storage = { path = "crates/storage" }
 
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+strsim = "0.11"
 toml = { version = "0.9", default-features = false, features = ["parse", "serde"] }
 thiserror = "2"
 anyhow = "1"
@@ -38,7 +40,13 @@ directories = "6"
 # rodio 0.23 usa symphonia 0.5: decodificamos nosotros con la misma versión.
 symphonia = { version = "0.5.5", default-features = false, features = ["aac", "isomp4"] }
 rodio = { version = "0.23", default-features = false, features = ["playback"] }
-iced = { version = "0.14", default-features = false, features = ["tiny-skia", "crisp", "x11", "wayland", "tokio"] }
+iced = { version = "0.14", default-features = false, features = ["tiny-skia", "crisp", "x11", "wayland", "tokio", "canvas", "image-without-codecs"] }
+# Portadas: solo JPEG (las miniaturas de YouTube).
+image = { version = "0.25", default-features = false, features = ["jpeg"] }
+# MPRIS (Linux, vía zbus: sin libdbus del sistema) y SMTC (Windows).
+souvlaki = { version = "0.9", default-features = false, features = ["use_zbus"] }
+# Selector de archivos nativo (portal XDG en Linux).
+rfd = { version = "0.18", default-features = false, features = ["xdg-portal"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
