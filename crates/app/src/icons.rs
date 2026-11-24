@@ -18,6 +18,9 @@ pub enum Kind {
     RepeatOne,
     Volume,
     Search,
+    /// Radio: canciones parecidas.
+    Radio,
+    Settings,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -156,6 +159,44 @@ impl<Message> canvas::Program<Message> for Icon {
                 frame.stroke(&Path::circle(p(10.5, 10.5), 5.5 * s), line(2.0));
                 frame.stroke(&Path::line(p(14.8, 14.8), p(19.5, 19.5)), line(2.0));
             }
+            Kind::Radio => {
+                // Un punto con ondas a cada lado.
+                frame.fill(&Path::circle(p(12.0, 12.0), 2.2 * s), self.color);
+                for (r, w) in [(5.0, 1.8), (8.5, 1.8)] {
+                    for (a, b) in [
+                        (-0.8_f32, 0.8_f32),
+                        (std::f32::consts::PI - 0.8, std::f32::consts::PI + 0.8),
+                    ] {
+                        frame.stroke(
+                            &Path::new(|bld| {
+                                bld.arc(path::Arc {
+                                    center: p(12.0, 12.0),
+                                    radius: r * s,
+                                    start_angle: iced::Radians(a),
+                                    end_angle: iced::Radians(b),
+                                });
+                            }),
+                            line(w),
+                        );
+                    }
+                }
+            }
+            Kind::Settings => {
+                // Engranaje: aro y 8 dientes.
+                frame.stroke(&Path::circle(p(12.0, 12.0), 5.0 * s), line(2.0));
+                frame.stroke(&Path::circle(p(12.0, 12.0), 1.8 * s), line(1.6));
+                for i in 0..8 {
+                    let ang = i as f32 * std::f32::consts::FRAC_PI_4;
+                    let (sin, cos) = ang.sin_cos();
+                    frame.stroke(
+                        &Path::line(
+                            p(12.0 + 6.0 * cos, 12.0 + 6.0 * sin),
+                            p(12.0 + 8.5 * cos, 12.0 + 8.5 * sin),
+                        ),
+                        line(2.6),
+                    );
+                }
+            }
         }
         vec![frame.into_geometry()]
     }
@@ -179,7 +220,7 @@ pub fn icon_button<'a, Message: Clone + 'a>(
     size: f32,
     on_press: Message,
 ) -> Element<'a, Message> {
-    button(icon(kind, theme::TEXT, size))
+    button(icon(kind, theme::colors().text, size))
         .on_press(on_press)
         .padding(6)
         .style(theme::icon_button)
@@ -194,9 +235,9 @@ pub fn toggle_button<'a, Message: Clone + 'a>(
     on_press: Message,
 ) -> Element<'a, Message> {
     let color = if on {
-        theme::ACCENT
+        theme::colors().accent
     } else {
-        theme::TEXT_SECONDARY
+        theme::colors().text_secondary
     };
     button(icon(kind, color, size))
         .on_press(on_press)
