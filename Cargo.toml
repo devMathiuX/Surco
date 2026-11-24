@@ -62,7 +62,9 @@ expect_used = "warn"
 opt-level = 3
 lto = "fat"
 codegen-units = 1
-panic = "abort"
+# "unwind": si un hilo de una dependencia entra en pánico (p. ej. el de D-Bus),
+# se cae ese hilo y no la app entera.
+panic = "unwind"
 strip = true
 
 # Las dependencias se optimizan para tamaño ("s"): red, D-Bus, SQLite, layout…
