@@ -180,6 +180,10 @@ impl Surco {
             "guardar historial",
             store.record_play(track, playlist_id, video),
         );
+        // El inicio muestra lo escuchado hace poco: que se vea al toque.
+        if self.screen == crate::Screen::Home {
+            let _covers = self.refresh_home();
+        }
     }
 
     /// Saca una playlist de la biblioteca.
