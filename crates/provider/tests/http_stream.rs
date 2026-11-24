@@ -107,3 +107,21 @@ async fn forbidden_maps_to_expired() {
         .unwrap();
     assert!(matches!(err, Error::Expired), "{err}");
 }
+
+/// Precarga: el archivo entero en bloques, y 403 como `Expired`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn downloads_whole_file_in_chunks() {
+    let data = sample(2 * 1024 * 1024 + 777);
+    let (url, hits) = serve(Arc::clone(&data), false).await;
+    let got = surco_provider::download_all(&reqwest::Client::new(), &url)
+        .await
+        .unwrap();
+    assert_eq!(got.as_slice(), data.as_slice());
+    assert_eq!(hits.load(Ordering::SeqCst), 5);
+
+    let (url, _) = serve(Arc::clone(&data), true).await;
+    let err = surco_provider::download_all(&reqwest::Client::new(), &url)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, Error::Expired), "{err}");
+}
