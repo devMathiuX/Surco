@@ -1,6 +1,6 @@
 //! Wrapper del binario externo `yt-dlp`.
 
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
@@ -16,10 +16,13 @@ pub const BINARY_NAME: &str = "yt-dlp.exe";
 pub const BINARY_NAME: &str = "yt-dlp";
 
 /// Asset de los releases oficiales que bajamos en cada SO.
-/// En Linux usamos `yt-dlp_linux`, que es autocontenido (no necesita Python).
+/// En Linux y macOS usamos los binarios autocontenidos (no necesitan Python);
+/// el de macOS es universal (Intel y Apple Silicon).
 #[cfg(windows)]
 const RELEASE_ASSET: &str = "yt-dlp.exe";
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+const RELEASE_ASSET: &str = "yt-dlp_macos";
+#[cfg(not(any(windows, target_os = "macos")))]
 const RELEASE_ASSET: &str = "yt-dlp_linux";
 
 const RELEASES_URL: &str = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/";
@@ -62,7 +65,8 @@ impl YtDlp {
         &self.path
     }
 
-    /// Busca yt-dlp primero en la carpeta de datos de la app y después en el `PATH`.
+    /// Busca yt-dlp primero en la carpeta de datos de la app y después en el `PATH`
+    /// (más las carpetas de [`search_path`]).
     pub fn locate(data_dir: Option<&Path>) -> Option<Self> {
         if let Some(dir) = data_dir {
             let candidate = dir.join(BINARY_NAME);
@@ -70,7 +74,7 @@ impl YtDlp {
                 return Some(Self::new(candidate));
             }
         }
-        find_in_path(BINARY_NAME, std::env::var_os("PATH").as_deref()).map(Self::new)
+        find_in_path(BINARY_NAME, search_path().as_deref()).map(Self::new)
     }
 
     /// Descarga la última versión oficial a `data_dir` y la deja ejecutable.
@@ -109,7 +113,7 @@ impl YtDlp {
 
     /// Obtiene la URL directa del audio de un video (ID o URL de YouTube).
     pub async fn stream_info(&self, video: &str) -> Result<StreamInfo> {
-        let js = js_runtime_args(std::env::var_os("PATH").as_deref());
+        let js = js_runtime_args(search_path().as_deref());
         let out = self
             .run(
                 js.iter().map(String::as_str).chain([
@@ -165,6 +169,10 @@ impl YtDlp {
             .stderr(Stdio::piped())
             .kill_on_drop(true);
         hide_console(&mut cmd);
+        // Para que yt-dlp encuentre deno aunque la app no herede el PATH de la terminal.
+        if let Some(path) = search_path() {
+            cmd.env("PATH", path);
+        }
 
         let child = cmd.spawn().map_err(|e| Error::Spawn {
             path: self.path.clone(),
@@ -281,6 +289,32 @@ fn js_runtime_args(path_var: Option<&OsStr>) -> Vec<String> {
 /// datacenter o VPN). No es un error de la app.
 fn is_bot_check(stderr: &str) -> bool {
     stderr.contains("not a bot") || stderr.contains("HTTP Error 429")
+}
+
+/// `PATH` más las carpetas donde suelen instalarse yt-dlp y deno.
+///
+/// Una app abierta desde el Finder de macOS (o desde el menú de algunos
+/// escritorios Linux) no hereda el `PATH` de la terminal, así que Homebrew
+/// (`/opt/homebrew/bin`) o `~/.deno/bin` no aparecen. Se agregan al final.
+pub fn search_path() -> Option<OsString> {
+    let mut dirs: Vec<PathBuf> = std::env::var_os("PATH")
+        .map(|p| std::env::split_paths(&p).collect())
+        .unwrap_or_default();
+    if cfg!(unix) {
+        if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
+            for sub in [".deno/bin", ".bun/bin", ".local/bin"] {
+                dirs.push(home.join(sub));
+            }
+        }
+    }
+    if cfg!(target_os = "macos") {
+        for d in ["/opt/homebrew/bin", "/usr/local/bin", "/opt/local/bin"] {
+            dirs.push(PathBuf::from(d));
+        }
+    }
+    let mut seen = std::collections::HashSet::new();
+    dirs.retain(|d| seen.insert(d.clone()));
+    std::env::join_paths(dirs).ok()
 }
 
 fn find_in_path(name: &str, path_var: Option<&OsStr>) -> Option<PathBuf> {
