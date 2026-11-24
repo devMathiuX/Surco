@@ -3,28 +3,36 @@
 // En Windows, release sin ventana de consola.
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
+mod bar;
 mod config;
+mod covers;
+mod icons;
+mod media;
+mod playback;
 mod theme;
+mod view;
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use iced::keyboard::{self, key, Key};
-use iced::widget::{
-    button, column, container, operation, row, scrollable, slider, text, text_input, Column, Id,
-    Space,
-};
-use iced::{window, Alignment, Element, Length, Size, Subscription, Task, Theme};
-use surco_core::{format_duration, PlayerState, Playlist};
+use iced::widget::{image, operation, Id};
+use iced::{window, Size, Subscription, Task, Theme};
+use surco_core::{PlayerState, Playlist, RepeatMode};
 use surco_player::{Command, PlayerHandle, Source, Status};
 use surco_provider::{HttpClient, Provider, YtDlp};
+use surco_resolver::{Match, Resolver};
 use surco_spotify::{Credentials, Importer};
+
+use playback::{Active, TrackRes};
 
 /// Video de prueba de la Fase 2: "Big Buck Bunny" (Blender Foundation, CC BY 3.0).
 const TEST_URL: &str = "https://www.youtube.com/watch?v=aqz-KE-bpKQ";
 const IMPORT_INPUT: &str = "import-input";
-const SEEK_STEP: Duration = Duration::from_secs(5);
+const FILTER_INPUT: &str = "filter-input";
+const SEEK_STEP: f32 = 5.0;
 
 /// Runtime de tokio para la red y los procesos hijos (yt-dlp).
 static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
@@ -83,6 +91,7 @@ struct Surco {
     seeking: Option<f32>,
     fatal: Option<String>,
     spotify_creds: Option<Credentials>,
+    http: HttpClient,
     /// Playlists importadas en esta sesión (se guardan en disco en la Fase 6),
     /// con la estrategia que funcionó.
     playlists: Vec<(Playlist, &'static str)>,
@@ -90,6 +99,25 @@ struct Surco {
     import_input: String,
     importing: bool,
     notice: Option<Notice>,
+    /// `None` si no hay yt-dlp.
+    resolver: Option<Arc<Resolver>>,
+    /// Resoluciones por clave de canción (`surco_resolver::cache_key`).
+    resolutions: HashMap<String, TrackRes>,
+    /// Cola de reproducción activa.
+    active: Option<Active>,
+    shuffle: bool,
+    repeat: RepeatMode,
+    /// Lo último que se le pidió pre-cargar al motor.
+    preloaded: Option<Source>,
+    /// Canción cuyo selector de video está abierto.
+    choosing: Option<(usize, usize)>,
+    failures_in_a_row: u32,
+    /// Portadas chicas por ID de video.
+    covers: HashMap<String, image::Handle>,
+    /// Búsqueda dentro de la playlist (Ctrl+F); `None` = cerrada.
+    filter: Option<String>,
+    /// MPRIS / SMTC.
+    media: Option<media::Media>,
 }
 
 /// Aviso discreto en la barra lateral.
@@ -105,24 +133,46 @@ type ImportResult = Result<surco_spotify::Imported, String>;
 enum Message {
     InputChanged(String),
     PlayInput,
+    Play,
+    Pause,
     TogglePause,
     SeekPreview(f32),
     SeekCommit,
-    SeekBy(i64),
+    /// Segundos hacia adelante (o atrás, si es negativo).
+    SeekRelative(f32),
+    SeekTo(Duration),
     Volume(f32),
     Status(Status),
     DownloadYtDlp,
     YtDlpDownloaded(Result<PathBuf, String>),
     ImportInputChanged(String),
     Import,
+    PickCsv,
+    CsvPicked(Option<PathBuf>),
     Imported(ImportResult),
     SelectPlaylist(Option<usize>),
     FocusImport,
+    PlayTrack(usize, usize),
+    Resolved(String, Result<Match, String>),
+    /// Abrir (o cerrar, con `None`) el selector de video de una canción.
+    OpenChooser(Option<(usize, usize)>),
+    ChooseVideo(String),
+    /// Siguiente (`1`) o anterior (`-1`).
+    Skip(isize),
+    ToggleShuffle,
+    CycleRepeat,
+    Cover(String, Result<image::Handle, String>),
+    OpenFilter,
+    FilterChanged(String),
+    CloseFilter,
+    /// HWND de la ventana (en Windows) para los controles del sistema.
+    WindowHandle(Option<isize>),
 }
 
 impl Surco {
     fn new() -> (Self, Task<Message>) {
         let ytdlp = YtDlp::locate(data_dir().as_deref());
+        let resolver = ytdlp.clone().map(|y| Arc::new(Resolver::new(Arc::new(y))));
         let provider = ytdlp.clone().map(|y| Arc::new(Provider::new(y)));
         let options = surco_player::Options {
             null_output: std::env::var_os("SURCO_NULL_AUDIO").is_some(),
@@ -148,13 +198,32 @@ impl Surco {
             seeking: None,
             fatal,
             spotify_creds: config::Config::load().spotify_credentials(),
+            http: HttpClient::new(),
             playlists: Vec::new(),
             selected: None,
             import_input: String::new(),
             importing: false,
             notice: None,
+            resolver,
+            resolutions: HashMap::new(),
+            active: None,
+            shuffle: false,
+            repeat: RepeatMode::Off,
+            preloaded: None,
+            choosing: None,
+            failures_in_a_row: 0,
+            covers: HashMap::new(),
+            filter: None,
+            media: None,
         };
-        (state, Task::none())
+        // Los controles del sistema necesitan la ventana (HWND en Windows).
+        let handle = window::oldest()
+            .then(|id| match id {
+                Some(id) => window::run(id, media::hwnd_of),
+                None => Task::done(None),
+            })
+            .map(Message::WindowHandle);
+        (state, handle)
     }
 
     fn send(&self, cmd: Command) {
@@ -164,51 +233,48 @@ impl Surco {
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
+        let task = self.handle(message);
+        self.sync_media();
+        task
+    }
+
+    fn handle(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::InputChanged(s) => self.input = s,
             Message::PlayInput => {
                 if let Some(source) = Source::parse(&self.input) {
+                    self.active = None;
                     self.send(Command::Load(source));
                 }
             }
-            Message::TogglePause => self.send(Command::TogglePause),
+            Message::Play => {
+                if matches!(self.status.state, PlayerState::Paused) {
+                    self.send(Command::Play);
+                } else if !matches!(self.status.state, PlayerState::Playing) {
+                    return self.toggle_pause();
+                }
+            }
+            Message::Pause => self.send(Command::Pause),
+            Message::TogglePause => return self.toggle_pause(),
             Message::SeekPreview(v) => self.seeking = Some(v),
             Message::SeekCommit => {
                 if let Some(v) = self.seeking.take() {
                     self.send(Command::Seek(Duration::from_secs_f32(v.max(0.0))));
                 }
             }
-            Message::SeekBy(secs) => {
-                let step = SEEK_STEP.as_secs() as i64 * secs.signum();
-                let pos = self.status.position.as_secs() as i64 + step;
-                self.send(Command::Seek(Duration::from_secs(pos.max(0) as u64)));
+            Message::SeekRelative(secs) => {
+                let pos = (self.status.position.as_secs_f32() + secs).max(0.0);
+                self.send(Command::Seek(Duration::from_secs_f32(pos)));
             }
+            Message::SeekTo(d) => self.send(Command::Seek(d)),
             Message::Volume(v) => {
                 self.status.volume = v;
                 self.send(Command::SetVolume(v));
             }
-            Message::Status(status) => self.status = status,
-            Message::DownloadYtDlp => {
-                let Some(dir) = data_dir() else {
-                    self.ytdlp = YtDlpState::Failed("no hay carpeta de datos".into());
-                    return Task::none();
-                };
-                self.ytdlp = YtDlpState::Downloading;
-                let Some(rt) = RUNTIME.get() else {
-                    return Task::none();
-                };
-                let job = rt.spawn(async move {
-                    YtDlp::download(&HttpClient::new(), &dir)
-                        .await
-                        .map(|y| y.path().to_path_buf())
-                        .map_err(|e| e.to_string())
-                });
-                return Task::perform(
-                    async move { job.await.unwrap_or_else(|e| Err(e.to_string())) },
-                    Message::YtDlpDownloaded,
-                );
-            }
+            Message::Status(status) => return self.on_status(status),
+            Message::DownloadYtDlp => return self.download_ytdlp(),
             Message::YtDlpDownloaded(Ok(path)) => {
+                self.set_resolver(Some(Arc::new(Resolver::new(Arc::new(YtDlp::new(&path))))));
                 self.send(Command::SetProvider(Arc::new(Provider::new(YtDlp::new(
                     &path,
                 )))));
@@ -217,44 +283,120 @@ impl Surco {
             Message::YtDlpDownloaded(Err(e)) => self.ytdlp = YtDlpState::Failed(e),
             Message::ImportInputChanged(s) => self.import_input = s,
             Message::Import => return self.start_import(),
-            Message::Imported(result) => {
-                self.importing = false;
-                match result {
-                    Ok(imp) => {
-                        self.notice = (!imp.warnings.is_empty()).then(|| Notice {
-                            error: false,
-                            text: imp.warnings.join(" "),
-                        });
-                        self.import_input.clear();
-                        // Reimportar la misma playlist la reemplaza.
-                        let idx = match self
-                            .playlists
-                            .iter()
-                            .position(|(p, _)| p.id == imp.playlist.id)
-                        {
-                            Some(i) => {
-                                self.playlists[i] = (imp.playlist, imp.source);
-                                i
-                            }
-                            None => {
-                                self.playlists.push((imp.playlist, imp.source));
-                                self.playlists.len() - 1
-                            }
-                        };
-                        self.selected = Some(idx);
-                    }
-                    Err(e) => {
-                        self.notice = Some(Notice {
-                            error: true,
-                            text: e,
-                        })
-                    }
+            Message::PickCsv => {
+                return Task::perform(
+                    async {
+                        rfd::AsyncFileDialog::new()
+                            .set_title("Importar CSV de Exportify")
+                            .add_filter("CSV", &["csv"])
+                            .pick_file()
+                            .await
+                            .map(|f| f.path().to_path_buf())
+                    },
+                    Message::CsvPicked,
+                );
+            }
+            Message::CsvPicked(Some(path)) => {
+                self.import_input = path.display().to_string();
+                return self.start_import();
+            }
+            Message::CsvPicked(None) => {}
+            Message::Imported(result) => self.imported(result),
+            Message::SelectPlaylist(i) => {
+                self.selected = i;
+                self.filter = None;
+            }
+            Message::FocusImport => return operation::focus(Id::new(IMPORT_INPUT)),
+            Message::PlayTrack(p, i) => return self.play_track(p, i),
+            Message::Resolved(key, result) => return self.on_resolved(key, result),
+            Message::OpenChooser(at) => self.choosing = at,
+            Message::ChooseVideo(id) => return self.choose_video(&id),
+            Message::Skip(dir) => return self.skip(dir),
+            Message::ToggleShuffle => return self.toggle_shuffle(),
+            Message::CycleRepeat => return self.cycle_repeat(),
+            Message::Cover(id, Ok(handle)) => {
+                self.covers.insert(id, handle);
+            }
+            Message::Cover(id, Err(e)) => tracing::debug!(%id, error = %e, "sin portada"),
+            Message::OpenFilter => {
+                if self.selected.is_some() {
+                    self.filter.get_or_insert_with(String::new);
+                    return operation::focus(Id::new(FILTER_INPUT));
                 }
             }
-            Message::SelectPlaylist(i) => self.selected = i,
-            Message::FocusImport => return operation::focus(Id::new(IMPORT_INPUT)),
+            Message::FilterChanged(s) => self.filter = Some(s),
+            Message::CloseFilter => {
+                self.filter = None;
+                self.choosing = None;
+            }
+            Message::WindowHandle(hwnd) => {
+                if self.media.is_none() && std::env::var_os("SURCO_NO_MEDIA_KEYS").is_none() {
+                    self.media = media::Media::new(hwnd);
+                }
+            }
         }
         Task::none()
+    }
+
+    fn download_ytdlp(&mut self) -> Task<Message> {
+        let Some(dir) = data_dir() else {
+            self.ytdlp = YtDlpState::Failed("no hay carpeta de datos".into());
+            return Task::none();
+        };
+        let Some(rt) = RUNTIME.get() else {
+            return Task::none();
+        };
+        self.ytdlp = YtDlpState::Downloading;
+        let client = self.http.clone();
+        let job = rt.spawn(async move {
+            YtDlp::download(&client, &dir)
+                .await
+                .map(|y| y.path().to_path_buf())
+                .map_err(|e| e.to_string())
+        });
+        Task::perform(
+            async move { job.await.unwrap_or_else(|e| Err(e.to_string())) },
+            Message::YtDlpDownloaded,
+        )
+    }
+
+    fn imported(&mut self, result: ImportResult) {
+        self.importing = false;
+        match result {
+            Ok(imp) => {
+                self.notice = (!imp.warnings.is_empty()).then(|| Notice {
+                    error: false,
+                    text: imp.warnings.join(" "),
+                });
+                self.import_input.clear();
+                // Reimportar la misma playlist la reemplaza.
+                let idx = match self
+                    .playlists
+                    .iter()
+                    .position(|(p, _)| p.id == imp.playlist.id)
+                {
+                    Some(i) => {
+                        self.playlists[i] = (imp.playlist, imp.source);
+                        if self.active.as_ref().is_some_and(|a| a.playlist == i) {
+                            self.active = None;
+                        }
+                        i
+                    }
+                    None => {
+                        self.playlists.push((imp.playlist, imp.source));
+                        self.playlists.len() - 1
+                    }
+                };
+                self.selected = Some(idx);
+                self.filter = None;
+            }
+            Err(e) => {
+                self.notice = Some(Notice {
+                    error: true,
+                    text: e,
+                })
+            }
+        }
     }
 
     /// Importa desde un link de Spotify o, si es una ruta a un `.csv`, desde el archivo.
@@ -277,6 +419,7 @@ impl Surco {
         self.importing = true;
         self.notice = None;
         let creds = self.spotify_creds.clone();
+        let client = self.http.clone();
         let job = rt.spawn(async move {
             let result = match csv {
                 Some(path) => {
@@ -284,11 +427,7 @@ impl Surco {
                         .await
                         .map_err(|e| e.to_string())?
                 }
-                None => {
-                    Importer::standard(HttpClient::new(), creds)
-                        .import_link(&input)
-                        .await
-                }
+                None => Importer::standard(client, creds).import_link(&input).await,
             };
             result.map_err(|e| e.to_string())
         });
@@ -298,291 +437,48 @@ impl Surco {
         )
     }
 
+    /// Le cuenta al sistema (MPRIS/SMTC) qué suena.
+    fn sync_media(&mut self) {
+        let Some(media) = &mut self.media else {
+            return;
+        };
+        let now = self.active.as_ref().and_then(|a| {
+            let at = (a.playlist, a.queue.current()?);
+            let t = self.playlists.get(at.0)?.0.tracks.get(at.1)?;
+            let video = match self.resolutions.get(&surco_resolver::cache_key(t)) {
+                Some(TrackRes::Done(m)) => Some(m.youtube_id.clone()),
+                _ => None,
+            };
+            Some(media::NowPlaying {
+                title: t.title.clone(),
+                artist: t.artists.join(", "),
+                album: t.album.clone(),
+                duration: Some(Duration::from_millis(t.duration_ms)),
+                cover_url: video.and_then(|v| {
+                    covers::large_path(&v).map(|p| format!("file://{}", p.display()))
+                }),
+            })
+        });
+        let playing = matches!(self.status.state, PlayerState::Playing);
+        media.update(now.as_ref(), playing, self.status.position);
+    }
+
     fn subscription(&self) -> Subscription<Message> {
-        let keys = keyboard::listen().filter_map(on_key);
-        match &self.player {
-            Some(p) => Subscription::batch([
-                keys,
-                Subscription::run_with(StatusFeed(p.subscribe()), status_stream),
-            ]),
-            None => keys,
+        let mut subs = vec![keyboard::listen().filter_map(on_key)];
+        if let Some(p) = &self.player {
+            subs.push(Subscription::run_with(
+                StatusFeed(p.subscribe()),
+                status_stream,
+            ));
         }
+        if self.media.is_some() {
+            subs.push(Subscription::run(media::events));
+        }
+        Subscription::batch(subs)
     }
 
     fn theme(&self) -> Theme {
         theme::dark()
-    }
-
-    fn view(&self) -> Element<'_, Message> {
-        let main: Element<'_, Message> = match self.selected.and_then(|i| self.playlists.get(i)) {
-            Some((playlist, source)) => self.view_playlist(playlist, source),
-            None => self.view_empty(),
-        };
-        let main = container(main)
-            .padding([24, 32])
-            .width(Length::Fill)
-            .height(Length::Fill);
-
-        column![
-            row![self.view_sidebar(), main].height(Length::Fill),
-            self.view_player_bar()
-        ]
-        .into()
-    }
-
-    fn view_sidebar(&self) -> Element<'_, Message> {
-        let mut list = Column::new().spacing(2);
-        for (i, (p, _)) in self.playlists.iter().enumerate() {
-            list = list.push(
-                button(
-                    text(&p.name)
-                        .size(theme::SIZE_S)
-                        .wrapping(text::Wrapping::None),
-                )
-                .on_press(Message::SelectPlaylist(Some(i)))
-                .width(Length::Fill)
-                .padding([6, 8])
-                .style(theme::list_button(self.selected == Some(i))),
-            );
-        }
-
-        let input = text_input("Link de Spotify o archivo .csv", &self.import_input)
-            .id(Id::new(IMPORT_INPUT))
-            .on_input(Message::ImportInputChanged)
-            .on_submit(Message::Import)
-            .padding(8)
-            .size(theme::SIZE_S)
-            .style(theme::input);
-        let import = button(
-            text(if self.importing {
-                "Importando…"
-            } else {
-                "+ Importar"
-            })
-            .size(theme::SIZE_S),
-        )
-        .on_press_maybe((!self.importing).then_some(Message::Import))
-        .width(Length::Fill)
-        .padding([6, 10])
-        .style(theme::ghost_button);
-
-        let mut col = column![
-            button(text("Surco").size(theme::SIZE_L))
-                .on_press(Message::SelectPlaylist(None))
-                .padding(0)
-                .style(theme::list_button(false)),
-            scrollable(list).height(Length::Fill),
-            input,
-            import,
-        ]
-        .spacing(12);
-        if let Some(n) = &self.notice {
-            col = col.push(text(&n.text).size(theme::SIZE_S).style(if n.error {
-                theme::error_text
-            } else {
-                theme::secondary_text
-            }));
-        }
-        container(col)
-            .padding(16)
-            .width(220)
-            .height(Length::Fill)
-            .style(theme::surface)
-            .into()
-    }
-
-    fn view_empty(&self) -> Element<'_, Message> {
-        column![
-            text("Pegá un link de playlist de Spotify para empezar").size(theme::SIZE_L),
-            text("Usá el campo de la izquierda (Ctrl+L). También acepta un CSV exportado con Exportify.")
-                .size(theme::SIZE_S)
-                .style(theme::secondary_text),
-            Space::new().height(24),
-            self.view_test_panel(),
-        ]
-        .spacing(8)
-        .into()
-    }
-
-    fn view_playlist<'a>(&'a self, p: &'a Playlist, source: &str) -> Element<'a, Message> {
-        let total_ms: u64 = p.tracks.iter().map(|t| t.duration_ms).sum();
-        let header = column![
-            text(&p.name).size(theme::SIZE_L),
-            text(format!(
-                "{} canciones · {} · importada desde {source}",
-                p.tracks.len(),
-                format_duration(total_ms)
-            ))
-            .size(theme::SIZE_S)
-            .style(theme::secondary_text),
-        ]
-        .spacing(4);
-
-        let rows = Column::with_children(p.tracks.iter().enumerate().map(|(i, t)| {
-            row![
-                text(i + 1)
-                    .size(theme::SIZE_S)
-                    .style(theme::secondary_text)
-                    .width(40),
-                column![
-                    text(&t.title)
-                        .size(theme::SIZE_M)
-                        .wrapping(text::Wrapping::None),
-                    text(t.artists.join(", "))
-                        .size(theme::SIZE_S)
-                        .style(theme::secondary_text)
-                        .wrapping(text::Wrapping::None),
-                ]
-                .spacing(2)
-                .width(Length::Fill),
-                text(format_duration(t.duration_ms))
-                    .size(theme::SIZE_S)
-                    .style(theme::secondary_text),
-            ]
-            .spacing(12)
-            .padding([6, 0])
-            .align_y(Alignment::Center)
-            .into()
-        }))
-        .padding(iced::Padding::ZERO.right(16));
-
-        column![header, scrollable(rows).height(Length::Fill)]
-            .spacing(20)
-            .into()
-    }
-
-    /// Panel de prueba de la Fase 2: pegar una URL y reproducir.
-    fn view_test_panel(&self) -> Element<'_, Message> {
-        let input = text_input(
-            "URL de YouTube, ID de video, URL directa o archivo local",
-            &self.input,
-        )
-        .on_input(Message::InputChanged)
-        .on_submit(Message::PlayInput)
-        .padding(10)
-        .size(theme::SIZE_M)
-        .style(theme::input);
-
-        let play = button(text("Reproducir").size(theme::SIZE_M))
-            .on_press(Message::PlayInput)
-            .padding([10, 16])
-            .style(theme::primary_button);
-
-        let ytdlp: Element<'_, Message> = match &self.ytdlp {
-            YtDlpState::Found(p) => text(format!("yt-dlp: {}", p.display()))
-                .size(theme::SIZE_S)
-                .style(theme::secondary_text)
-                .into(),
-            YtDlpState::Missing => row![
-                text("No encontré yt-dlp. Hace falta para reproducir desde YouTube.")
-                    .size(theme::SIZE_S)
-                    .style(theme::secondary_text),
-                button(text("Descargar yt-dlp").size(theme::SIZE_S))
-                    .on_press(Message::DownloadYtDlp)
-                    .style(theme::ghost_button),
-            ]
-            .spacing(12)
-            .align_y(Alignment::Center)
-            .into(),
-            YtDlpState::Downloading => text("Descargando yt-dlp…")
-                .size(theme::SIZE_S)
-                .style(theme::secondary_text)
-                .into(),
-            YtDlpState::Failed(e) => row![
-                text(format!("No se pudo descargar yt-dlp: {e}"))
-                    .size(theme::SIZE_S)
-                    .style(theme::error_text),
-                button(text("Reintentar").size(theme::SIZE_S))
-                    .on_press(Message::DownloadYtDlp)
-                    .style(theme::ghost_button),
-            ]
-            .spacing(12)
-            .align_y(Alignment::Center)
-            .into(),
-        };
-
-        let mut col = column![
-            text("Prueba de audio").size(theme::SIZE_M),
-            text("Pegá un link de YouTube y dale a Reproducir. Espacio pausa, ←/→ mueven 5 s.")
-                .size(theme::SIZE_S)
-                .style(theme::secondary_text),
-            row![input, play].spacing(8).align_y(Alignment::Center),
-            ytdlp,
-        ]
-        .spacing(16)
-        .max_width(720);
-
-        if let Some(e) = &self.fatal {
-            col = col.push(text(e).size(theme::SIZE_S).style(theme::error_text));
-        }
-        if let PlayerState::Error(e) = &self.status.state {
-            col = col.push(text(e).size(theme::SIZE_S).style(theme::error_text));
-        }
-        col.into()
-    }
-
-    fn view_player_bar(&self) -> Element<'_, Message> {
-        let s = &self.status;
-        let playing = matches!(s.state, PlayerState::Playing);
-        let toggle =
-            button(text(if playing { "Pausar" } else { "Reproducir" }).size(theme::SIZE_S))
-                .on_press(Message::TogglePause)
-                .padding([8, 14])
-                .width(110)
-                .style(theme::primary_button);
-
-        let title = match (&s.state, &s.title) {
-            (PlayerState::Loading, _) => "Cargando…".to_owned(),
-            (PlayerState::Idle, _) => "Nada sonando".to_owned(),
-            (_, Some(t)) => t.clone(),
-            (_, None) => "Sin título".to_owned(),
-        };
-
-        let shown = self.seeking.unwrap_or(s.position.as_secs_f32());
-        // Sin duración conocida (p. ej. una URL directa a un MP4 fragmentado)
-        // no hay barra de progreso; ←/→ siguen funcionando.
-        let seek: Element<'_, Message> = match s.duration {
-            Some(d) => slider(0.0..=d.as_secs_f32().max(1.0), shown, Message::SeekPreview)
-                .on_release(Message::SeekCommit)
-                .step(0.5_f32)
-                .style(theme::seek_slider)
-                .into(),
-            None => Space::new().width(Length::Fill).into(),
-        };
-        let time = text(format!(
-            "{} / {}",
-            format_duration((shown * 1000.0) as u64),
-            s.duration
-                .map(|d| format_duration(d.as_millis() as u64))
-                .unwrap_or_else(|| "--:--".into())
-        ))
-        .size(theme::SIZE_S)
-        .style(theme::secondary_text);
-
-        let volume = slider(0.0..=1.0, s.volume, Message::Volume)
-            .step(0.01_f32)
-            .width(110)
-            .style(theme::seek_slider);
-
-        container(
-            row![
-                toggle,
-                column![
-                    text(title).size(theme::SIZE_S),
-                    row![seek, time].spacing(12).align_y(Alignment::Center),
-                ]
-                .spacing(6)
-                .width(Length::Fill),
-                text("Vol").size(theme::SIZE_S).style(theme::secondary_text),
-                volume,
-            ]
-            .spacing(16)
-            .align_y(Alignment::Center),
-        )
-        .padding([12, 16])
-        .width(Length::Fill)
-        .style(theme::surface)
-        .into()
     }
 }
 
@@ -613,6 +509,9 @@ fn on_key(event: keyboard::Event) -> Option<Message> {
     if modifiers.control() && !modifiers.alt() {
         return match key.as_ref() {
             Key::Character("l") | Key::Character("L") => Some(Message::FocusImport),
+            Key::Character("f") | Key::Character("F") => Some(Message::OpenFilter),
+            Key::Named(key::Named::ArrowLeft) => Some(Message::Skip(-1)),
+            Key::Named(key::Named::ArrowRight) => Some(Message::Skip(1)),
             _ => None,
         };
     }
@@ -621,8 +520,12 @@ fn on_key(event: keyboard::Event) -> Option<Message> {
     }
     match key {
         Key::Named(key::Named::Space) => Some(Message::TogglePause),
-        Key::Named(key::Named::ArrowLeft) => Some(Message::SeekBy(-1)),
-        Key::Named(key::Named::ArrowRight) => Some(Message::SeekBy(1)),
+        Key::Named(key::Named::ArrowLeft) => Some(Message::SeekRelative(-SEEK_STEP)),
+        Key::Named(key::Named::ArrowRight) => Some(Message::SeekRelative(SEEK_STEP)),
+        Key::Named(key::Named::Escape) => Some(Message::CloseFilter),
+        Key::Named(key::Named::MediaPlayPause) => Some(Message::TogglePause),
+        Key::Named(key::Named::MediaTrackNext) => Some(Message::Skip(1)),
+        Key::Named(key::Named::MediaTrackPrevious) => Some(Message::Skip(-1)),
         _ => None,
     }
 }
