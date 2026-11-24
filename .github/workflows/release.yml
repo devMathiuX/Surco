@@ -87,9 +87,11 @@ jobs:
           if (-not (Test-Path $iscc)) {
             choco install innosetup -y --no-progress
           }
-          & $iscc /DAppVersion=${{ steps.v.outputs.version }} `
-            /DSourceExe=..\..\target\release\surco.exe `
-            /O..\..\dist packaging\windows\surco.iss
+          # Rutas absolutas: ISCC resuelve /O contra el directorio actual, no el del .iss.
+          $exe = (Resolve-Path target\release\surco.exe).Path
+          $out = (Resolve-Path dist).Path
+          & $iscc "/DAppVersion=${{ steps.v.outputs.version }}" "/DSourceExe=$exe" "/O$out" `
+            packaging\windows\surco.iss
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Tamaños
         run: ls -la target/release/surco.exe dist/
