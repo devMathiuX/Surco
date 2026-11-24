@@ -151,7 +151,7 @@ fn signed(dir: SeekDirection, d: Duration) -> f32 {
 pub fn hwnd_of(window: &dyn iced::window::Window) -> Option<isize> {
     #[cfg(windows)]
     {
-        use iced::window::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+        use iced::window::raw_window_handle::RawWindowHandle;
         if let Ok(h) = window.window_handle() {
             if let RawWindowHandle::Win32(w) = h.as_raw() {
                 return Some(w.hwnd.get());
