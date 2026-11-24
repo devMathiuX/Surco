@@ -172,7 +172,7 @@ Medido en la Fase 7 (Linux, Xvfb, binario release con la biblioteca de 100 canci
 
 | | Valor | Límite |
 |---|---|---|
-| Binario | **12,5 MB** | < 15 MB |
+| Binario | **13,8 MB** | < 15 MB |
 | `.deb` | 4,3 MB | |
 | RAM al abrir | **~24 MB** | < 80 MB |
 | RAM reproduciendo, portadas cargadas | ~27-30 MB | < 80 MB |
@@ -221,12 +221,14 @@ Quien quiera GPU puede compilar con `cargo build --release --features gpu`.
 
 ### Perfil release
 
-`lto = "fat"`, `codegen-units = 1`, `panic = "abort"`, `strip = true`. Medimos `opt-level = 3` y `"z"` (perfil `release-z`):
+`lto = "fat"`, `codegen-units = 1`, `panic = "unwind"`, `strip = true`. Medimos `opt-level = 3` y `"z"` (perfil `release-z`):
 
 - `z` ahorra ~1,5 MB (4,9 vs 6,4 MB) sin diferencia de RAM.
 - Ambos quedan muy por debajo de 15 MB.
 
 Desde la Fase 6, el código de Surco y las partes calientes (decodificación AAC/MP4 de symphonia, rodio y el dibujado de tiny-skia) van con `opt-level = 3`, y el resto de las dependencias (red, D-Bus, SQLite, layout, imágenes…) con `"s"`. Con SQLite adentro, todo en 3 daba 15,1 MB; así queda en **12,3 MB**, y reproduciendo usa ~2,8 % de CPU (todo en `"s"` daba 3,8 %).
+
+Hasta la Fase 7 el perfil usaba `panic = "abort"`. Lo pasamos a `"unwind"` (+1,3 MB, queda en 13,8 MB) porque con `abort` el pánico de un hilo de una dependencia tumba toda la app. Pasaba con `souvlaki`, que hace `unwrap()` si no puede conectarse a D-Bus. Además, ahora Surco prueba conectarse al bus de sesión antes de activar MPRIS: si no hay bus, sigue sin controles multimedia.
 
 ### Audio
 
