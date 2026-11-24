@@ -25,6 +25,10 @@ const PLAYLISTS: usize = 8;
 const ARTIST_SONGS: usize = 20;
 /// Tope de canciones al importar una playlist de YouTube.
 const PLAYLIST_MAX: usize = 2000;
+/// Espera desde la última tecla antes de buscar solo.
+const TYPING_PAUSE: std::time::Duration = std::time::Duration::from_millis(450);
+/// Letras mínimas para buscar mientras se escribe.
+const MIN_QUERY: usize = 2;
 
 /// Resultados de una búsqueda. Cada parte puede fallar por separado.
 #[derive(Debug, Clone, Default)]
@@ -48,7 +52,10 @@ pub struct Preview {
 #[derive(Debug, Default)]
 pub struct SearchState {
     pub query: String,
-    pub searching: bool,
+    /// Cuenta las teclas: la búsqueda automática solo corre si no hubo otra después.
+    pub typed: u64,
+    /// Búsqueda en curso (texto).
+    pub searching: Option<String>,
     pub results: Option<(String, Results)>,
     pub opening: bool,
     pub preview: Option<Preview>,
@@ -58,6 +65,8 @@ pub struct SearchState {
 pub enum SearchMsg {
     Open,
     Input(String),
+    /// Pasó un rato sin escribir (número de tecla).
+    Paused(u64),
     Submit,
     Done(String, Results),
     /// Reproducir la canción `i` de los resultados (cola sin fin).
@@ -130,10 +139,34 @@ impl Surco {
                 self.screen = Screen::Search;
                 return operation::focus(Id::new(SEARCH_INPUT));
             }
-            SearchMsg::Input(q) => self.search.query = q,
+            SearchMsg::Input(q) => {
+                self.search.query = q;
+                self.search.typed += 1;
+                let n = self.search.typed;
+                let Some(rt) = RUNTIME.get() else {
+                    return Task::none();
+                };
+                let wait = rt.spawn(tokio::time::sleep(TYPING_PAUSE));
+                return Task::perform(
+                    async move {
+                        let _ = wait.await;
+                    },
+                    move |()| Message::Search(SearchMsg::Paused(n)),
+                );
+            }
+            SearchMsg::Paused(n) => {
+                let q = self.search.query.trim();
+                let already = self.search.searching.as_deref() == Some(q)
+                    || self.search.results.as_ref().is_some_and(|(r, _)| r == q);
+                if n == self.search.typed && q.chars().count() >= MIN_QUERY && !already {
+                    return self.run_search();
+                }
+            }
             SearchMsg::Submit => return self.run_search(),
             SearchMsg::Done(q, results) => {
-                self.search.searching = false;
+                if self.search.searching.as_deref() == Some(q.as_str()) {
+                    self.search.searching = None;
+                }
                 if q == self.search.query.trim() {
                     let covers: Vec<String> = results.songs.iter().map(|r| r.id.clone()).collect();
                     self.search.results = Some((q, results));
@@ -261,8 +294,7 @@ impl Surco {
                         .and_then(youtube_playlist_id)
                         .unwrap_or_else(|| p.title.clone());
                     self.save_youtube_playlist(&id, &p.title, p.tracks);
-                    self.screen = Screen::Library;
-                    return self.queue_list_covers();
+                    return self.on_playlist_opened();
                 }
             }
             SearchMsg::Imported(result) => {
@@ -280,7 +312,7 @@ impl Surco {
                         self.import_input.clear();
                         self.notice = None;
                         self.save_youtube_playlist(&id, &title, tracks);
-                        return self.queue_list_covers();
+                        return self.on_playlist_opened();
                     }
                     Err(e) => {
                         self.notice = Some(Notice {
@@ -323,7 +355,7 @@ impl Surco {
             });
             return Task::none();
         };
-        self.search.searching = true;
+        self.search.searching = Some(q.clone());
         self.search.preview = None;
         let query = q.clone();
         let job = rt.spawn(async move {
@@ -432,10 +464,8 @@ impl Surco {
                 self.playlists.len() - 1
             }
         };
-        self.selected = Some(index);
-        self.filter = None;
-        self.screen = Screen::Library;
-        self.persist_selected();
+        self.recs.remove(&self.playlists[index].0.id);
+        self.open_playlist(index);
     }
 
     pub(crate) fn view_search(&self) -> Element<'_, Message> {
@@ -448,17 +478,6 @@ impl Surco {
                 .padding(10)
                 .size(theme::SIZE_M)
                 .style(theme::input),
-            button(
-                text(if self.search.searching {
-                    "Buscando…"
-                } else {
-                    "Buscar"
-                })
-                .size(theme::SIZE_S)
-            )
-            .on_press_maybe((!self.search.searching).then_some(Message::Search(SearchMsg::Submit)))
-            .padding([10, 16])
-            .style(theme::primary_button),
         ]
         .spacing(10)
         .align_y(Alignment::Center);
@@ -466,14 +485,23 @@ impl Surco {
         let body: Element<'_, Message> = if let Some(p) = &self.search.preview {
             self.view_preview(p)
         } else if self.search.opening {
-            text("Abriendo…")
-                .size(theme::SIZE_S)
-                .style(theme::secondary_text)
-                .into()
+            column![
+                crate::skeleton::header(self.pulse),
+                crate::skeleton::song_rows(8, self.pulse)
+            ]
+            .spacing(20)
+            .into()
+        } else if self
+            .search
+            .searching
+            .as_deref()
+            .is_some_and(|q| self.search.results.as_ref().is_none_or(|(r, _)| r != q))
+        {
+            crate::skeleton::song_rows(8, self.pulse)
         } else if let Some((q, r)) = &self.search.results {
             self.view_results(q, r)
         } else {
-            text("Lo que escuches desde acá no se corta: cuando se termina, siguen canciones parecidas.")
+            text("Escribí y los resultados aparecen solos. Lo que escuches desde acá no se corta: cuando se termina, siguen canciones parecidas.")
                 .size(theme::SIZE_S)
                 .style(theme::secondary_text)
                 .into()
@@ -501,7 +529,7 @@ impl Surco {
         };
         let playing =
             video.is_some_and(|v| self.now_track().and_then(|t| self.video_of_track(t)) == Some(v));
-        let add = add_button(&track);
+        let add = add_button(&track, None);
         button(
             row![
                 cover,
@@ -644,18 +672,24 @@ fn section(title: &str) -> Element<'_, Message> {
     text(title).size(theme::SIZE_M).into()
 }
 
-/// Botón "+" (agregar a la cola) de una canción.
-pub fn add_button<'a>(track: &Track) -> Element<'a, Message> {
+/// Botón "+" de una canción: abre el menú para agregarla a la cola o a una
+/// playlist (`from`: playlist y posición, para poder quitarla de ahí).
+pub fn add_button<'a>(track: &Track, from: Option<(usize, usize)>) -> Element<'a, Message> {
     iced::widget::tooltip(
         button(icons::glyph(
             Kind::Add,
             theme::colors().text_secondary,
             14.0,
         ))
-        .on_press(Message::Enqueue(Box::new(track.clone()), false))
+        .on_press(Message::SongMenu(Some(Box::new(
+            crate::playlists::SongMenu {
+                track: track.clone(),
+                from,
+            },
+        ))))
         .padding(6)
         .style(theme::icon_button),
-        container(text("Agregar a la cola").size(theme::SIZE_S))
+        container(text("Agregar a…").size(theme::SIZE_S))
             .padding(6)
             .style(theme::card),
         iced::widget::tooltip::Position::Left,

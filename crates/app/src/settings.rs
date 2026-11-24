@@ -65,7 +65,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             theme: 0,
-            covers_in_list: false,
+            covers_in_list: true,
             precache: Precache::Off,
             autoplay: true,
         }

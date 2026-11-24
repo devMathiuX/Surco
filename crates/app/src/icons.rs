@@ -29,6 +29,10 @@ pub enum Kind {
     Close,
     /// Agarre para arrastrar (tres rayas).
     Grip,
+    /// Inicio (casita).
+    Home,
+    /// Importar (flecha hacia una bandeja).
+    Import,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -211,6 +215,39 @@ impl<Message> canvas::Program<Message> for Icon {
                 for y in [8.0, 12.0, 16.0] {
                     frame.stroke(&Path::line(p(6.0, y), p(18.0, y)), line(1.6));
                 }
+            }
+            Kind::Home => {
+                let st = line(1.9);
+                frame.stroke(
+                    &Path::new(|b| {
+                        b.move_to(p(3.5, 11.5));
+                        b.line_to(p(12.0, 4.5));
+                        b.line_to(p(20.5, 11.5));
+                        b.move_to(p(6.0, 9.5));
+                        b.line_to(p(6.0, 19.5));
+                        b.line_to(p(18.0, 19.5));
+                        b.line_to(p(18.0, 9.5));
+                    }),
+                    st,
+                );
+                frame.fill(&rect(p(10.0, 13.5), 4.0 * s, 6.0 * s), self.color);
+            }
+            Kind::Import => {
+                let st = line(1.9);
+                frame.stroke(
+                    &Path::new(|b| {
+                        b.move_to(p(12.0, 4.0));
+                        b.line_to(p(12.0, 14.5));
+                        b.move_to(p(7.5, 10.5));
+                        b.line_to(p(12.0, 15.0));
+                        b.line_to(p(16.5, 10.5));
+                        b.move_to(p(4.5, 15.0));
+                        b.line_to(p(4.5, 19.5));
+                        b.line_to(p(19.5, 19.5));
+                        b.line_to(p(19.5, 15.0));
+                    }),
+                    st,
+                );
             }
             Kind::Settings => {
                 // Engranaje: aro y 8 dientes.
