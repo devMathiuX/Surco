@@ -7,6 +7,7 @@ mod bar;
 mod config;
 mod covers;
 mod icons;
+mod library;
 mod media;
 mod playback;
 mod theme;
@@ -25,6 +26,7 @@ use surco_player::{Command, PlayerHandle, Source, Status};
 use surco_provider::{HttpClient, Provider, YtDlp};
 use surco_resolver::{Match, Resolver};
 use surco_spotify::{Credentials, Importer};
+use surco_storage::Store;
 
 use playback::{Active, TrackRes};
 
@@ -38,7 +40,8 @@ const SEEK_STEP: f32 = 5.0;
 static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
 
 fn main() -> anyhow::Result<()> {
-    init_logging();
+    // El guard vacía el log en disco al salir.
+    let _log_guard = init_logging();
     tracing::info!(version = env!("CARGO_PKG_VERSION"), "iniciando Surco");
 
     let rt = tokio::runtime::Builder::new_multi_thread()
@@ -62,12 +65,41 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn init_logging() {
-    use tracing_subscriber::EnvFilter;
-    // Por ahora a stderr. El archivo rotativo llega con la persistencia (Fase 6).
+/// Logs a stderr y a un archivo diario en `<datos>/logs/` (se guardan 7 días).
+fn init_logging() -> Option<tracing_appender::non_blocking::WorkerGuard> {
+    use tracing_subscriber::prelude::*;
+    use tracing_subscriber::{fmt, EnvFilter};
+
     let filter =
         EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("surco=info,warn"));
-    let _ = tracing_subscriber::fmt().with_env_filter(filter).try_init();
+    let (file_layer, guard) = match log_dir().and_then(|dir| {
+        tracing_appender::rolling::Builder::new()
+            .rotation(tracing_appender::rolling::Rotation::DAILY)
+            .filename_prefix("surco")
+            .filename_suffix("log")
+            .max_log_files(7)
+            .build(dir)
+            .ok()
+    }) {
+        Some(appender) => {
+            let (writer, guard) = tracing_appender::non_blocking(appender);
+            (
+                Some(fmt::layer().with_writer(writer).with_ansi(false)),
+                Some(guard),
+            )
+        }
+        None => (None, None),
+    };
+    let _ = tracing_subscriber::registry()
+        .with(filter)
+        .with(fmt::layer().with_writer(std::io::stderr))
+        .with(file_layer)
+        .try_init();
+    guard
+}
+
+fn log_dir() -> Option<PathBuf> {
+    directories::ProjectDirs::from("", "", "Surco").map(|d| d.data_local_dir().join("logs"))
 }
 
 fn data_dir() -> Option<PathBuf> {
@@ -94,7 +126,7 @@ struct Surco {
     http: HttpClient,
     /// Playlists importadas en esta sesión (se guardan en disco en la Fase 6),
     /// con la estrategia que funcionó.
-    playlists: Vec<(Playlist, &'static str)>,
+    playlists: Vec<(Playlist, String)>,
     selected: Option<usize>,
     import_input: String,
     importing: bool,
@@ -118,6 +150,11 @@ struct Surco {
     filter: Option<String>,
     /// MPRIS / SMTC.
     media: Option<media::Media>,
+    /// Biblioteca, matches, historial y ajustes en SQLite. `None` si no se
+    /// pudo abrir (la app funciona igual, sin guardar nada).
+    store: Option<Store>,
+    /// Última fuente anotada en el historial.
+    recorded: Option<Source>,
 }
 
 /// Aviso discreto en la barra lateral.
@@ -151,6 +188,7 @@ enum Message {
     CsvPicked(Option<PathBuf>),
     Imported(ImportResult),
     SelectPlaylist(Option<usize>),
+    RemovePlaylist(usize),
     FocusImport,
     PlayTrack(usize, usize),
     Resolved(String, Result<Match, String>),
@@ -184,7 +222,7 @@ impl Surco {
             },
             None => (None, Some("runtime no inicializado".to_owned())),
         };
-        let state = Self {
+        let mut state = Self {
             status: player
                 .as_ref()
                 .map(PlayerHandle::status)
@@ -215,7 +253,10 @@ impl Surco {
             covers: HashMap::new(),
             filter: None,
             media: None,
+            store: library::open(),
+            recorded: None,
         };
+        state.restore();
         // Los controles del sistema necesitan la ventana (HWND en Windows).
         let handle = window::oldest()
             .then(|id| match id {
@@ -270,11 +311,13 @@ impl Surco {
             Message::Volume(v) => {
                 self.status.volume = v;
                 self.send(Command::SetVolume(v));
+                self.persist_volume();
             }
             Message::Status(status) => return self.on_status(status),
             Message::DownloadYtDlp => return self.download_ytdlp(),
             Message::YtDlpDownloaded(Ok(path)) => {
                 self.set_resolver(Some(Arc::new(Resolver::new(Arc::new(YtDlp::new(&path))))));
+                self.seed_resolver();
                 self.send(Command::SetProvider(Arc::new(Provider::new(YtDlp::new(
                     &path,
                 )))));
@@ -305,7 +348,9 @@ impl Surco {
             Message::SelectPlaylist(i) => {
                 self.selected = i;
                 self.filter = None;
+                self.persist_selected();
             }
+            Message::RemovePlaylist(i) => self.remove_playlist(i),
             Message::FocusImport => return operation::focus(Id::new(IMPORT_INPUT)),
             Message::PlayTrack(p, i) => return self.play_track(p, i),
             Message::Resolved(key, result) => return self.on_resolved(key, result),
@@ -369,6 +414,7 @@ impl Surco {
                     text: imp.warnings.join(" "),
                 });
                 self.import_input.clear();
+                self.persist_playlist(&imp.playlist, imp.source);
                 // Reimportar la misma playlist la reemplaza.
                 let idx = match self
                     .playlists
@@ -376,19 +422,20 @@ impl Surco {
                     .position(|(p, _)| p.id == imp.playlist.id)
                 {
                     Some(i) => {
-                        self.playlists[i] = (imp.playlist, imp.source);
+                        self.playlists[i] = (imp.playlist, imp.source.to_owned());
                         if self.active.as_ref().is_some_and(|a| a.playlist == i) {
                             self.active = None;
                         }
                         i
                     }
                     None => {
-                        self.playlists.push((imp.playlist, imp.source));
+                        self.playlists.push((imp.playlist, imp.source.to_owned()));
                         self.playlists.len() - 1
                     }
                 };
                 self.selected = Some(idx);
                 self.filter = None;
+                self.persist_selected();
             }
             Err(e) => {
                 self.notice = Some(Notice {
