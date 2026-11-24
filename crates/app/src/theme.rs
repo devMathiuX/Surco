@@ -43,20 +43,6 @@ pub fn secondary_text(_: &Theme) -> text::Style {
     }
 }
 
-pub fn accent_text(_: &Theme) -> text::Style {
-    text::Style {
-        color: Some(ACCENT),
-    }
-}
-
-/// Contenedor con borde de acento y radio estándar.
-pub fn outlined(_: &Theme) -> container::Style {
-    container::Style {
-        border: border::rounded(RADIUS).color(ACCENT).width(1),
-        ..container::Style::default()
-    }
-}
-
 pub fn error_text(theme: &Theme) -> text::Style {
     text::Style {
         color: Some(theme.palette().danger),
@@ -120,5 +106,18 @@ pub fn seek_slider(_: &Theme, status: slider::Status) -> slider::Style {
             border_width: 0.0,
             border_color: Color::TRANSPARENT,
         },
+    }
+}
+
+/// Elemento de la barra lateral; el seleccionado va resaltado.
+pub fn list_button(selected: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
+    move |_, status| {
+        let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
+        button::Style {
+            background: (selected || hovered).then(|| color!(0x242424).into()),
+            text_color: if selected { ACCENT } else { TEXT },
+            border: border::rounded(RADIUS),
+            ..button::Style::default()
+        }
     }
 }

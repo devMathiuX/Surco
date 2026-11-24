@@ -27,6 +27,9 @@ pub enum Error {
     },
     #[error("yt-dlp: {0}")]
     YtDlp(String),
+    /// YouTube pidió verificar que no somos un bot (IP marcada, VPN, datacenter).
+    #[error("YouTube bloqueó la consulta desde esta red (pide verificar que no sos un bot)")]
+    BotCheck(String),
     #[error("tiempo de espera agotado ({0:?})")]
     Timeout(Duration),
     #[error("respuesta inesperada: {0}")]
