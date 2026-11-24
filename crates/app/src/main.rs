@@ -6,15 +6,18 @@
 mod bar;
 mod config;
 mod covers;
+mod home;
 mod icons;
 mod library;
 mod media;
 mod playback;
+mod playlists;
 mod precache;
 mod queue_view;
 mod radio;
 mod search;
 mod settings;
+mod skeleton;
 mod spotify_keys;
 mod theme;
 mod view;
@@ -38,8 +41,6 @@ use playback::{Active, CoverJobs, TrackRes};
 use precache::PrecacheState;
 use settings::Settings;
 
-/// Video de prueba de la Fase 2: "Big Buck Bunny" (Blender Foundation, CC BY 3.0).
-const TEST_URL: &str = "https://www.youtube.com/watch?v=aqz-KE-bpKQ";
 const IMPORT_INPUT: &str = "import-input";
 const FILTER_INPUT: &str = "filter-input";
 const SEEK_STEP: f32 = 5.0;
@@ -113,14 +114,24 @@ fn log_dir() -> Option<PathBuf> {
     directories::ProjectDirs::from("", "", "Surco").map(|d| d.data_local_dir().join("logs"))
 }
 
+const ICON_PNG: &[u8] = include_bytes!("../../../packaging/icons/surco-64.png");
+
 /// Ícono de la ventana (Linux y Windows; en macOS lo pone el `.app`).
 fn window_icon() -> Option<window::Icon> {
-    const PNG: &[u8] = include_bytes!("../../../packaging/icons/surco-64.png");
-    let img = ::image::load_from_memory_with_format(PNG, ::image::ImageFormat::Png)
+    let img = ::image::load_from_memory_with_format(ICON_PNG, ::image::ImageFormat::Png)
         .ok()?
         .to_rgba8();
     let (w, h) = img.dimensions();
     window::icon::from_rgba(img.into_raw(), w, h).ok()
+}
+
+/// Logo para la barra lateral.
+fn logo() -> Option<image::Handle> {
+    let img = ::image::load_from_memory_with_format(ICON_PNG, ::image::ImageFormat::Png)
+        .ok()?
+        .to_rgba8();
+    let (w, h) = img.dimensions();
+    Some(image::Handle::from_rgba(w, h, img.into_raw()))
 }
 
 /// Carpeta del audio precargado.
@@ -152,7 +163,6 @@ enum YtDlpState {
 struct Surco {
     player: Option<PlayerHandle>,
     status: Status,
-    input: String,
     ytdlp: YtDlpState,
     /// Valor del slider mientras se arrastra (segundos).
     seeking: Option<f32>,
@@ -208,16 +218,51 @@ struct Surco {
     extending: bool,
     /// Semilla con la que no se consiguieron parecidas (no reintentar en bucle).
     extend_failed: Option<String>,
-    /// Arrastre en la cola: posición tomada y posición sobre la que está.
-    drag: Option<(usize, usize)>,
+    /// Arrastre (en la cola o en la barra lateral).
+    drag: Option<Drag>,
+    /// Playlist de la barra lateral bajo el mouse.
+    sidebar_hover: Option<usize>,
     search: search::SearchState,
+    home: home::HomeState,
+    /// Menú abierto de una canción (agregar a la cola o a una playlist).
+    song_menu: Option<playlists::SongMenu>,
+    /// Playlist que se está renombrando y el nombre escrito.
+    renaming: Option<(usize, String)>,
+    /// Recomendadas por playlist (ID).
+    recs: HashMap<String, playlists::Recs>,
+    /// Descargado por playlist (ID).
+    downloads: playlists::Downloads,
+    /// Búsqueda de fondo de las canciones de la playlist abierta (portadas).
+    background: playback::Background,
+    /// Se pidió una radio con el botón y todavía no llegó.
+    radio_waiting: bool,
+    /// Latido de los esqueletos de carga.
+    pulse: u32,
+    logo: Option<image::Handle>,
+}
+
+/// Qué lista se está arrastrando.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DragList {
+    Queue,
+    Sidebar,
+}
+
+/// Arrastre: lista, posición tomada y posición sobre la que está.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Drag {
+    list: DragList,
+    from: usize,
+    to: usize,
 }
 
 /// Panel principal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Screen {
-    /// Playlist abierta (o la pantalla de inicio).
+    Home,
+    /// Playlist abierta.
     Library,
+    Import,
     Settings,
     Queue,
     Search,
@@ -234,8 +279,6 @@ type ImportResult = Result<surco_spotify::Imported, String>;
 
 #[derive(Debug, Clone)]
 enum Message {
-    InputChanged(String),
-    PlayInput,
     Play,
     Pause,
     TogglePause,
@@ -278,12 +321,30 @@ enum Message {
     QueueExtended(String, Result<Vec<surco_provider::SearchResult>, String>),
     /// Mostrar u ocultar la cola.
     ToggleQueue,
-    /// Agregar a la cola: al final, o para que suene después de la actual.
-    Enqueue(Box<surco_core::Track>, bool),
     QueueRemove(usize),
-    DragStart(usize),
-    DragOver(usize),
+    DragStart(DragList, usize),
+    DragOver(DragList, usize),
     DragEnd,
+    SidebarHover(Option<usize>),
+    GoHome,
+    /// Escribieron en el buscador del inicio.
+    HomeSearch(String),
+    PlayRecent(usize),
+    OpenImport,
+    NewPlaylist,
+    StartRename(usize),
+    RenameInput(String),
+    RenameCommit,
+    /// Abrir (o cerrar) el menú de una canción.
+    SongMenu(Option<Box<playlists::SongMenu>>),
+    SongMenuPick(playlists::AddTarget),
+    RecsLoaded(String, Result<Vec<surco_provider::SearchResult>, String>),
+    RecsRefresh(usize),
+    RecAdd(usize, usize),
+    RecPlay(usize, usize),
+    DeleteDownloads(usize),
+    /// Paso del latido de los esqueletos de carga.
+    Tick,
     Search(search::SearchMsg),
     Keys(spotify_keys::KeysMsg),
     OpenFilter,
@@ -314,7 +375,6 @@ impl Surco {
                 .map(PlayerHandle::status)
                 .unwrap_or_default(),
             player,
-            input: TEST_URL.to_owned(),
             ytdlp: match ytdlp {
                 Some(y) => YtDlpState::Found(y.path().to_path_buf()),
                 None => YtDlpState::Missing,
@@ -344,7 +404,7 @@ impl Surco {
             store: library::open(),
             recorded: None,
             settings: Settings::default(),
-            screen: Screen::Library,
+            screen: Screen::Home,
             theme: theme::iced_theme(),
             provider,
             precache: PrecacheState::default(),
@@ -354,12 +414,24 @@ impl Surco {
             extending: false,
             extend_failed: None,
             drag: None,
+            sidebar_hover: None,
             search: search::SearchState::default(),
+            home: home::HomeState::default(),
+            song_menu: None,
+            renaming: None,
+            recs: HashMap::new(),
+            downloads: playlists::Downloads::new(),
+            background: playback::Background::default(),
+            radio_waiting: false,
+            pulse: 0,
+            logo: logo(),
         };
         state.restore();
         state.load_settings();
         state.load_spotify_keys();
+        state.refresh_downloads();
         let covers = state.queue_list_covers();
+        let home = state.refresh_home();
         // Los controles del sistema necesitan la ventana (HWND en Windows).
         let handle = window::oldest()
             .then(|id| match id {
@@ -367,7 +439,7 @@ impl Surco {
                 None => Task::done(None),
             })
             .map(Message::WindowHandle);
-        (state, Task::batch([handle, covers]))
+        (state, Task::batch([handle, covers, home]))
     }
 
     fn send(&self, cmd: Command) {
@@ -380,19 +452,13 @@ impl Surco {
         let task = self.handle(message);
         let precache = self.pump_precache();
         let endless = self.extend_endless();
+        let background = self.pump_background();
         self.sync_media();
-        Task::batch([task, precache, endless])
+        Task::batch([task, precache, endless, background])
     }
 
     fn handle(&mut self, message: Message) -> Task<Message> {
         match message {
-            Message::InputChanged(s) => self.input = s,
-            Message::PlayInput => {
-                if let Some(source) = Source::parse(&self.input) {
-                    self.active = None;
-                    self.send(Command::Load(source));
-                }
-            }
             Message::Play => {
                 if matches!(self.status.state, PlayerState::Paused) {
                     self.send(Command::Play);
@@ -427,6 +493,7 @@ impl Surco {
                 self.provider = Some(Arc::clone(&provider));
                 self.send(Command::SetProvider(provider));
                 self.ytdlp = YtDlpState::Found(path);
+                return self.resolve_in_background();
             }
             Message::YtDlpDownloaded(Err(e)) => self.ytdlp = YtDlpState::Failed(e),
             Message::ImportInputChanged(s) => self.import_input = s,
@@ -449,16 +516,20 @@ impl Surco {
                 return self.start_import();
             }
             Message::CsvPicked(None) => {}
-            Message::Imported(result) => self.imported(result),
-            Message::SelectPlaylist(i) => {
-                self.selected = i;
-                self.filter = None;
-                self.screen = Screen::Library;
-                self.persist_selected();
-                return self.queue_list_covers();
+            Message::Imported(result) => return self.imported(result),
+            Message::SelectPlaylist(None) => return self.go_home(),
+            Message::SelectPlaylist(Some(i)) => {
+                if self.renaming.as_ref().is_some_and(|(r, _)| *r != i) {
+                    self.renaming = None;
+                }
+                self.open_playlist(i);
+                return self.on_playlist_opened();
             }
             Message::RemovePlaylist(i) => self.remove_playlist(i),
-            Message::FocusImport => return operation::focus(Id::new(IMPORT_INPUT)),
+            Message::FocusImport | Message::OpenImport => {
+                self.screen = Screen::Import;
+                return operation::focus(Id::new(IMPORT_INPUT));
+            }
             Message::PlayTrack(p, i) => return self.play_track(p, i),
             Message::Resolved(key, result) => return self.on_resolved(key, result),
             Message::OpenChooser(at) => self.choosing = at,
@@ -468,36 +539,67 @@ impl Surco {
             Message::CycleRepeat => return self.cycle_repeat(),
             Message::Cover(id, result) => return self.on_cover(id, result),
             Message::ToggleSettings => {
-                self.screen = if self.screen == Screen::Settings {
-                    Screen::Library
-                } else {
-                    Screen::Settings
-                };
+                if self.screen == Screen::Settings {
+                    return self.go_home();
+                }
+                self.screen = Screen::Settings;
                 self.filter = None;
+                self.refresh_downloads();
             }
             Message::Setting(change) => return self.change_setting(change),
             Message::ClearAudioCache => self.clear_audio_cache(),
-            Message::StartRadio => return self.start_radio(false),
+            Message::StartRadio => {
+                let task = self.start_radio(false);
+                if self.radio_loading {
+                    self.radio_waiting = true;
+                    self.screen = Screen::Library;
+                }
+                return task;
+            }
             Message::RadioLoaded(autostart, result) => return self.on_radio(autostart, result),
             Message::Precached(key, result) => return self.on_precached(key, result),
             Message::QueueExtended(seed, result) => return self.on_extended(seed, result),
             Message::ToggleQueue => {
-                self.screen = if self.screen == Screen::Queue {
-                    Screen::Library
-                } else {
-                    Screen::Queue
-                };
                 self.drag = None;
+                if self.screen == Screen::Queue {
+                    return self.back_from_panel();
+                }
+                self.screen = Screen::Queue;
             }
-            Message::Enqueue(track, next) => return self.enqueue(*track, next),
             Message::QueueRemove(pos) => self.queue_remove(pos),
-            Message::DragStart(pos) => self.drag = Some((pos, pos)),
-            Message::DragOver(pos) => {
-                if let Some((from, _)) = self.drag {
-                    self.drag = Some((from, pos));
+            Message::DragStart(list, pos) => {
+                self.drag = Some(Drag {
+                    list,
+                    from: pos,
+                    to: pos,
+                })
+            }
+            Message::DragOver(list, pos) => {
+                if let Some(d) = self.drag.as_mut().filter(|d| d.list == list) {
+                    d.to = pos;
                 }
             }
             Message::DragEnd => return self.drag_end(),
+            Message::SidebarHover(i) => self.sidebar_hover = i,
+            Message::GoHome => return self.go_home(),
+            Message::HomeSearch(q) => return self.home_search(q),
+            Message::PlayRecent(i) => return self.play_recent(i),
+            Message::NewPlaylist => return self.new_playlist(None),
+            Message::StartRename(i) => return self.start_rename(i),
+            Message::RenameInput(name) => {
+                if let Some((_, n)) = &mut self.renaming {
+                    *n = name;
+                }
+            }
+            Message::RenameCommit => self.commit_rename(),
+            Message::SongMenu(menu) => self.song_menu = menu.map(|m| *m),
+            Message::SongMenuPick(target) => return self.song_menu_pick(target),
+            Message::RecsLoaded(id, result) => return self.on_recs(id, result),
+            Message::RecsRefresh(p) => return self.load_recs(p, true),
+            Message::RecAdd(p, i) => self.add_rec(p, i),
+            Message::RecPlay(p, i) => return self.play_rec(p, i),
+            Message::DeleteDownloads(p) => self.delete_downloads(p),
+            Message::Tick => self.pulse = self.pulse.wrapping_add(1),
             Message::Search(msg) => return self.on_search(msg),
             Message::Keys(msg) => self.on_keys(msg),
             Message::OpenFilter => {
@@ -510,6 +612,8 @@ impl Surco {
             Message::CloseFilter => {
                 self.filter = None;
                 self.choosing = None;
+                self.renaming = None;
+                self.song_menu = None;
             }
             Message::WindowHandle(hwnd) => {
                 if self.media.is_none() && std::env::var_os("SURCO_NO_MEDIA_KEYS").is_none() {
@@ -542,7 +646,7 @@ impl Surco {
         )
     }
 
-    fn imported(&mut self, result: ImportResult) {
+    fn imported(&mut self, result: ImportResult) -> Task<Message> {
         self.importing = false;
         match result {
             Ok(imp) => {
@@ -570,17 +674,55 @@ impl Surco {
                         self.playlists.len() - 1
                     }
                 };
-                self.selected = Some(idx);
-                self.filter = None;
-                self.persist_selected();
+                self.open_playlist(idx);
+                self.recs.remove(&self.playlists[idx].0.id);
+                self.on_playlist_opened()
             }
             Err(e) => {
                 self.notice = Some(Notice {
                     error: true,
                     text: e,
-                })
+                });
+                Task::none()
             }
         }
+    }
+
+    /// Se abrió una playlist: portadas, búsqueda de fondo y recomendadas.
+    fn on_playlist_opened(&mut self) -> Task<Message> {
+        self.refresh_downloads();
+        let covers = self.queue_list_covers();
+        let background = self.resolve_in_background();
+        let recs = self.maybe_load_recs();
+        Task::batch([covers, background, recs])
+    }
+
+    /// Al cerrar la cola o los ajustes: a la playlist abierta o al inicio.
+    fn back_from_panel(&mut self) -> Task<Message> {
+        match self.selected {
+            Some(_) => {
+                self.screen = Screen::Library;
+                Task::none()
+            }
+            None => self.go_home(),
+        }
+    }
+
+    /// Hay algo cargando (para el latido de los esqueletos).
+    fn is_loading(&self) -> bool {
+        self.importing
+            || self.radio_waiting
+            || self.search.searching.is_some()
+            || self.search.opening
+            || (self.screen == Screen::Queue && self.extending)
+            || (self.screen == Screen::Library && self.background.is_running())
+            || self
+                .selected
+                .and_then(|i| self.playlists.get(i))
+                .is_some_and(|(p, _)| {
+                    matches!(self.recs.get(&p.id), Some(playlists::Recs::Loading))
+                })
+                && self.screen == Screen::Library
     }
 
     /// Importa desde un link de Spotify o, si es una ruta a un `.csv`, desde el archivo.
@@ -662,6 +804,9 @@ impl Surco {
         }
         if self.media.is_some() {
             subs.push(Subscription::run(media::events));
+        }
+        if self.is_loading() {
+            subs.push(iced::time::every(Duration::from_millis(120)).map(|_| Message::Tick));
         }
         if self.drag.is_some() {
             // Soltar el botón en cualquier lado termina el arrastre.

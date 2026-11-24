@@ -28,6 +28,13 @@ pub struct PrecacheState {
     pub target: usize,
 }
 
+impl PrecacheState {
+    /// El audio de `video` se borró del disco.
+    pub fn forget(&mut self, video: &str) {
+        self.done.remove(video);
+    }
+}
+
 impl Surco {
     /// Cuántas canciones por delante hay que tener resueltas.
     pub(crate) fn lookahead(&self) -> usize {
@@ -119,6 +126,7 @@ impl Surco {
         match result {
             Ok(m) => {
                 self.precache.done.insert(m.youtube_id.clone());
+                self.refresh_downloads();
                 let video = m.youtube_id.clone();
                 if !matches!(self.resolutions.get(&key), Some(TrackRes::Done(_))) {
                     self.persist_match(&key, &m);
@@ -145,5 +153,6 @@ impl Surco {
         self.precache.done.clear();
         self.precache.failed.clear();
         self.precache_dirty = true;
+        self.refresh_downloads();
     }
 }

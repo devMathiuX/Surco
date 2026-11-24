@@ -30,7 +30,7 @@ pub enum Error {
 pub type Result<T> = std::result::Result<T, Error>;
 
 /// Versión actual del esquema.
-const SCHEMA_VERSION: i64 = 1;
+const SCHEMA_VERSION: i64 = 2;
 
 const SCHEMA_V1: &str = "
 CREATE TABLE playlists (
@@ -74,6 +74,14 @@ CREATE TABLE settings (
 );
 ";
 
+/// Esquema 2: el historial guarda la canción completa, para volver a ponerla
+/// desde "Escuchadas hace poco" con el mismo video elegido.
+const SCHEMA_V2: &str = "
+ALTER TABLE history ADD COLUMN album TEXT;
+ALTER TABLE history ADD COLUMN duration_ms INTEGER;
+ALTER TABLE history ADD COLUMN spotify_id TEXT;
+";
+
 /// Cuántas entradas de historial se guardan como máximo.
 const HISTORY_LIMIT: i64 = 5_000;
 
@@ -93,6 +101,23 @@ pub struct Played {
     pub title: String,
     pub artists: Vec<String>,
     pub youtube_id: Option<String>,
+    pub album: Option<String>,
+    pub duration_ms: u64,
+    pub spotify_id: Option<String>,
+}
+
+impl Played {
+    /// La canción tal como sonó (misma clave de caché que la original).
+    pub fn track(&self) -> Track {
+        Track {
+            title: self.title.clone(),
+            artists: self.artists.clone(),
+            album: self.album.clone(),
+            duration_ms: self.duration_ms,
+            isrc: None,
+            spotify_id: self.spotify_id.clone(),
+        }
+    }
 }
 
 pub struct Store {
@@ -142,6 +167,12 @@ impl Store {
                 "BEGIN; {SCHEMA_V1} PRAGMA user_version = 1; COMMIT;"
             ))?;
             tracing::info!("base de datos creada (esquema 1)");
+        }
+        if version < 2 {
+            conn.execute_batch(&format!(
+                "BEGIN; {SCHEMA_V2} PRAGMA user_version = 2; COMMIT;"
+            ))?;
+            tracing::info!("base de datos migrada al esquema 2");
         }
         Ok(Self { conn })
     }
@@ -258,6 +289,61 @@ impl Store {
         Ok(())
     }
 
+    /// Cambia el nombre de una playlist.
+    pub fn rename_playlist(&self, id: &str, name: &str) -> Result<()> {
+        self.conn.execute(
+            "UPDATE playlists SET name = ?2 WHERE id = ?1",
+            params![id, name],
+        )?;
+        Ok(())
+    }
+
+    /// Cambia el ID de una playlist (la radio pasa a ser una playlist común).
+    pub fn change_playlist_id(&mut self, old: &str, new: &str) -> Result<()> {
+        let tx = self.conn.transaction()?;
+        tx.execute("PRAGMA defer_foreign_keys = ON", [])?;
+        tx.execute(
+            "UPDATE playlists SET id = ?2 WHERE id = ?1",
+            params![old, new],
+        )?;
+        tx.execute(
+            "UPDATE tracks SET playlist_id = ?2 WHERE playlist_id = ?1",
+            params![old, new],
+        )?;
+        tx.execute(
+            "UPDATE history SET playlist_id = ?2 WHERE playlist_id = ?1",
+            params![old, new],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Guarda el orden de la barra lateral: `ids` en el orden nuevo.
+    pub fn set_playlist_order(&mut self, ids: &[&str]) -> Result<()> {
+        let tx = self.conn.transaction()?;
+        for (i, id) in ids.iter().enumerate() {
+            tx.execute(
+                "UPDATE playlists SET position = ?2 WHERE id = ?1",
+                params![id, i as i64],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// IDs de las playlists escuchadas hace poco, la más reciente primero.
+    pub fn recent_playlists(&self, n: usize) -> Result<Vec<String>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT h.playlist_id FROM history h
+             JOIN playlists p ON p.id = h.playlist_id
+             GROUP BY h.playlist_id ORDER BY MAX(h.id) DESC LIMIT ?1",
+        )?;
+        let rows = stmt
+            .query_map([n as i64], |r| r.get::<_, String>(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
     // ── Matches ─────────────────────────────────────────────────────────────
 
     /// Guarda (o reemplaza) el match de una canción.
@@ -309,14 +395,18 @@ impl Store {
         youtube_id: Option<&str>,
     ) -> Result<()> {
         self.conn.execute(
-            "INSERT INTO history (played_at, playlist_id, title, artists, youtube_id)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
+            "INSERT INTO history
+             (played_at, playlist_id, title, artists, youtube_id, album, duration_ms, spotify_id)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![
                 now(),
                 playlist_id,
                 track.title,
                 serde_json::to_string(&track.artists)?,
-                youtube_id
+                youtube_id,
+                track.album,
+                track.duration_ms as i64,
+                track.spotify_id,
             ],
         )?;
         // Que no crezca sin límite.
@@ -330,30 +420,46 @@ impl Store {
     /// Las últimas `n` reproducciones, la más reciente primero.
     pub fn recent(&self, n: usize) -> Result<Vec<Played>> {
         let mut stmt = self.conn.prepare(
-            "SELECT played_at, playlist_id, title, artists, youtube_id
+            "SELECT played_at, playlist_id, title, artists, youtube_id, album,
+                    duration_ms, spotify_id
              FROM history ORDER BY id DESC LIMIT ?1",
         )?;
         let rows = stmt
             .query_map([n as i64], |r| {
                 Ok((
-                    r.get::<_, i64>(0)?,
-                    r.get::<_, Option<String>>(1)?,
-                    r.get::<_, String>(2)?,
-                    r.get::<_, String>(3)?,
-                    r.get::<_, Option<String>>(4)?,
+                    (
+                        r.get::<_, i64>(0)?,
+                        r.get::<_, Option<String>>(1)?,
+                        r.get::<_, String>(2)?,
+                        r.get::<_, String>(3)?,
+                    ),
+                    (
+                        r.get::<_, Option<String>>(4)?,
+                        r.get::<_, Option<String>>(5)?,
+                        r.get::<_, Option<i64>>(6)?,
+                        r.get::<_, Option<String>>(7)?,
+                    ),
                 ))
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         rows.into_iter()
-            .map(|(played_at, playlist_id, title, artists, youtube_id)| {
-                Ok(Played {
-                    played_at,
-                    playlist_id,
-                    title,
-                    artists: serde_json::from_str(&artists)?,
-                    youtube_id,
-                })
-            })
+            .map(
+                |(
+                    (played_at, playlist_id, title, artists),
+                    (youtube_id, album, ms, spotify_id),
+                )| {
+                    Ok(Played {
+                        played_at,
+                        playlist_id,
+                        title,
+                        artists: serde_json::from_str(&artists)?,
+                        youtube_id,
+                        album,
+                        duration_ms: ms.unwrap_or(0).max(0) as u64,
+                        spotify_id,
+                    })
+                },
+            )
             .collect()
     }
 
@@ -469,6 +575,50 @@ mod tests {
         assert_eq!(recent[0].title, "T2");
         assert_eq!(recent[1].title, "T1");
         assert_eq!(recent[0].artists.len(), 2);
+        Ok(())
+    }
+
+    #[test]
+    fn history_keeps_the_whole_track() -> Result<()> {
+        let s = Store::open_in_memory()?;
+        let t = track("Persiana Americana", "s9");
+        s.record_play(&t, None, Some("vid"))?;
+        assert_eq!(s.recent(1)?[0].track(), Track { isrc: None, ..t });
+        Ok(())
+    }
+
+    #[test]
+    fn rename_reorder_and_recent() -> Result<()> {
+        let mut s = Store::open_in_memory()?;
+        for id in ["a", "b", "radio"] {
+            s.save_playlist(&playlist(id, 2), "CSV")?;
+        }
+        s.rename_playlist("a", "Mía")?;
+        s.set_playlist_order(&["radio", "a", "b"])?;
+        s.record_play(&track("x", "1"), Some("b"), None)?;
+        s.record_play(&track("y", "2"), Some("radio"), None)?;
+        s.record_play(&track("z", "3"), Some("gone"), None)?;
+        s.change_playlist_id("radio", "user:1")?;
+        let got = s.playlists()?;
+        let ids: Vec<_> = got.iter().map(|p| p.playlist.id.as_str()).collect();
+        assert_eq!(ids, ["user:1", "a", "b"]);
+        assert_eq!(got[1].playlist.name, "Mía");
+        assert_eq!(got[0].playlist.tracks.len(), 2);
+        assert_eq!(s.recent_playlists(5)?, ["user:1", "b"]);
+        Ok(())
+    }
+
+    #[test]
+    fn migrates_schema_1() -> Result<()> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch(&format!("{SCHEMA_V1} PRAGMA user_version = 1;"))?;
+        conn.execute(
+            "INSERT INTO history (played_at, title, artists) VALUES (1, 'T', '[\"A\"]')",
+            [],
+        )?;
+        let s = Store::init(conn)?;
+        let old = &s.recent(1)?[0];
+        assert_eq!((old.title.as_str(), old.duration_ms), ("T", 0));
         Ok(())
     }
 

@@ -51,7 +51,7 @@ Variables de entorno útiles:
 
 ## Importar playlists (Fase 3)
 
-En la barra lateral, pegá en el campo de abajo (o apretá **Ctrl+L**) cualquiera de estos y Enter / **+ Importar**:
+En la pantalla **Importar** (o con **Ctrl+L**), pegá cualquiera de estos y Enter / **Importar**:
 
 - `https://open.spotify.com/playlist/{id}` (con o sin `?si=…`, también `/intl-es/…` y `/embed/…`)
 - `spotify:playlist:{id}`
@@ -118,7 +118,7 @@ Resolver las 50 tarda ~25 s (3 búsquedas en paralelo). Si un ✗ resulta ser un
 | Espacio | Play / pausa (sin nada sonando, arranca la playlist abierta) |
 | ← / → | −5 s / +5 s |
 | Ctrl+← / Ctrl+→ | Anterior / siguiente |
-| Ctrl+L | Ir al campo para pegar un link |
+| Ctrl+L | Pantalla Importar |
 | Ctrl+F | Buscar en la playlist (sin distinguir mayúsculas ni tildes) |
 | Esc | Cerrar la búsqueda o el selector de video |
 
@@ -202,6 +202,17 @@ La página pública de Spotify muestra hasta 100 canciones. Con claves de la Web
 3. Las que trae el build oficial: el workflow Release las inyecta al compilar desde los secretos del repo `SPOTIFY_CLIENT_ID` y `SPOTIFY_CLIENT_SECRET` (variables `SURCO_SPOTIFY_CLIENT_ID` / `SURCO_SPOTIFY_CLIENT_SECRET`, leídas con `option_env!`). No están en el código. Un build local sin esas variables sale sin claves.
 
 Si la API falla (403 o 404, como con las playlists editoriales de Spotify para apps nuevas, o 429), la importación sigue con la página pública y, si hace falta, con un CSV de Exportify. Las claves incluidas en un programa que se distribuye se pueden extraer: solo dan acceso a datos públicos, y si se abusa de ellas se cambian.
+
+## Inicio, playlists propias y recomendadas
+
+- **Inicio** (`crates/app/src/home.rs`): buscador, playlists (primero las escuchadas hace poco, según el historial) y canciones escuchadas hace poco. El historial guarda la canción completa desde el esquema 2 de la base (`album`, `duration_ms`, `spotify_id`), así una canción del inicio vuelve a sonar con el mismo video.
+- **Playlists propias** (`playlists.rs`): ID `user:<ms>` y origen `propia`. Renombrar la radio le cambia el ID (`Store::change_playlist_id`) para que la próxima radio no la pise. El orden de la barra lateral se guarda en `playlists.position` (`set_playlist_order`).
+- **Menú de una canción**: el "+" abre un diálogo (`stack` + `opaque`) con la cola, las playlists y "Quitar de…".
+- **Recomendadas**: el Mix de YouTube de hasta 3 canciones de la playlist; si ninguno anda (videos no disponibles en la región), canciones del artista de una canción al azar. Se sacan las que ya están (mismo video o mismo artista y título).
+- **Portadas al importar**: con "portadas en la lista", la playlist abierta se busca en YouTube en segundo plano, de a 2 canciones (`playback::Background`). Se pausa mientras se busca la canción que tiene que sonar.
+- **Búsqueda en tiempo real**: cada tecla agenda un aviso a los 450 ms; solo busca si no hubo otra tecla después.
+- **Esqueletos** (`skeleton.rs`): bloques que laten con un timer de 120 ms que solo corre mientras algo carga.
+- **Descargas por playlist**: `AudioCache::size_of` y `remove`; el resumen se recalcula al abrir una playlist o los ajustes y después de cada descarga.
 
 ## Estructura
 

@@ -62,7 +62,7 @@ pub const THEMES: [Colors; 5] = [
     },
     Colors {
         id: "green",
-        name: "Verde (estilo Spotify)",
+        name: "Verde",
         background: color!(0x121212),
         surface: color!(0x000000),
         raised: color!(0x282828),
@@ -370,6 +370,94 @@ pub fn cover_placeholder(_: &Theme) -> container::Style {
     container::Style {
         background: Some(colors().raised.into()),
         border: border::rounded(RADIUS),
+        ..container::Style::default()
+    }
+}
+
+/// Mezcla de dos colores (`t` = 0 es `a`, 1 es `b`).
+fn mix(a: Color, b: Color, t: f32) -> Color {
+    let t = t.clamp(0.0, 1.0);
+    Color {
+        r: a.r + (b.r - a.r) * t,
+        g: a.g + (b.g - a.g) * t,
+        b: a.b + (b.b - a.b) * t,
+        a: 1.0,
+    }
+}
+
+/// Bloque de un esqueleto de carga; `level` (0 a 1) lo hace "latir".
+pub fn skeleton(level: f32) -> impl Fn(&Theme) -> container::Style {
+    move |_| {
+        let c = colors();
+        container::Style {
+            background: Some(mix(c.raised, c.rail, level * 0.8).into()),
+            border: border::rounded(4),
+            ..container::Style::default()
+        }
+    }
+}
+
+/// Fila que se puede arrastrar (barra lateral): elegida, debajo del mouse,
+/// destino del arrastre (línea de acento) o la que se arrastra.
+pub fn drag_row(
+    selected: bool,
+    hovered: bool,
+    target: bool,
+    lifted: bool,
+) -> impl Fn(&Theme) -> container::Style {
+    move |_| {
+        let c = colors();
+        let background = if selected {
+            Some(c.raised.into())
+        } else if hovered || lifted {
+            Some(c.hover.into())
+        } else {
+            None
+        };
+        container::Style {
+            background,
+            text_color: Some(if selected { c.accent } else { c.text }),
+            border: if target {
+                border::rounded(RADIUS).width(2).color(c.accent)
+            } else {
+                border::rounded(RADIUS)
+            },
+            ..container::Style::default()
+        }
+    }
+}
+
+/// Tarjeta clickeable de la pantalla de inicio.
+pub fn tile(_: &Theme, status: button::Status) -> button::Style {
+    let c = colors();
+    let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
+    button::Style {
+        background: Some(if hovered { c.hover } else { c.surface }.into()),
+        text_color: c.text,
+        border: border::rounded(RADIUS),
+        ..button::Style::default()
+    }
+}
+
+/// Fondo oscuro detrás de un diálogo.
+pub fn backdrop(_: &Theme) -> container::Style {
+    container::Style {
+        background: Some(Color::BLACK.scale_alpha(0.45).into()),
+        ..container::Style::default()
+    }
+}
+
+/// Diálogo flotante.
+pub fn dialog(_: &Theme) -> container::Style {
+    let c = colors();
+    container::Style {
+        background: Some(c.background.into()),
+        border: border::rounded(RADIUS + 2.0).width(1).color(c.border),
+        shadow: iced::Shadow {
+            color: Color::BLACK.scale_alpha(0.4),
+            offset: iced::Vector::new(0.0, 6.0),
+            blur_radius: 24.0,
+        },
         ..container::Style::default()
     }
 }

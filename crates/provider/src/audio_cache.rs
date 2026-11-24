@@ -129,6 +129,23 @@ impl AudioCache {
         }
     }
 
+    /// Tamaño en disco del audio de `video` (`None` si no está bajado).
+    pub fn size_of(&self, video: &str) -> Option<u64> {
+        let meta = std::fs::metadata(self.path(video)?).ok()?;
+        (meta.is_file() && meta.len() > 0).then_some(meta.len())
+    }
+
+    /// Borra el audio de `video`. Devuelve los bytes liberados.
+    pub fn remove(&self, video: &str) -> u64 {
+        let Some(len) = self.size_of(video) else {
+            return 0;
+        };
+        match self.path(video).map(std::fs::remove_file) {
+            Some(Ok(())) => len,
+            _ => 0,
+        }
+    }
+
     /// Borra todo el audio guardado.
     pub fn clear(&self) {
         for (path, _, _) in self.entries() {
@@ -193,6 +210,20 @@ mod tests {
         );
         c.clear();
         assert_eq!(c.usage().files, 0);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn removes_one_video() {
+        let dir = temp_dir("remove");
+        let c = AudioCache::new(&dir, 1000);
+        c.put("aaaaaaaaaaa", &[1; 10]).unwrap();
+        c.put("bbbbbbbbbbb", &[2; 7]).unwrap();
+        assert_eq!(c.size_of("bbbbbbbbbbb"), Some(7));
+        assert_eq!(c.remove("aaaaaaaaaaa"), 10);
+        assert_eq!(c.remove("aaaaaaaaaaa"), 0);
+        assert_eq!(c.size_of("aaaaaaaaaaa"), None);
+        assert!(c.contains("bbbbbbbbbbb"));
         let _ = std::fs::remove_dir_all(dir);
     }
 }

@@ -75,6 +75,7 @@ impl Surco {
 
     pub(crate) fn on_radio(&mut self, autostart: bool, result: RadioResult) -> Task<Message> {
         self.radio_loading = false;
+        let waited = std::mem::take(&mut self.radio_waiting);
         let (seed, name, list) = match result {
             Ok(r) => r,
             Err(e) => {
@@ -82,7 +83,11 @@ impl Surco {
                     error: true,
                     text: format!("No se pudo armar la radio: {e}"),
                 });
-                return Task::none();
+                return if waited {
+                    self.back_from_panel()
+                } else {
+                    Task::none()
+                };
             }
         };
         // Sin título conocido (video suelto): el del propio video en el Mix.
@@ -114,7 +119,11 @@ impl Surco {
                 error: true,
                 text: "YouTube no devolvió canciones parecidas.".into(),
             });
-            return Task::none();
+            return if waited {
+                self.back_from_panel()
+            } else {
+                Task::none()
+            };
         }
         let playlist = Playlist {
             id: RADIO_ID.into(),
@@ -132,10 +141,9 @@ impl Surco {
                 self.playlists.len() - 1
             }
         };
-        self.selected = Some(index);
-        self.screen = crate::Screen::Library;
-        self.filter = None;
-        self.persist_selected();
+        self.recs.remove(RADIO_ID);
+        self.open_playlist(index);
+        let opened = self.on_playlist_opened();
 
         self.notice = None;
         let seed_playing = self.status.source.as_ref() == Some(&Source::YouTube(seed.clone()))
@@ -152,12 +160,11 @@ impl Surco {
                 .unwrap_or(0);
             self.active = Some(Active::new(Some(index), tracks, first, false, self.repeat));
             self.update_preload();
-            let prefetch_covers = self.queue_list_covers();
-            return prefetch_covers;
+            return opened;
         }
         self.active = None;
         let play = self.play_track(index, 0);
-        Task::batch([play, self.queue_list_covers()])
+        Task::batch([play, opened])
     }
 
     /// Cola sin fin: cuando quedan pocas, agrega parecidas a la última.
