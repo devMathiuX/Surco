@@ -42,6 +42,10 @@ impl std::fmt::Debug for Media {
 impl Media {
     /// `hwnd` es obligatorio en Windows e ignorado en el resto.
     pub fn new(hwnd: Option<isize>) -> Option<Self> {
+        if !session_bus_available() {
+            tracing::warn!("no hay bus de sesión de D-Bus: sin controles multimedia del sistema");
+            return None;
+        }
         let config = PlatformConfig {
             display_name: "Surco",
             dbus_name: "surco",
@@ -147,6 +151,50 @@ fn signed(dir: SeekDirection, d: Duration) -> f32 {
     }
 }
 
+/// ¿Hay un bus de sesión de D-Bus al que conectarse? (solo importa en Linux)
+///
+/// `souvlaki` conecta el bus en un hilo propio y hace `unwrap()` si falla:
+/// sin bus (sesión sin D-Bus, `ssh`, algunos gestores de ventanas) eso
+/// tumbaba la app entera. Así que lo comprobamos antes de crear los controles.
+#[cfg(all(unix, not(target_os = "macos")))]
+fn session_bus_available() -> bool {
+    session_bus_path(
+        std::env::var("DBUS_SESSION_BUS_ADDRESS").ok().as_deref(),
+        std::env::var_os("XDG_RUNTIME_DIR").map(std::path::PathBuf::from),
+    )
+    // Conectar de verdad: un socket que quedó de una sesión vieja existe pero rechaza.
+    .is_none_or(|p| std::os::unix::net::UnixStream::connect(p).is_ok())
+}
+
+#[cfg(not(all(unix, not(target_os = "macos"))))]
+fn session_bus_available() -> bool {
+    true
+}
+
+/// Socket del bus de sesión que se va a usar, si es un archivo que se puede
+/// comprobar. `None` = no se puede saber (p. ej. socket abstracto o TCP):
+/// se intenta igual.
+#[cfg_attr(not(all(unix, not(target_os = "macos"))), allow(dead_code))]
+fn session_bus_path(
+    address: Option<&str>,
+    runtime_dir: Option<std::path::PathBuf>,
+) -> Option<std::path::PathBuf> {
+    match address {
+        Some(addr) => addr.split(';').find_map(|a| {
+            let rest = a.strip_prefix("unix:")?;
+            rest.split(',')
+                .find_map(|kv| kv.strip_prefix("path="))
+                .map(std::path::PathBuf::from)
+        }),
+        // Sin variable, zbus usa $XDG_RUNTIME_DIR/bus (o /run/user/<uid>/bus).
+        None => Some(
+            runtime_dir
+                .unwrap_or_else(|| std::path::PathBuf::from("/nonexistent"))
+                .join("bus"),
+        ),
+    }
+}
+
 /// HWND de la ventana (solo Windows), para SMTC.
 pub fn hwnd_of(window: &dyn iced::window::Window) -> Option<isize> {
     #[cfg(windows)]
@@ -163,5 +211,32 @@ pub fn hwnd_of(window: &dyn iced::window::Window) -> Option<isize> {
     {
         let _ = window;
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    #[test]
+    fn bus_path_from_address_or_runtime_dir() {
+        assert_eq!(
+            session_bus_path(Some("unix:path=/run/user/1000/bus"), None),
+            Some(PathBuf::from("/run/user/1000/bus"))
+        );
+        assert_eq!(
+            session_bus_path(Some("unix:path=/tmp/x,guid=abc;tcp:host=h"), None),
+            Some(PathBuf::from("/tmp/x"))
+        );
+        // Socket abstracto: no se puede comprobar, se intenta.
+        assert_eq!(
+            session_bus_path(Some("unix:abstract=/tmp/dbus-1"), None),
+            None
+        );
+        assert_eq!(
+            session_bus_path(None, Some(PathBuf::from("/run/user/1000"))),
+            Some(PathBuf::from("/run/user/1000/bus"))
+        );
     }
 }
