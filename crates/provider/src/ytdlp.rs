@@ -109,9 +109,10 @@ impl YtDlp {
 
     /// Obtiene la URL directa del audio de un video (ID o URL de YouTube).
     pub async fn stream_info(&self, video: &str) -> Result<StreamInfo> {
+        let js = js_runtime_args(std::env::var_os("PATH").as_deref());
         let out = self
             .run(
-                [
+                js.iter().map(String::as_str).chain([
                     "--no-playlist",
                     "--no-warnings",
                     "-f",
@@ -126,7 +127,7 @@ impl YtDlp {
                     "%(url)s",
                     "--",
                     video,
-                ],
+                ]),
                 RESOLVE_TIMEOUT,
             )
             .await?;
@@ -163,6 +164,9 @@ impl YtDlp {
                 .unwrap_or("sin detalle")
                 .trim()
                 .to_owned();
+            if is_bot_check(&stderr) {
+                return Err(Error::BotCheck(msg));
+            }
             return Err(Error::YtDlp(msg));
         }
         Ok(String::from_utf8_lossy(&output.stdout).into_owned())
@@ -192,6 +196,37 @@ fn parse_stream_info(out: &str) -> Result<StreamInfo> {
             .filter(|d| d.is_finite() && *d >= 0.0)
             .map(Duration::from_secs_f64),
     })
+}
+
+/// Desde fines de 2025, yt-dlp necesita un runtime de JavaScript externo para
+/// resolver los desafíos de YouTube. Por defecto solo prueba `deno`; si no está
+/// pero hay otro soportado en el `PATH`, se lo indicamos con `--js-runtimes`.
+fn js_runtime_args(path_var: Option<&OsStr>) -> Vec<String> {
+    const RUNTIMES: [(&str, &str); 4] = [
+        ("deno", "deno"),
+        ("node", "node"),
+        ("bun", "bun"),
+        ("qjs", "quickjs"),
+    ];
+    let found = RUNTIMES.iter().find(|(bin, _)| {
+        let exe = if cfg!(windows) {
+            format!("{bin}.exe")
+        } else {
+            (*bin).to_owned()
+        };
+        find_in_path(&exe, path_var).is_some()
+    });
+    match found {
+        // deno es el default de yt-dlp: no hace falta pasar nada.
+        None | Some(("deno", _)) => Vec::new(),
+        Some((_, name)) => vec!["--js-runtimes".to_owned(), (*name).to_owned()],
+    }
+}
+
+/// YouTube a veces exige "confirmar que no sos un bot" (típico en IPs de
+/// datacenter o VPN). No es un error de la app.
+fn is_bot_check(stderr: &str) -> bool {
+    stderr.contains("not a bot") || stderr.contains("HTTP Error 429")
 }
 
 fn find_in_path(name: &str, path_var: Option<&OsStr>) -> Option<PathBuf> {
@@ -253,6 +288,34 @@ mod tests {
     fn rejects_bad_output() {
         assert!(parse_stream_info("").is_err());
         assert!(parse_stream_info("m4a\n1\nt\nnot-a-url").is_err());
+    }
+
+    #[test]
+    fn detects_bot_check() {
+        assert!(is_bot_check(
+            "ERROR: [youtube] x: Sign in to confirm you’re not a bot. Use --cookies"
+        ));
+        assert!(!is_bot_check("ERROR: Video unavailable"));
+    }
+
+    #[test]
+    fn picks_js_runtime() {
+        let dir = std::env::temp_dir().join(format!("surco-js-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = std::env::join_paths([dir.clone()]).unwrap();
+        assert!(js_runtime_args(Some(&path)).is_empty());
+        let exe = |n: &str| {
+            dir.join(if cfg!(windows) {
+                format!("{n}.exe")
+            } else {
+                n.to_owned()
+            })
+        };
+        std::fs::write(exe("node"), b"").unwrap();
+        assert_eq!(js_runtime_args(Some(&path)), ["--js-runtimes", "node"]);
+        std::fs::write(exe("deno"), b"").unwrap();
+        assert!(js_runtime_args(Some(&path)).is_empty());
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
