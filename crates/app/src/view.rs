@@ -120,17 +120,25 @@ impl Surco {
         source: &str,
     ) -> Element<'a, Message> {
         let total_ms: u64 = p.tracks.iter().map(|t| t.duration_ms).sum();
-        let header = column![
-            text(&p.name).size(theme::SIZE_L),
-            text(format!(
-                "{} canciones · {} · importada desde {source}",
-                p.tracks.len(),
-                format_duration(total_ms)
-            ))
-            .size(theme::SIZE_S)
-            .style(theme::secondary_text),
+        let header = row![
+            column![
+                text(&p.name).size(theme::SIZE_L),
+                text(format!(
+                    "{} canciones · {} · importada desde {source}",
+                    p.tracks.len(),
+                    format_duration(total_ms)
+                ))
+                .size(theme::SIZE_S)
+                .style(theme::secondary_text),
+            ]
+            .spacing(4)
+            .width(Length::Fill),
+            button(text("Quitar").size(theme::SIZE_S))
+                .on_press(Message::RemovePlaylist(index))
+                .padding([4, 10])
+                .style(theme::ghost_button),
         ]
-        .spacing(4);
+        .align_y(Alignment::Center);
 
         let query = self.filter.as_deref().unwrap_or("");
         let shown = p
