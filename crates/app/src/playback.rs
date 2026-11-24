@@ -27,6 +27,8 @@ pub struct CoverJobs {
     running: usize,
 }
 /// Canciones que se buscan a la vez en segundo plano (para las portadas).
+/// Canciones de más (después de las que se ven) que se buscan de fondo.
+const BACKGROUND_AHEAD: usize = 30;
 const BACKGROUND_JOBS: usize = 2;
 
 /// Búsqueda en segundo plano de las canciones de la playlist abierta, para
@@ -565,7 +567,8 @@ impl Surco {
     }
 
     /// Encola la búsqueda de las canciones sin video de la playlist abierta
-    /// (solo con "portadas en la lista": es para eso).
+    /// (solo con "portadas en la lista": es para eso). Solo las que se ven y
+    /// las que siguen: en una playlist de miles no se buscan todas de una.
     pub(crate) fn resolve_in_background(&mut self) -> Task<Message> {
         self.background.queue.clear();
         if !self.settings.covers_in_list || self.resolver.is_none() {
@@ -574,8 +577,9 @@ impl Surco {
         let Some((p, _)) = self.selected.and_then(|i| self.playlists.get(i)) else {
             return Task::none();
         };
-        let todo: Vec<Track> = p
-            .tracks
+        let (first, last) = crate::view::visible_rows(self.list_view, p.tracks.len());
+        let last = (last + BACKGROUND_AHEAD).min(p.tracks.len());
+        let todo: Vec<Track> = p.tracks[first..last]
             .iter()
             .filter(|t| self.resolution(t).is_none())
             .cloned()

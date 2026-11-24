@@ -124,6 +124,7 @@ impl Surco {
         self.selected = Some(index);
         self.screen = Screen::Library;
         self.filter = None;
+        self.list_view.0 = 0.0;
         self.persist_selected();
     }
 

@@ -1,9 +1,11 @@
 //! Importación de playlists de Spotify.
 //!
-//! Tres estrategias, probadas en cascada por [`Importer`]:
-//! 1. [`WebApi`]: Web API oficial con Client Credentials (si hay credenciales).
-//! 2. [`Embed`]: página embed pública, sin credenciales (hasta 100 canciones).
-//! 3. CSV de Exportify ([`import_csv_file`]), que no depende de la red.
+//! Estrategias, probadas en cascada por [`Importer`]:
+//! 1. [`WebPlayer`]: como open.spotify.com sin sesión (token anónimo y la API
+//!    interna del reproductor web). Playlist entera, sin claves ni Premium.
+//! 2. [`WebApi`]: Web API oficial con Client Credentials (si hay credenciales).
+//! 3. [`Embed`]: página embed pública, sin credenciales (hasta 100 canciones).
+//! 4. CSV de Exportify ([`import_csv_file`]), que no depende de la red.
 //!
 //! Todo se normaliza a [`surco_core::Track`].
 
@@ -13,6 +15,7 @@ mod csv;
 mod embed;
 mod link;
 mod webapi;
+mod webplayer;
 
 use std::future::Future;
 use std::pin::Pin;
@@ -24,6 +27,7 @@ pub use csv::{import_csv, import_csv_file};
 pub use embed::{parse_embed_html, Embed, EMBED_LIMIT};
 pub use link::parse_playlist_id;
 pub use webapi::{Credentials, WebApi};
+pub use webplayer::{parse_token, WebPlayer};
 
 /// Errores de este crate.
 #[derive(Debug, thiserror::Error)]
@@ -96,9 +100,11 @@ impl Importer {
         Self { sources }
     }
 
-    /// Cascada estándar: Web API (solo si hay credenciales) y después embed.
+    /// Cascada estándar: reproductor web sin sesión, Web API (solo si hay
+    /// credenciales) y después embed.
     pub fn standard(client: reqwest::Client, creds: Option<Credentials>) -> Self {
-        let mut sources: Vec<Box<dyn PlaylistSource>> = Vec::new();
+        let mut sources: Vec<Box<dyn PlaylistSource>> =
+            vec![Box::new(WebPlayer::new(client.clone()))];
         if let Some(creds) = creds {
             sources.push(Box::new(WebApi::new(client.clone(), creds)));
         }
