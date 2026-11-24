@@ -845,6 +845,21 @@ async fn open_source(
         }
         Source::YouTube(video) => {
             let provider = provider.ok_or("yt-dlp no está instalado")?;
+            // Precargada en disco: no hace falta ni yt-dlp ni la red.
+            if let Some(path) = provider.cached_audio(&video) {
+                match std::fs::File::open(&path) {
+                    Ok(file) => {
+                        tracing::debug!(video, "audio desde la caché de disco");
+                        return Ok(Opened {
+                            source: Box::new(file),
+                            ext: Some("m4a".into()),
+                            title: None,
+                            duration: None,
+                        });
+                    }
+                    Err(e) => tracing::warn!(error = %e, "no se pudo abrir el audio precargado"),
+                }
+            }
             let mut refresh = refresh;
             for attempt in 0..2 {
                 let info = provider

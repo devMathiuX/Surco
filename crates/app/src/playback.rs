@@ -14,6 +14,18 @@ use crate::{covers, Message, Notice, Surco, RUNTIME};
 
 /// Cuántas canciones por delante se resuelven de antemano.
 pub const PREFETCH: usize = 3;
+/// Portadas que se bajan a la vez.
+const COVER_JOBS: usize = 4;
+
+/// Cola de descargas de portadas.
+#[derive(Debug, Default)]
+pub struct CoverJobs {
+    queue: std::collections::VecDeque<String>,
+    /// En la cola o bajándose.
+    pending: std::collections::HashSet<String>,
+    failed: std::collections::HashSet<String>,
+    running: usize,
+}
 /// Errores seguidos antes de dejar de saltar a la siguiente.
 const MAX_FAILURES_IN_A_ROW: u32 = 3;
 /// "Anterior" con más de esto reproducido vuelve al principio de la canción.
@@ -95,6 +107,9 @@ impl Surco {
         }
         tasks.push(self.prefetch());
         self.update_preload();
+        if self.settings.covers_in_list {
+            tasks.push(self.queue_list_covers());
+        }
         Task::batch(tasks)
     }
 
@@ -124,6 +139,8 @@ impl Surco {
             self.preloaded = source.clone();
             self.send(Command::Preload(source));
         }
+        // Cambió la cola o una resolución: revisar la precarga a disco.
+        self.precache_dirty = true;
     }
 
     /// Lanza la resolución en el runtime; el resultado vuelve como mensaje.
@@ -166,9 +183,14 @@ impl Surco {
                     self.send(Command::Load(Source::YouTube(m.youtube_id.clone())));
                     task = self.fetch_cover(&m.youtube_id);
                 }
+                let cover = if self.settings.covers_in_list {
+                    self.queue_cover(&m.youtube_id)
+                } else {
+                    Task::none()
+                };
                 self.resolutions.insert(key, TrackRes::Done(m));
                 self.update_preload();
-                task
+                Task::batch([task, cover])
             }
             Err(e) => {
                 self.resolutions.insert(key, TrackRes::Failed(e.clone()));
@@ -189,6 +211,12 @@ impl Surco {
             }
         }
         if self.active.is_none() {
+            // Un video suelto (panel de prueba) terminó: radio automática.
+            let ended = matches!(self.status.state, PlayerState::Idle)
+                && matches!(old.state, PlayerState::Playing | PlayerState::Paused);
+            if ended && self.settings.autoplay {
+                return self.start_radio(true);
+            }
             return Task::none();
         }
         // El motor pasó solo a la pre-cargada (sin corte).
@@ -233,6 +261,12 @@ impl Surco {
         let next = self.active.as_mut().and_then(|a| a.queue.advance());
         match next {
             Some(_) => self.start_current(),
+            // Se terminó la cola: seguir con parecidas a la última.
+            None if self.settings.autoplay => {
+                let radio = self.start_radio(true);
+                let done = self.finish();
+                Task::batch([radio, done])
+            }
             None => self.finish(),
         }
     }
@@ -348,20 +382,100 @@ impl Surco {
         task
     }
 
-    /// Baja (o lee de la caché) la portada de un video.
+    /// Portada de lo que suena: va primera en la cola de portadas.
     pub(crate) fn fetch_cover(&mut self, video: &str) -> Task<Message> {
-        if self.covers.contains_key(video) {
+        self.enqueue_cover(video, true)
+    }
+
+    /// Portada para la lista (se baja cuando haya lugar).
+    pub(crate) fn queue_cover(&mut self, video: &str) -> Task<Message> {
+        self.enqueue_cover(video, false)
+    }
+
+    fn enqueue_cover(&mut self, video: &str, first: bool) -> Task<Message> {
+        if self.covers.contains_key(video) || self.cover_jobs.failed.contains(video) {
             return Task::none();
         }
+        if self.cover_jobs.pending.insert(video.to_owned()) {
+            if first {
+                self.cover_jobs.queue.push_front(video.to_owned());
+            } else {
+                self.cover_jobs.queue.push_back(video.to_owned());
+            }
+        } else if first {
+            // Ya estaba en la cola: adelantarla.
+            if let Some(i) = self.cover_jobs.queue.iter().position(|v| v == video) {
+                if let Some(v) = self.cover_jobs.queue.remove(i) {
+                    self.cover_jobs.queue.push_front(v);
+                }
+            }
+        }
+        self.pump_covers()
+    }
+
+    /// Lanza descargas de portadas hasta `COVER_JOBS` a la vez.
+    pub(crate) fn pump_covers(&mut self) -> Task<Message> {
         let Some(rt) = RUNTIME.get() else {
             return Task::none();
         };
-        let client = self.http.clone();
-        let id = video.to_owned();
-        let job = rt.spawn(covers::load(client, id.clone()));
-        Task::perform(
-            async move { job.await.unwrap_or_else(|e| Err(e.to_string())) },
-            move |r| Message::Cover(id.clone(), r),
+        let mut tasks = Vec::new();
+        while self.cover_jobs.running < COVER_JOBS {
+            let Some(id) = self.cover_jobs.queue.pop_front() else {
+                break;
+            };
+            self.cover_jobs.running += 1;
+            let client = self.http.clone();
+            let job = rt.spawn(covers::load(client, id.clone()));
+            tasks.push(Task::perform(
+                async move { job.await.unwrap_or_else(|e| Err(e.to_string())) },
+                move |r| Message::Cover(id.clone(), r),
+            ));
+        }
+        Task::batch(tasks)
+    }
+
+    /// Llegó (o falló) una portada.
+    pub(crate) fn on_cover(
+        &mut self,
+        id: String,
+        result: Result<iced::widget::image::Handle, String>,
+    ) -> Task<Message> {
+        self.cover_jobs.running = self.cover_jobs.running.saturating_sub(1);
+        self.cover_jobs.pending.remove(&id);
+        match result {
+            Ok(handle) => {
+                self.covers.insert(id, handle);
+            }
+            Err(e) => {
+                tracing::debug!(%id, error = %e, "sin portada");
+                self.cover_jobs.failed.insert(id);
+            }
+        }
+        self.pump_covers()
+    }
+
+    /// Con "portadas en la lista", pide las de la playlist abierta (las
+    /// canciones ya resueltas; las demás muestran un cuadro vacío).
+    pub(crate) fn queue_list_covers(&mut self) -> Task<Message> {
+        if !self.settings.covers_in_list {
+            return Task::none();
+        }
+        let Some((p, _)) = self.selected.and_then(|i| self.playlists.get(i)) else {
+            return Task::none();
+        };
+        let videos: Vec<String> = p
+            .tracks
+            .iter()
+            .filter_map(|t| match self.resolution(t) {
+                Some(TrackRes::Done(m)) => Some(m.youtube_id.clone()),
+                _ => None,
+            })
+            .collect();
+        Task::batch(
+            videos
+                .iter()
+                .map(|v| self.queue_cover(v))
+                .collect::<Vec<_>>(),
         )
     }
 
