@@ -195,6 +195,9 @@ struct Surco {
     covers: HashMap<String, image::Handle>,
     /// Búsqueda dentro de la playlist (Ctrl+F); `None` = cerrada.
     filter: Option<String>,
+    /// Desplazamiento y alto visible de la lista de la playlist (para dibujar
+    /// solo las filas que se ven).
+    list_view: (f32, f32),
     /// MPRIS / SMTC.
     media: Option<media::Media>,
     /// Biblioteca, matches, historial y ajustes en SQLite. `None` si no se
@@ -297,6 +300,8 @@ enum Message {
     CsvPicked(Option<PathBuf>),
     Imported(ImportResult),
     SelectPlaylist(Option<usize>),
+    /// La lista de la playlist se desplazó: (desplazamiento, alto visible).
+    ListScrolled(f32, f32),
     RemovePlaylist(usize),
     FocusImport,
     PlayTrack(usize, usize),
@@ -400,6 +405,7 @@ impl Surco {
             failures_in_a_row: 0,
             covers: HashMap::new(),
             filter: None,
+            list_view: (0.0, 0.0),
             media: None,
             store: library::open(),
             recorded: None,
@@ -600,6 +606,14 @@ impl Surco {
             Message::RecPlay(p, i) => return self.play_rec(p, i),
             Message::DeleteDownloads(p) => self.delete_downloads(p),
             Message::Tick => self.pulse = self.pulse.wrapping_add(1),
+            Message::ListScrolled(offset, height) => {
+                let before = view::visible_rows(self.list_view, usize::MAX);
+                self.list_view = (offset, height);
+                // Buscar las portadas de lo que ahora se ve.
+                if view::visible_rows(self.list_view, usize::MAX) != before {
+                    return self.resolve_in_background();
+                }
+            }
             Message::Search(msg) => return self.on_search(msg),
             Message::Keys(msg) => self.on_keys(msg),
             Message::OpenFilter => {
@@ -694,7 +708,12 @@ impl Surco {
         let covers = self.queue_list_covers();
         let background = self.resolve_in_background();
         let recs = self.maybe_load_recs();
-        Task::batch([covers, background, recs])
+        // Cada playlist se abre desde arriba.
+        let top = operation::snap_to(
+            Id::new(view::LIST_SCROLL),
+            iced::widget::scrollable::RelativeOffset::START,
+        );
+        Task::batch([covers, background, recs, top])
     }
 
     /// Al cerrar la cola o los ajustes: a la playlist abierta o al inicio.

@@ -61,8 +61,8 @@ impl Embed {
         let mut warnings = Vec::new();
         if playlist.tracks.len() >= EMBED_LIMIT {
             warnings.push(format!(
-                "Sin credenciales de Spotify solo se pueden leer las primeras {EMBED_LIMIT} canciones. \
-                 Para la playlist completa, importá un CSV de Exportify."
+                "Spotify no dejó leer la playlist entera: se importaron las primeras {EMBED_LIMIT} canciones. \
+                 Probá de nuevo más tarde o importá un CSV de Exportify."
             ));
         }
         Ok(Imported {

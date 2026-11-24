@@ -9,7 +9,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
-use surco_spotify::{import_csv_file, Credentials, Embed, Error, Importer, PlaylistSource, WebApi};
+use surco_spotify::{
+    import_csv_file, Credentials, Embed, Error, Importer, PlaylistSource, WebApi, WebPlayer,
+};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
@@ -332,5 +334,209 @@ fn real_web_api_import() {
             imp.playlist.tracks.len()
         ),
         Err(e) => panic!("{e}"),
+    }
+}
+
+// --- Reproductor web sin sesión -------------------------------------------
+
+const GOOD_HASH: &str = "abababababababababababababababababababababababababababababababab";
+
+/// Decodifica `%XX` y `+` de una URL (suficiente para estos tests).
+fn decode(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < b.len() {
+        match b[i] {
+            b'%' if i + 2 < b.len() => {
+                out.push(u8::from_str_radix(&s[i + 1..i + 3], 16).unwrap());
+                i += 3;
+            }
+            b'+' => {
+                out.push(b' ');
+                i += 1;
+            }
+            c => {
+                out.push(c);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8(out).unwrap()
+}
+
+fn embed_with_token(token: &str) -> String {
+    format!(
+        r#"<html><script>{{"accessToken":"{token}","accessTokenExpirationTimestampMs":9999999999999,"isAnonymous":true}}</script></html>"#
+    )
+}
+
+/// Página de `fetchPlaylist` con el formato del reproductor web.
+fn player_page(offset: usize, limit: usize, total: usize) -> String {
+    let end = (offset + limit).min(total);
+    let items: Vec<Value> = (offset..end)
+        .map(|i| {
+            json!({"itemV2":{"__typename":"TrackResponseWrapper","data":{"__typename":"Track",
+                "name":format!("Tema {i}"),"uri":format!("spotify:track:{i:022}"),
+                "artists":{"items":[{"profile":{"name":"Artista"}}]},
+                "albumOfTrack":{"name":"Disco"},
+                "trackDuration":{"totalMilliseconds":180_000 + i}}}})
+        })
+        .collect();
+    json!({"data":{"playlistV2":{"__typename":"Playlist","name":"Larga","content":{
+        "totalCount":total,"items":items,"pagingInfo":{"offset":offset,"limit":limit}}}}})
+    .to_string()
+}
+
+/// Lee hash, offset y limit de una consulta `fetchPlaylist`.
+fn query_args(path: &str) -> (String, usize, usize) {
+    let path = decode(path);
+    let num = |key: &str| -> usize {
+        let i = path.find(key).unwrap() + key.len();
+        path[i..]
+            .chars()
+            .take_while(char::is_ascii_digit)
+            .collect::<String>()
+            .parse()
+            .unwrap()
+    };
+    let h = path.find("\"sha256Hash\":\"").unwrap() + "\"sha256Hash\":\"".len();
+    let hash = path[h..h + 64].to_owned();
+    (hash, num("\"offset\":"), num("\"limit\":"))
+}
+
+#[test]
+fn web_player_reads_the_whole_playlist_with_an_anonymous_token() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let embeds = Arc::new(AtomicUsize::new(0));
+    let e = embeds.clone();
+    let base_cell = Arc::new(std::sync::OnceLock::<String>::new());
+    let b = base_cell.clone();
+    let base = rt.block_on(serve(move |_, path, headers| {
+        let base = b.get().cloned().unwrap_or_default();
+        if path == format!("/embed/playlist/{ID}") {
+            e.fetch_add(1, Ordering::SeqCst);
+            return (200, vec![], embed_with_token("anon"));
+        }
+        // Página principal y JavaScript del reproductor (para el hash actual).
+        if path == "/" {
+            let html = format!(
+                r#"<script src="{base}/cdn/web-player/vendor~web-player.1.js"></script><script src="{base}/cdn/web-player/web-player.2.js"></script>"#
+            );
+            return (200, vec![], html);
+        }
+        if path == "/cdn/web-player/web-player.2.js" {
+            let js = format!(r#"x=new Q("fetchPlaylist","query","{GOOD_HASH}",null)"#);
+            return (200, vec![], js);
+        }
+        if path.starts_with("/query?") {
+            assert!(headers.contains("authorization: bearer anon"), "{headers}");
+            let (hash, offset, limit) = query_args(path);
+            // Los hashes de fábrica "vencieron".
+            if hash != GOOD_HASH {
+                return (
+                    200,
+                    vec![],
+                    json!({"errors":[{"message":"PersistedQueryNotFound"}]}).to_string(),
+                );
+            }
+            return (200, vec![], player_page(offset, limit, 250));
+        }
+        (404, vec![], String::new())
+    }));
+    base_cell.set(base.clone()).unwrap();
+
+    let player = WebPlayer::with_endpoints(reqwest::Client::new(), &base, format!("{base}/query"));
+    let imp = rt.block_on(player.fetch(ID)).unwrap();
+    assert_eq!(imp.playlist.name, "Larga");
+    assert_eq!(imp.playlist.tracks.len(), 250);
+    assert_eq!(imp.playlist.tracks[249].title, "Tema 249");
+    assert_eq!(imp.playlist.tracks[0].album.as_deref(), Some("Disco"));
+    assert!(imp.warnings.is_empty(), "{:?}", imp.warnings);
+
+    // La segunda vez reutiliza el token y el hash encontrado.
+    let again = rt.block_on(player.fetch(ID)).unwrap();
+    assert_eq!(again.playlist.tracks.len(), 250);
+    assert_eq!(embeds.load(Ordering::SeqCst), 1, "el token se reutiliza");
+}
+
+#[test]
+fn web_player_missing_playlist_stops_the_cascade() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let base = rt.block_on(serve(|_, path, _| {
+        if path.starts_with("/embed/") {
+            return (200, vec![], embed_with_token("anon"));
+        }
+        let body = json!({"data":{"playlistV2":{"__typename":"NotFound","message":"no"}}});
+        (200, vec![], body.to_string())
+    }));
+    let client = reqwest::Client::new();
+    let importer = Importer::new(vec![
+        Box::new(WebPlayer::with_endpoints(
+            client.clone(),
+            &base,
+            format!("{base}/query"),
+        )),
+        Box::new(Embed::with_base(client, &base)),
+    ]);
+    assert!(matches!(
+        rt.block_on(importer.import_id(ID)),
+        Err(Error::NotFound)
+    ));
+}
+
+#[test]
+fn cascade_falls_back_to_embed_when_the_web_player_fails() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let base = rt.block_on(serve(|_, path, _| {
+        if path == format!("/embed/playlist/{ID}") {
+            // Página embed sin token, pero con las canciones.
+            let data = json!({"props":{"pageProps":{"state":{"data":{"entity":{"name":"Desde embed",
+                "trackList":[{"uri":"spotify:track:0000000000000000000001","title":"T1","subtitle":"A","duration":1000}]}}}}}});
+            let html = format!(
+                "<html><script id=\"__NEXT_DATA__\" type=\"application/json\">{data}</script></html>"
+            );
+            return (200, vec![], html);
+        }
+        (500, vec![], String::new())
+    }));
+    let client = reqwest::Client::new();
+    let importer = Importer::new(vec![
+        Box::new(WebPlayer::with_endpoints(
+            client.clone(),
+            &base,
+            format!("{base}/query"),
+        )),
+        Box::new(Embed::with_base(client, &base)),
+    ]);
+    let imp = rt.block_on(importer.import_id(ID)).unwrap();
+    assert_eq!(imp.source, "página embed");
+    assert_eq!(imp.playlist.tracks.len(), 1);
+}
+
+/// Contra Spotify de verdad: una editorial ("All Out 80s", 150 canciones) y
+/// una de un usuario con más de 1 500, enteras y sin claves.
+#[test]
+#[ignore = "necesita internet"]
+fn real_web_player_import() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let player = WebPlayer::new(reqwest::Client::new());
+    for (id, min) in [(ID, 101), ("5jyQ13hyJBKCosn5giwyL2", 1500)] {
+        let start = Instant::now();
+        let imp = rt.block_on(player.fetch(id)).unwrap();
+        eprintln!(
+            "{}: {} canciones en {:?}; última: {:?}; avisos: {:?}",
+            imp.playlist.name,
+            imp.playlist.tracks.len(),
+            start.elapsed(),
+            imp.playlist.tracks.last(),
+            imp.warnings
+        );
+        assert!(imp.playlist.tracks.len() >= min);
+        assert!(imp
+            .playlist
+            .tracks
+            .iter()
+            .all(|t| !t.artists.is_empty() && t.duration_ms > 0 && t.spotify_id.is_some()));
     }
 }

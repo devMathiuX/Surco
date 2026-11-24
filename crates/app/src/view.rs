@@ -359,12 +359,19 @@ impl Surco {
         .spacing(4);
 
         let query = self.filter.as_deref().unwrap_or("");
-        let shown = p
+        let shown: Vec<(usize, &Track)> = p
             .tracks
             .iter()
             .enumerate()
-            .filter(|(_, t)| matches_filter(t, query));
-        let rows = Column::with_children(shown.map(|(i, t)| {
+            .filter(|(_, t)| matches_filter(t, query))
+            .collect();
+        // Solo se arman las filas que se ven (más un margen): con playlists de
+        // miles de canciones, armarlas todas pasa los 80 MB de RAM. Las demás
+        // se reemplazan por espacio vacío del mismo alto.
+        let (first, last) = visible_rows(self.list_view, shown.len());
+        let above = first as f32 * ROW_HEIGHT;
+        let below = (shown.len() - last) as f32 * ROW_HEIGHT;
+        let rows = Column::with_children(shown[first..last].iter().map(|&(i, t)| {
             let playing = self.now_in_playlist() == Some((index, i));
             let badge: Element<'_, Message> = match self.resolution(t) {
                 Some(TrackRes::Resolving) => text("buscando…")
@@ -450,10 +457,16 @@ impl Surco {
             .on_press(Message::PlayTrack(index, i))
             .padding([6, 8])
             .width(Length::Fill)
+            .height(ROW_HEIGHT)
             .style(theme::list_button(playing))
             .into()
-        }))
-        .push(self.view_recs(index, p))
+        }));
+        let rows = column![
+            Space::new().height(above),
+            rows,
+            Space::new().height(below),
+            self.view_recs(index, p)
+        ]
         .padding(iced::Padding::ZERO.right(16).bottom(16));
 
         let mut col = column![header].spacing(20);
@@ -493,7 +506,13 @@ impl Surco {
         if let Some(chooser) = self.view_chooser(index) {
             col = col.push(chooser);
         }
-        col.push(scrollable(rows).height(Length::Fill)).into()
+        col.push(
+            scrollable(rows)
+                .id(Id::new(LIST_SCROLL))
+                .on_scroll(|v| Message::ListScrolled(v.absolute_offset().y, v.bounds().height))
+                .height(Length::Fill),
+        )
+        .into()
     }
 
     /// Pantalla de ajustes: tema, portadas, precarga y radio automática.
@@ -668,7 +687,7 @@ impl Surco {
             KeySource::Own => "Usando tus claves.",
             KeySource::Config => "Usando las claves de config.toml.",
             KeySource::Builtin => "Usando las claves incluidas en Surco.",
-            KeySource::None => "Sin claves: de cada playlist se importan hasta 100 canciones (o usá un CSV de Exportify).",
+            KeySource::None => "Sin claves propias (no hacen falta).",
         };
         let form = row![
             text_input("Client ID", &self.keys_form.id)
@@ -697,7 +716,7 @@ impl Surco {
         let mut col = column![
             column![
                 text("Spotify").size(theme::SIZE_M),
-                text("Con claves de la Web API las playlists se importan enteras. Si Spotify no deja (por ejemplo, con sus playlists editoriales), se usa la página pública. Para usar tus propias claves, creá una app en developer.spotify.com.")
+                text("Surco lee las playlists enteras igual que la web de Spotify, sin cuenta, Premium ni claves. Las claves de la Web API son opcionales: solo se usan si eso falla (y Spotify pide Premium para crearlas en developer.spotify.com).")
                     .size(theme::SIZE_S)
                     .style(theme::secondary_text),
             ]
@@ -799,6 +818,28 @@ pub(crate) fn songs(n: usize) -> String {
 
 /// Tamaño de las portadas en la lista.
 const LIST_COVER: f32 = 36.0;
+/// Alto fijo de cada fila de canción (para saber cuáles se ven).
+pub(crate) const ROW_HEIGHT: f32 = 50.0;
+/// Filas extra que se arman arriba y abajo de las que se ven.
+const OVERSCAN: usize = 12;
+/// Alto que se supone visible antes del primer desplazamiento.
+const DEFAULT_VIEW_HEIGHT: f32 = 1400.0;
+/// Id de la lista de canciones de la playlist.
+pub(crate) const LIST_SCROLL: &str = "playlist-list";
+
+/// Rango `[first, last)` de filas a armar, según el desplazamiento y el alto
+/// visible de la lista.
+pub(crate) fn visible_rows((offset, height): (f32, f32), len: usize) -> (usize, usize) {
+    let height = if height > 0.0 {
+        height
+    } else {
+        DEFAULT_VIEW_HEIGHT
+    };
+    let top = (offset.max(0.0) / ROW_HEIGHT) as usize;
+    let count = (height / ROW_HEIGHT).ceil() as usize + 2 * OVERSCAN;
+    let first = top.saturating_sub(OVERSCAN).min(len.saturating_sub(count));
+    (first, (first + count).min(len))
+}
 
 /// `1536000` → `1,5 MB`.
 pub(crate) fn format_bytes(b: u64) -> String {
@@ -844,6 +885,22 @@ fn fold(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_visible_rows_are_built() {
+        // Arriba de todo, sin saber el alto: unas 52 filas.
+        let (first, last) = visible_rows((0.0, 0.0), 1837);
+        assert_eq!(first, 0);
+        assert!(last > 28 && last < 60, "{last}");
+        // A mitad de la lista, con 500 px visibles: la fila 1000 está y hay margen.
+        let (first, last) = visible_rows((1000.0 * ROW_HEIGHT, 500.0), 1837);
+        assert_eq!(first, 1000 - OVERSCAN);
+        assert_eq!(last, first + 10 + 2 * OVERSCAN);
+        // Al final no se pasa del largo, y una lista corta va entera.
+        assert_eq!(visible_rows((1e9, 500.0), 1837).1, 1837);
+        assert_eq!(visible_rows((0.0, 500.0), 5), (0, 5));
+        assert_eq!(visible_rows((300.0, 500.0), 0), (0, 0));
+    }
 
     #[test]
     fn filter_ignores_case_and_accents() {
