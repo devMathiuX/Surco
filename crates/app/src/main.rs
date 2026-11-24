@@ -3,6 +3,7 @@
 // En Windows, release sin ventana de consola.
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
+mod config;
 mod theme;
 
 use std::path::PathBuf;
@@ -10,14 +11,19 @@ use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use iced::keyboard::{self, key, Key};
-use iced::widget::{button, column, container, row, slider, text, text_input, Space};
+use iced::widget::{
+    button, column, container, operation, row, scrollable, slider, text, text_input, Column, Id,
+    Space,
+};
 use iced::{window, Alignment, Element, Length, Size, Subscription, Task, Theme};
-use surco_core::{format_duration, PlayerState};
+use surco_core::{format_duration, PlayerState, Playlist};
 use surco_player::{Command, PlayerHandle, Source, Status};
 use surco_provider::{HttpClient, Provider, YtDlp};
+use surco_spotify::{Credentials, Importer};
 
 /// Video de prueba de la Fase 2: "Big Buck Bunny" (Blender Foundation, CC BY 3.0).
 const TEST_URL: &str = "https://www.youtube.com/watch?v=aqz-KE-bpKQ";
+const IMPORT_INPUT: &str = "import-input";
 const SEEK_STEP: Duration = Duration::from_secs(5);
 
 /// Runtime de tokio para la red y los procesos hijos (yt-dlp).
@@ -76,7 +82,24 @@ struct Surco {
     /// Valor del slider mientras se arrastra (segundos).
     seeking: Option<f32>,
     fatal: Option<String>,
+    spotify_creds: Option<Credentials>,
+    /// Playlists importadas en esta sesión (se guardan en disco en la Fase 6),
+    /// con la estrategia que funcionó.
+    playlists: Vec<(Playlist, &'static str)>,
+    selected: Option<usize>,
+    import_input: String,
+    importing: bool,
+    notice: Option<Notice>,
 }
+
+/// Aviso discreto en la barra lateral.
+#[derive(Debug, Clone)]
+struct Notice {
+    error: bool,
+    text: String,
+}
+
+type ImportResult = Result<surco_spotify::Imported, String>;
 
 #[derive(Debug, Clone)]
 enum Message {
@@ -90,6 +113,11 @@ enum Message {
     Status(Status),
     DownloadYtDlp,
     YtDlpDownloaded(Result<PathBuf, String>),
+    ImportInputChanged(String),
+    Import,
+    Imported(ImportResult),
+    SelectPlaylist(Option<usize>),
+    FocusImport,
 }
 
 impl Surco {
@@ -119,6 +147,12 @@ impl Surco {
             },
             seeking: None,
             fatal,
+            spotify_creds: config::Config::load().spotify_credentials(),
+            playlists: Vec::new(),
+            selected: None,
+            import_input: String::new(),
+            importing: false,
+            notice: None,
         };
         (state, Task::none())
     }
@@ -181,8 +215,87 @@ impl Surco {
                 self.ytdlp = YtDlpState::Found(path);
             }
             Message::YtDlpDownloaded(Err(e)) => self.ytdlp = YtDlpState::Failed(e),
+            Message::ImportInputChanged(s) => self.import_input = s,
+            Message::Import => return self.start_import(),
+            Message::Imported(result) => {
+                self.importing = false;
+                match result {
+                    Ok(imp) => {
+                        self.notice = (!imp.warnings.is_empty()).then(|| Notice {
+                            error: false,
+                            text: imp.warnings.join(" "),
+                        });
+                        self.import_input.clear();
+                        // Reimportar la misma playlist la reemplaza.
+                        let idx = match self
+                            .playlists
+                            .iter()
+                            .position(|(p, _)| p.id == imp.playlist.id)
+                        {
+                            Some(i) => {
+                                self.playlists[i] = (imp.playlist, imp.source);
+                                i
+                            }
+                            None => {
+                                self.playlists.push((imp.playlist, imp.source));
+                                self.playlists.len() - 1
+                            }
+                        };
+                        self.selected = Some(idx);
+                    }
+                    Err(e) => {
+                        self.notice = Some(Notice {
+                            error: true,
+                            text: e,
+                        })
+                    }
+                }
+            }
+            Message::SelectPlaylist(i) => self.selected = i,
+            Message::FocusImport => return operation::focus(Id::new(IMPORT_INPUT)),
         }
         Task::none()
+    }
+
+    /// Importa desde un link de Spotify o, si es una ruta a un `.csv`, desde el archivo.
+    fn start_import(&mut self) -> Task<Message> {
+        let input = self.import_input.trim().to_owned();
+        if input.is_empty() || self.importing {
+            return Task::none();
+        }
+        let Some(rt) = RUNTIME.get() else {
+            return Task::none();
+        };
+        let csv = csv_path(&input);
+        if csv.is_none() && surco_spotify::parse_playlist_id(&input).is_none() {
+            self.notice = Some(Notice {
+                error: true,
+                text: "Eso no parece un link de playlist de Spotify ni un archivo .csv.".into(),
+            });
+            return Task::none();
+        }
+        self.importing = true;
+        self.notice = None;
+        let creds = self.spotify_creds.clone();
+        let job = rt.spawn(async move {
+            let result = match csv {
+                Some(path) => {
+                    tokio::task::spawn_blocking(move || surco_spotify::import_csv_file(&path))
+                        .await
+                        .map_err(|e| e.to_string())?
+                }
+                None => {
+                    Importer::standard(HttpClient::new(), creds)
+                        .import_link(&input)
+                        .await
+                }
+            };
+            result.map_err(|e| e.to_string())
+        });
+        Task::perform(
+            async move { job.await.unwrap_or_else(|e| Err(e.to_string())) },
+            Message::Imported,
+        )
     }
 
     fn subscription(&self) -> Subscription<Message> {
@@ -201,35 +314,141 @@ impl Surco {
     }
 
     fn view(&self) -> Element<'_, Message> {
-        let sidebar = container(
-            column![
-                text("Surco").size(theme::SIZE_L),
-                Space::new().height(Length::Fill),
-                container(
-                    text("+ Importar")
-                        .size(theme::SIZE_S)
-                        .style(theme::accent_text)
-                )
-                .padding([6, 10])
-                .style(theme::outlined),
-            ]
-            .spacing(12),
-        )
-        .padding(16)
-        .width(200)
-        .height(Length::Fill)
-        .style(theme::surface);
-
-        let main = container(self.view_test_panel())
-            .padding(32)
+        let main: Element<'_, Message> = match self.selected.and_then(|i| self.playlists.get(i)) {
+            Some((playlist, source)) => self.view_playlist(playlist, source),
+            None => self.view_empty(),
+        };
+        let main = container(main)
+            .padding([24, 32])
             .width(Length::Fill)
             .height(Length::Fill);
 
         column![
-            row![sidebar, main].height(Length::Fill),
+            row![self.view_sidebar(), main].height(Length::Fill),
             self.view_player_bar()
         ]
         .into()
+    }
+
+    fn view_sidebar(&self) -> Element<'_, Message> {
+        let mut list = Column::new().spacing(2);
+        for (i, (p, _)) in self.playlists.iter().enumerate() {
+            list = list.push(
+                button(
+                    text(&p.name)
+                        .size(theme::SIZE_S)
+                        .wrapping(text::Wrapping::None),
+                )
+                .on_press(Message::SelectPlaylist(Some(i)))
+                .width(Length::Fill)
+                .padding([6, 8])
+                .style(theme::list_button(self.selected == Some(i))),
+            );
+        }
+
+        let input = text_input("Link de Spotify o archivo .csv", &self.import_input)
+            .id(Id::new(IMPORT_INPUT))
+            .on_input(Message::ImportInputChanged)
+            .on_submit(Message::Import)
+            .padding(8)
+            .size(theme::SIZE_S)
+            .style(theme::input);
+        let import = button(
+            text(if self.importing {
+                "Importando…"
+            } else {
+                "+ Importar"
+            })
+            .size(theme::SIZE_S),
+        )
+        .on_press_maybe((!self.importing).then_some(Message::Import))
+        .width(Length::Fill)
+        .padding([6, 10])
+        .style(theme::ghost_button);
+
+        let mut col = column![
+            button(text("Surco").size(theme::SIZE_L))
+                .on_press(Message::SelectPlaylist(None))
+                .padding(0)
+                .style(theme::list_button(false)),
+            scrollable(list).height(Length::Fill),
+            input,
+            import,
+        ]
+        .spacing(12);
+        if let Some(n) = &self.notice {
+            col = col.push(text(&n.text).size(theme::SIZE_S).style(if n.error {
+                theme::error_text
+            } else {
+                theme::secondary_text
+            }));
+        }
+        container(col)
+            .padding(16)
+            .width(220)
+            .height(Length::Fill)
+            .style(theme::surface)
+            .into()
+    }
+
+    fn view_empty(&self) -> Element<'_, Message> {
+        column![
+            text("Pegá un link de playlist de Spotify para empezar").size(theme::SIZE_L),
+            text("Usá el campo de la izquierda (Ctrl+L). También acepta un CSV exportado con Exportify.")
+                .size(theme::SIZE_S)
+                .style(theme::secondary_text),
+            Space::new().height(24),
+            self.view_test_panel(),
+        ]
+        .spacing(8)
+        .into()
+    }
+
+    fn view_playlist<'a>(&'a self, p: &'a Playlist, source: &str) -> Element<'a, Message> {
+        let total_ms: u64 = p.tracks.iter().map(|t| t.duration_ms).sum();
+        let header = column![
+            text(&p.name).size(theme::SIZE_L),
+            text(format!(
+                "{} canciones · {} · importada desde {source}",
+                p.tracks.len(),
+                format_duration(total_ms)
+            ))
+            .size(theme::SIZE_S)
+            .style(theme::secondary_text),
+        ]
+        .spacing(4);
+
+        let rows = Column::with_children(p.tracks.iter().enumerate().map(|(i, t)| {
+            row![
+                text(i + 1)
+                    .size(theme::SIZE_S)
+                    .style(theme::secondary_text)
+                    .width(40),
+                column![
+                    text(&t.title)
+                        .size(theme::SIZE_M)
+                        .wrapping(text::Wrapping::None),
+                    text(t.artists.join(", "))
+                        .size(theme::SIZE_S)
+                        .style(theme::secondary_text)
+                        .wrapping(text::Wrapping::None),
+                ]
+                .spacing(2)
+                .width(Length::Fill),
+                text(format_duration(t.duration_ms))
+                    .size(theme::SIZE_S)
+                    .style(theme::secondary_text),
+            ]
+            .spacing(12)
+            .padding([6, 0])
+            .align_y(Alignment::Center)
+            .into()
+        }))
+        .padding(iced::Padding::ZERO.right(16));
+
+        column![header, scrollable(rows).height(Length::Fill)]
+            .spacing(20)
+            .into()
     }
 
     /// Panel de prueba de la Fase 2: pegar una URL y reproducir.
@@ -283,7 +502,7 @@ impl Surco {
         };
 
         let mut col = column![
-            text("Prueba de audio").size(theme::SIZE_L),
+            text("Prueba de audio").size(theme::SIZE_M),
             text("Pegá un link de YouTube y dale a Reproducir. Espacio pausa, ←/→ mueven 5 s.")
                 .size(theme::SIZE_S)
                 .style(theme::secondary_text),
@@ -391,6 +610,12 @@ fn on_key(event: keyboard::Event) -> Option<Message> {
     let keyboard::Event::KeyPressed { key, modifiers, .. } = event else {
         return None;
     };
+    if modifiers.control() && !modifiers.alt() {
+        return match key.as_ref() {
+            Key::Character("l") | Key::Character("L") => Some(Message::FocusImport),
+            _ => None,
+        };
+    }
     if modifiers.control() || modifiers.alt() {
         return None;
     }
@@ -400,4 +625,14 @@ fn on_key(event: keyboard::Event) -> Option<Message> {
         Key::Named(key::Named::ArrowRight) => Some(Message::SeekBy(1)),
         _ => None,
     }
+}
+
+/// Si el texto es la ruta a un `.csv` existente, la devuelve.
+fn csv_path(input: &str) -> Option<PathBuf> {
+    let trimmed = input.trim_matches(|c| c == '"' || c == '\'');
+    let path = PathBuf::from(trimmed.strip_prefix("file://").unwrap_or(trimmed));
+    let is_csv = path
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("csv"));
+    (is_csv && path.is_file()).then_some(path)
 }
