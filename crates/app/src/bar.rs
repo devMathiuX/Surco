@@ -1,8 +1,9 @@
 //! Barra inferior fija: portada, título, controles, progreso y volumen.
 
-use iced::widget::{button, column, container, image, row, slider, text, Space};
+use iced::widget::{button, column, container, image, row, slider, text, tooltip, Space};
 use iced::{Alignment, Element, Length};
 use surco_core::{format_duration, PlayerState, RepeatMode};
+use surco_player::Source;
 
 use crate::icons::{self, Kind};
 use crate::playback::TrackRes;
@@ -66,7 +67,7 @@ impl Surco {
         let play = button(
             container(icons::icon(
                 if playing { Kind::Pause } else { Kind::Play },
-                theme::BACKGROUND,
+                theme::colors().background,
                 18.0,
             ))
             .center(18),
@@ -124,7 +125,8 @@ impl Surco {
 
         // Derecha: cambiar el video (si el match no es el correcto) y volumen.
         let change: Element<'_, Message> = match (at, now.and_then(|t| self.resolution(t))) {
-            (Some(at), Some(TrackRes::Done(_))) => {
+            // Las de la radio no tienen otros candidatos.
+            (Some(at), Some(TrackRes::Done(m))) if !m.candidates.is_empty() => {
                 button(text("Cambiar video").size(theme::SIZE_S))
                     .on_press(Message::OpenChooser(Some(at)))
                     .padding([4, 10])
@@ -137,10 +139,38 @@ impl Surco {
             .step(0.01_f32)
             .width(100)
             .style(theme::seek_slider);
+        let can_radio = matches!(s.source, Some(Source::YouTube(_)));
+        let radio_icon = icons::icon(
+            Kind::Radio,
+            if self.radio_loading {
+                theme::colors().accent
+            } else {
+                theme::colors().text
+            },
+            18.0,
+        );
+        let radio = tooltip(
+            button(radio_icon)
+                .on_press_maybe((can_radio && !self.radio_loading).then_some(Message::StartRadio))
+                .padding(6)
+                .style(theme::icon_button),
+            container(
+                text(if self.radio_loading {
+                    "Armando la radio…"
+                } else {
+                    "Radio: canciones parecidas a esta"
+                })
+                .size(theme::SIZE_S),
+            )
+            .padding(6)
+            .style(theme::card),
+            tooltip::Position::Top,
+        );
         let right = row![
             Space::new().width(Length::Fill),
             change,
-            icons::icon(Kind::Volume, theme::TEXT_SECONDARY, 18.0),
+            radio,
+            icons::icon(Kind::Volume, theme::colors().text_secondary, 18.0),
             volume,
         ]
         .spacing(10)

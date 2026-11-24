@@ -27,6 +27,14 @@ pub(crate) const PREBUFFER: Duration = Duration::from_secs(2);
 const MAX_BUFFER: Duration = Duration::from_secs(5);
 /// Muestras que el callback de audio toma por vez del buffer compartido.
 const BATCH: usize = 4096;
+/// Debajo de esto (≈ -50 dBFS) una muestra cuenta como silencio.
+const SILENCE: f32 = 0.003;
+/// Silencio inicial máximo que se saltea (más largo es parte de la canción).
+const MAX_LEADING_SILENCE: Duration = Duration::from_secs(10);
+/// Silencio retenido como máximo antes de dejar de decodificar.
+const MAX_HELD_SILENCE: Duration = Duration::from_secs(20);
+/// Con menos audio que esto en el buffer se suelta el silencio retenido.
+const LOW_WATER: Duration = Duration::from_secs(1);
 
 /// Estado compartido entre el hilo decodificador, el callback de audio y el motor.
 #[derive(Default)]
@@ -199,6 +207,8 @@ fn run(
 
     let mut spec: Option<AudioSpec> = None;
     let mut ready_sent = false;
+    // Sin cortes: se saltea el silencio del principio y del final del video.
+    let mut trim = Trimmer::new(start_at.is_none());
     let mut sample_buf: Option<SampleBuffer<f32>> = None;
     // Tras un seek preciso, timestamp desde el que se vuelve a emitir audio.
     let mut skip_until_ts: u64 = 0;
@@ -220,6 +230,7 @@ fn run(
             ) {
                 Ok(seeked) => {
                     decoder.reset();
+                    trim.reset();
                     skip_until_ts = seeked.required_ts;
                     shared.finished.store(false, Ordering::SeqCst);
                     let mut buf = shared.buf();
@@ -232,9 +243,22 @@ fn run(
             }
         }
 
+        // Silencio retenido: se suelta cuando hace falta para no cortar.
+        if let Some(s) = spec {
+            let mut buf = shared.buf();
+            let low = s.samples_for(LOW_WATER);
+            if trim.pending > 0 && buf.len() < low {
+                let n = trim.release(low - buf.len(), usize::from(s.channels));
+                buf.extend(std::iter::repeat_n(0.0, n));
+            }
+        }
+
         // Buffer lleno o archivo terminado: esperar (puede llegar un seek).
         let full = spec
-            .map(|s| shared.buf().len() >= s.samples_for(MAX_BUFFER))
+            .map(|s| {
+                shared.buf().len() >= s.samples_for(MAX_BUFFER)
+                    || trim.pending >= s.samples_for(MAX_HELD_SILENCE)
+            })
             .unwrap_or(false);
         if full || shared.finished.load(Ordering::SeqCst) {
             std::thread::sleep(Duration::from_millis(20));
@@ -244,6 +268,8 @@ fn run(
         let packet = match format.next_packet() {
             Ok(p) => p,
             Err(SymError::IoError(e)) if e.kind() == io::ErrorKind::UnexpectedEof => {
+                // El silencio retenido era el final del video: se descarta.
+                trim.pending = 0;
                 shared.finished.store(true, Ordering::SeqCst);
                 if !ready_sent {
                     if let Some(spec) = spec {
@@ -298,9 +324,23 @@ fn run(
         };
         sb.copy_interleaved_ref(decoded);
 
+        let ch = usize::from(this_spec.channels);
+        let was_leading = trim.leading;
+        let (zeros, keep) = trim.feed(sb.samples(), ch, this_spec.samples_for(MAX_LEADING_SILENCE));
+        if was_leading && !trim.leading && trim.dropped > 0 {
+            // La posición sigue siendo la del video.
+            shared
+                .played
+                .fetch_add(trim.dropped as u64, Ordering::SeqCst);
+            tracing::debug!(
+                secs = this_spec.duration_of(trim.dropped as u64).as_secs_f32(),
+                "silencio inicial salteado"
+            );
+        }
         let buffered = {
             let mut buf = shared.buf();
-            buf.extend(sb.samples());
+            buf.extend(std::iter::repeat_n(0.0, zeros));
+            buf.extend(&sb.samples()[keep]);
             buf.len()
         };
 
@@ -311,6 +351,86 @@ fn run(
                 duration,
             });
         }
+    }
+}
+
+/// Saca el silencio del principio y del final de una canción.
+///
+/// Los videos de YouTube suelen tener segundos mudos al empezar y al terminar,
+/// que suenan como un corte entre canciones. El del principio se descarta
+/// (hasta un tope). El silencio que aparece después se retiene como un
+/// contador: si vuelve a sonar algo se reinsertan los ceros, y si el archivo
+/// termina antes, era el final y no se reproduce.
+#[derive(Debug)]
+struct Trimmer {
+    /// Todavía no sonó nada.
+    leading: bool,
+    /// Muestras salteadas al principio.
+    dropped: usize,
+    /// Muestras de silencio retenidas (no encoladas todavía).
+    pending: usize,
+}
+
+impl Trimmer {
+    fn new(leading: bool) -> Self {
+        Self {
+            leading,
+            dropped: 0,
+            pending: 0,
+        }
+    }
+
+    /// Después de un seek no hay silencio "inicial" ni retenido.
+    fn reset(&mut self) {
+        self.leading = false;
+        self.pending = 0;
+    }
+
+    /// Procesa un bloque entrelazado. Devuelve cuántos ceros encolar antes y
+    /// qué parte del bloque encolar después.
+    fn feed(
+        &mut self,
+        samples: &[f32],
+        ch: usize,
+        max_leading: usize,
+    ) -> (usize, std::ops::Range<usize>) {
+        let ch = ch.max(1);
+        let loud = |f: &[f32]| f.iter().any(|s| s.abs() >= SILENCE);
+        let frames = samples.len() / ch;
+        let first = (0..frames).find(|&i| loud(&samples[i * ch..(i + 1) * ch]));
+        let Some(first) = first else {
+            // Bloque mudo.
+            if self.leading && self.dropped + samples.len() <= max_leading {
+                self.dropped += samples.len();
+            } else {
+                self.leading = false;
+                self.pending += samples.len();
+            }
+            return (0, 0..0);
+        };
+        let mut start = 0;
+        if self.leading {
+            self.leading = false;
+            if self.dropped + first * ch <= max_leading {
+                start = first * ch;
+                self.dropped += start;
+            }
+        }
+        let last = (first..frames)
+            .rev()
+            .find(|&i| loud(&samples[i * ch..(i + 1) * ch]))
+            .unwrap_or(first);
+        let end = (last + 1) * ch;
+        let zeros = std::mem::replace(&mut self.pending, samples.len() - end);
+        (zeros, start..end)
+    }
+
+    /// Suelta hasta `want` muestras de silencio retenido (cuadros completos).
+    fn release(&mut self, want: usize, ch: usize) -> usize {
+        let ch = ch.max(1);
+        let n = (want.min(self.pending) / ch) * ch;
+        self.pending -= n;
+        n
     }
 }
 
@@ -395,5 +515,62 @@ impl rodio::Source for RingSource {
 
     fn total_duration(&self) -> Option<Duration> {
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn block(frames: &[f32]) -> Vec<f32> {
+        // Estéreo: el mismo valor en los dos canales.
+        frames.iter().flat_map(|&v| [v, v]).collect()
+    }
+
+    #[test]
+    fn trims_leading_silence() {
+        let mut t = Trimmer::new(true);
+        let (z, r) = t.feed(&block(&[0.0, 0.0, 0.0]), 2, 100);
+        assert_eq!((z, r), (0, 0..0));
+        let (z, r) = t.feed(&block(&[0.001, 0.5, 0.0, 0.4]), 2, 100);
+        assert_eq!(z, 0);
+        assert_eq!(r, 2..8);
+        assert_eq!(t.dropped, 8);
+        assert!(!t.leading);
+    }
+
+    #[test]
+    fn leading_cap_keeps_long_intros() {
+        let mut t = Trimmer::new(true);
+        t.feed(&block(&[0.0; 4]), 2, 10);
+        // Pasa el tope: lo que sigue ya no se saltea.
+        let (z, r) = t.feed(&block(&[0.0; 4]), 2, 10);
+        assert_eq!((z, r), (0, 0..0));
+        assert!(!t.leading);
+        assert_eq!(t.pending, 8);
+    }
+
+    #[test]
+    fn holds_trailing_silence_and_restores_it_if_music_returns() {
+        let mut t = Trimmer::new(false);
+        let (z, r) = t.feed(&block(&[0.5, 0.0, 0.0]), 2, 0);
+        assert_eq!((z, r), (0, 0..2));
+        assert_eq!(t.pending, 4);
+        let (z, _) = t.feed(&block(&[0.0, 0.0]), 2, 0);
+        assert_eq!(z, 0);
+        assert_eq!(t.pending, 8);
+        // Vuelve la música: los ceros retenidos van antes.
+        let (z, r) = t.feed(&block(&[0.3]), 2, 0);
+        assert_eq!((z, r), (8, 0..2));
+        assert_eq!(t.pending, 0);
+    }
+
+    #[test]
+    fn release_gives_whole_frames() {
+        let mut t = Trimmer::new(false);
+        t.pending = 9;
+        assert_eq!(t.release(5, 2), 4);
+        assert_eq!(t.pending, 5);
+        assert_eq!(t.release(100, 2), 4);
     }
 }
