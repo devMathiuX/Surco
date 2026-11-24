@@ -14,7 +14,7 @@ pub use queue::Queue;
 use std::path::PathBuf;
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use surco_core::PlayerState;
 use surco_provider::{HttpClient, HttpStream, Provider};
@@ -775,17 +775,31 @@ fn open_output(null_output: bool) -> Result<Output, String> {
 }
 
 /// Consume la cola a velocidad real y descarta las muestras.
+///
+/// El ritmo sale del reloj y no de cuántas veces durmió el hilo: en macOS (y
+/// en máquinas cargadas) `sleep(10 ms)` puede tardar bastante más, y contar
+/// ticks hacía que la "reproducción" fuera más lenta que el tiempo real.
 fn null_sink(mut queue: rodio::queue::SourcesQueueOutput) {
     use rodio::Source;
     let tick = Duration::from_millis(10);
+    // Tope por vuelta, para no "reproducir" de golpe después de una pausa larga del hilo.
+    let max_step = Duration::from_millis(100);
+    let mut last = Instant::now();
+    let mut owed = 0.0_f64;
     loop {
-        let per_tick = (queue.sample_rate().get() as usize * queue.channels().get() as usize) / 100;
-        for _ in 0..per_tick {
+        std::thread::sleep(tick);
+        let now = Instant::now();
+        let step = now.duration_since(last).min(max_step);
+        last = now;
+        let rate = queue.sample_rate().get() as f64 * queue.channels().get() as f64;
+        owed += step.as_secs_f64() * rate;
+        let due = owed.floor();
+        owed -= due;
+        for _ in 0..due as u64 {
             if queue.next().is_none() {
                 break;
             }
         }
-        std::thread::sleep(tick);
     }
 }
 
