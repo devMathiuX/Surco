@@ -7,6 +7,9 @@
 pub use surco_core as core;
 
 mod decode;
+pub mod queue;
+
+pub use queue::Queue;
 
 use std::path::PathBuf;
 use std::sync::mpsc::{self, RecvTimeoutError};
@@ -83,6 +86,11 @@ pub enum Command {
     /// Volumen 0.0-1.0 (lineal para la UI; el motor aplica una curva).
     SetVolume(f32),
     Stop,
+    /// Pre-cargar lo que sigue (o nada, con `None`). Cuando la actual está por
+    /// terminar, se encola en la salida para que no haya silencio entre
+    /// canciones; al pasar a ella, `Status::auto_advances` aumenta en 1.
+    /// Un `Load` de la misma fuente aprovecha lo ya cargado.
+    Preload(Option<Source>),
     /// yt-dlp quedó disponible (por ejemplo, después de descargarlo).
     SetProvider(Arc<Provider>),
 }
@@ -95,6 +103,10 @@ pub struct Status {
     pub position: Duration,
     pub duration: Option<Duration>,
     pub volume: f32,
+    /// Lo que está cargado.
+    pub source: Option<Source>,
+    /// Cuántas veces el motor pasó solo a la canción pre-cargada.
+    pub auto_advances: u64,
 }
 
 impl Default for Status {
@@ -105,6 +117,8 @@ impl Default for Status {
             position: Duration::ZERO,
             duration: None,
             volume: 0.8,
+            source: None,
+            auto_advances: 0,
         }
     }
 }
@@ -207,6 +221,18 @@ struct Current {
     retries: u32,
 }
 
+/// La canción pre-cargada.
+struct Next {
+    gen: u64,
+    source: Source,
+    shared: Option<Arc<Shared>>,
+    spec: Option<AudioSpec>,
+    title: Option<String>,
+    duration: Option<Duration>,
+    /// Ya está encolada en la salida, detrás de la actual.
+    appended: bool,
+}
+
 /// Salida de audio: dispositivo real o "nula" para pruebas.
 struct Output {
     player: rodio::Player,
@@ -222,8 +248,11 @@ struct Engine {
     status: Status,
     output: Result<Output, String>,
     current: Option<Current>,
-    /// Generación de carga: descarta resultados de cargas viejas.
+    next: Option<Next>,
+    /// Generación de la carga actual: descarta resultados de cargas viejas.
     gen: u64,
+    /// Contador para generar generaciones (actual y pre-carga).
+    seq: u64,
     /// Pausa pedida mientras cargaba.
     paused: bool,
 }
@@ -253,7 +282,9 @@ impl Engine {
             status,
             output,
             current: None,
+            next: None,
             gen: 0,
+            seq: 0,
             paused: false,
         }
     }
@@ -309,18 +340,54 @@ impl Engine {
                 DecodeEvent::Failed(DecodeFailure::Other(e)) => self.fail(e),
             },
             Msg::LoadFailed { gen, error } if gen == self.gen => self.fail(error),
+            Msg::Opened {
+                gen,
+                source,
+                ext,
+                title,
+                duration,
+            } if self.next_gen() == Some(gen) => {
+                if let Some(n) = &mut self.next {
+                    n.title = title;
+                    n.duration = duration;
+                }
+                self.next_opened(gen, source, ext);
+            }
+            Msg::Decode { gen, event } if self.next_gen() == Some(gen) => match event {
+                DecodeEvent::Ready { spec, duration } => {
+                    if let Some(n) = &mut self.next {
+                        n.spec = Some(spec);
+                        if duration.is_some() {
+                            n.duration = duration;
+                        }
+                    }
+                    self.maybe_append_next();
+                }
+                DecodeEvent::Failed(e) => {
+                    tracing::warn!(error = %e, "falló la pre-carga");
+                    self.drop_next();
+                }
+            },
+            Msg::LoadFailed { gen, error } if self.next_gen() == Some(gen) => {
+                tracing::warn!(%error, "falló la pre-carga");
+                self.drop_next();
+            }
             stale => tracing::debug!(?stale, "mensaje de una carga anterior, se ignora"),
         }
     }
 
     fn command(&mut self, cmd: Command) {
         match cmd {
+            Command::Load(source) if self.next.as_ref().is_some_and(|n| n.source == source) => {
+                self.promote_next(false);
+            }
             Command::Load(source) => {
                 self.unload();
                 self.status.position = Duration::ZERO;
                 self.status.duration = None;
                 self.status.title = None;
                 self.paused = false;
+                self.status.source = Some(source.clone());
                 self.load(source, 0, false);
             }
             Command::Play => self.set_paused(false),
@@ -344,11 +411,14 @@ impl Engine {
                 }
             }
             Command::SetProvider(p) => self.provider = Some(p),
+            Command::Preload(source) => self.preload(source),
             Command::Stop => {
                 self.unload();
+                self.drop_next();
                 self.current = None;
                 self.status = Status {
                     volume: self.status.volume,
+                    auto_advances: self.status.auto_advances,
                     ..Status::default()
                 };
             }
@@ -357,7 +427,8 @@ impl Engine {
 
     /// Resuelve y abre la fuente en segundo plano. Responde con `Msg::Opened`.
     fn load(&mut self, source: Source, retries: u32, refresh: bool) {
-        self.gen += 1;
+        self.seq += 1;
+        self.gen = self.seq;
         let gen = self.gen;
         self.status.state = PlayerState::Loading;
         self.current = Some(Current {
@@ -485,7 +556,13 @@ impl Engine {
             .as_ref()
             .map(|o| o.player.empty())
             .unwrap_or(true);
-        if shared.drained() && empty {
+        if shared.drained() && self.next.as_ref().is_some_and(|n| n.appended) {
+            self.promote_next(true);
+            return;
+        }
+        let drained = shared.drained();
+        self.maybe_append_next();
+        if drained && empty {
             tracing::info!("fin de la canción");
             self.unload();
             self.status.state = PlayerState::Idle;
@@ -510,9 +587,152 @@ impl Engine {
         if let Ok(out) = &self.output {
             out.player.clear();
         }
+        // La pre-carga salió de la salida junto con todo lo demás.
+        if let Some(n) = &mut self.next {
+            n.appended = false;
+        }
         // `clear()` deja la salida en pausa: la reactivamos para la próxima.
         if let Ok(out) = &self.output {
             out.player.play();
+        }
+    }
+
+    fn next_gen(&self) -> Option<u64> {
+        self.next.as_ref().map(|n| n.gen)
+    }
+
+    fn preload(&mut self, source: Option<Source>) {
+        if self.next.as_ref().map(|n| &n.source) == source.as_ref() {
+            return;
+        }
+        self.drop_next();
+        let Some(source) = source else { return };
+        self.seq += 1;
+        let gen = self.seq;
+        tracing::debug!(?source, "pre-cargando");
+        self.next = Some(Next {
+            gen,
+            source: source.clone(),
+            shared: None,
+            spec: None,
+            title: None,
+            duration: None,
+            appended: false,
+        });
+        let tx = self.tx.clone();
+        let provider = self.provider.clone();
+        let client = self.client.clone();
+        self.rt.spawn(async move {
+            let msg = match open_source(source, provider, client, false).await {
+                Ok(opened) => Msg::Opened {
+                    gen,
+                    source: opened.source,
+                    ext: opened.ext,
+                    title: opened.title,
+                    duration: opened.duration,
+                },
+                Err(error) => Msg::LoadFailed { gen, error },
+            };
+            let _ = tx.send(msg);
+        });
+    }
+
+    fn next_opened(&mut self, gen: u64, source: Box<dyn MediaSource>, ext: Option<String>) {
+        let tx = self.tx.clone();
+        let on_event = move |event| {
+            let _ = tx.send(Msg::Decode { gen, event });
+        };
+        match decode::spawn(source, ext, None, on_event) {
+            Ok(shared) => {
+                if let Some(n) = &mut self.next {
+                    n.shared = Some(shared);
+                }
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "no se pudo pre-cargar");
+                self.drop_next();
+            }
+        }
+    }
+
+    /// Encola la pre-carga detrás de la actual cuando a esta solo le queda
+    /// lo que ya está en el buffer (el decodificador llegó al final).
+    fn maybe_append_next(&mut self) {
+        let current_finishing = self
+            .current
+            .as_ref()
+            .and_then(|c| c.shared.as_ref())
+            .is_some_and(|s| s.finished());
+        let active = matches!(
+            self.status.state,
+            PlayerState::Playing | PlayerState::Paused
+        );
+        let Some(n) = &mut self.next else { return };
+        if n.appended || !current_finishing || !active {
+            return;
+        }
+        let (Some(shared), Some(spec), Ok(out)) = (&n.shared, n.spec, &self.output) else {
+            return;
+        };
+        if let Some(ring) = RingSource::new(Arc::clone(shared), spec) {
+            out.player.append(ring);
+            n.appended = true;
+            tracing::debug!("pre-carga encolada");
+        }
+    }
+
+    fn drop_next(&mut self) {
+        if let Some(n) = self.next.take() {
+            // Si estaba encolada, su fuente termina sola al ver `stop`.
+            if let Some(s) = n.shared {
+                s.stop();
+            }
+        }
+    }
+
+    /// Pasa a la canción pre-cargada: sola (`auto`, sin corte) o porque se
+    /// pidió cargar justo esa.
+    fn promote_next(&mut self, auto: bool) {
+        let Some(n) = self.next.take() else { return };
+        // Sin `clear()`: la fuente vieja termina sola al ver `stop` y la salida
+        // sigue con lo que venga detrás. (`clear()` de rodio se aplica de forma
+        // diferida y se saltearía la fuente que encolemos enseguida.)
+        if let Some(old) = self.current.as_mut().and_then(|c| c.shared.take()) {
+            old.stop();
+        }
+        if auto {
+            self.status.auto_advances += 1;
+            tracing::info!("siguiente canción sin corte");
+        } else {
+            self.paused = false;
+        }
+        self.gen = n.gen;
+        self.status.title = n.title;
+        self.status.duration = n.duration;
+        self.status.position = Duration::ZERO;
+        self.status.source = Some(n.source.clone());
+        self.current = Some(Current {
+            source: n.source,
+            shared: n.shared,
+            spec: if n.appended { n.spec } else { None },
+            retries: 0,
+        });
+        if n.appended {
+            // Ya estaba encolada detrás de la vieja: suena enseguida.
+            if let Ok(out) = &self.output {
+                out.player.play();
+            }
+            self.status.state = PlayerState::Playing;
+            return;
+        }
+        // Carga pedida a mano: arrancar con lo que ya hay.
+        match (
+            n.spec,
+            self.current.as_ref().is_some_and(|c| c.shared.is_some()),
+        ) {
+            (Some(spec), true) => self.start(spec, self.status.duration),
+            // Abierta pero todavía sin buffer suficiente, o sin abrir: llega el evento.
+            _ => self.status.state = PlayerState::Loading,
         }
     }
 

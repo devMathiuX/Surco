@@ -61,6 +61,11 @@ impl Shared {
         self.played.load(Ordering::Relaxed)
     }
 
+    /// El decodificador llegó al final (puede quedar audio en el buffer).
+    pub(crate) fn finished(&self) -> bool {
+        self.finished.load(Ordering::SeqCst)
+    }
+
     /// `true` cuando ya se decodificó y se reprodujo todo.
     pub(crate) fn drained(&self) -> bool {
         self.finished.load(Ordering::SeqCst) && self.buf().is_empty()
