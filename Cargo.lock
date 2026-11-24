@@ -730,6 +730,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "eval_resolver"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "surco-provider",
+ "surco-resolver",
+ "surco-spotify",
+ "tokio",
+]
+
+[[package]]
 name = "fastrand"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3210,6 +3221,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6637bab7722d379c8b41ba849228d680cc12d0a45ba1fa2b48f2a30577a06731"
 
 [[package]]
+name = "strsim"
+version = "0.11.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
+
+[[package]]
 name = "subtle"
 version = "2.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3262,6 +3279,7 @@ name = "surco-provider"
 version = "0.1.0"
 dependencies = [
  "reqwest",
+ "serde_json",
  "surco-core",
  "thiserror 2.0.21",
  "tokio",
@@ -3272,8 +3290,12 @@ dependencies = [
 name = "surco-resolver"
 version = "0.1.0"
 dependencies = [
+ "strsim",
  "surco-core",
+ "surco-provider",
  "thiserror 2.0.21",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

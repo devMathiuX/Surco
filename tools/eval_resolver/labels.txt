@@ -1,0 +1,63 @@
+# Videos correctos para cada canción de songs.csv, etiquetados a mano el 2026-11-24
+# a partir de los candidatos que devolvió `ytsearch` ese día.
+#
+# Criterio: la grabación de estudio de esa canción (canal Topic, audio oficial,
+# video con letra, o video oficial con el audio de estudio), con una duración a
+# menos de ~15 s de la de Spotify. NO cuentan: en vivo, covers, remixes, otra
+# versión (single edit mucho más corto, acústica…), afinación alterada (432 Hz),
+# sped up / slowed, loops de 1 hora.
+#
+# Los resultados de YouTube cambian con el tiempo: si un ✗ resulta ser un video
+# correcto que no estaba en la lista, agregalo acá.
+#
+# <spotify_id> <video_id>[,<video_id>…]  # canción
+2LlQb7Uoj1kKyGhlkBf9aC BIBpeA1szPM,xgMb_WDypEg  # Michael Jackson - Thriller
+0dOg1ySSI7NkpAe89Zo0b9 EPhWR4d3FJQ,MUx5Vu2XRqA,x6-kF2yWuMI,I2Hpo39FivM  # Bruce Springsteen - Born in the U.S.A.
+5Hyr47BBGpvOfcykSCcaw9 CPK2HwYzjkA,Hq5mVt-iozQ  # Bonnie Tyler - Holding Out for a Hero
+1TfqLAPs4K3s2rJMoCokcS qeMFqkcPYcg,bG9z-atG7gc  # Eurythmics - Sweet Dreams
+4ByEFOBuLXpCqvO1kw8Wdm 6dOwHzCHfgA,8ZIOkbrX_uU  # Cutting Crew - (I Just) Died In Your Arms
+18AXbzPzBS8Y3AkgSxzJPb MN3x-kAbgFU  # Phil Collins - In the Air Tonight
+3PzsbWSQdLCKDLxn7YZfkM ftYG-SyEn4k,X2NfCSc1yOg  # Bruce Springsteen - I'm On Fire
+2MuWTIM3b0YEAskbeeFE1i 6xjJ2XIbGRk,xnKhsTXoKCI  # Metallica - Master Of Puppets
+4CoSCPlKNrWli7E5kFtbcl uCGD9dT12C0,QjGhne10f1o,B0Uy8s0ccfc,g52X_8iwQjU  # Fleetwood Mac - Little Lies
+6pPWRBubXOBAHnjl5ZIujB QQTYqoKQKrM,q-MdrWk-N0M  # Tina Turner - The Best (versión de álbum, no el single edit de 4:10)
+6WK9dVrRABMkUXFLNlgWFh p-JCOpNuoIw  # Depeche Mode - Enjoy the Silence
+77NNZQSqzLNqh2A9JhLRkg 1k8craCGpgs,Pze8Dyqiky8,Dtx2JfFbUSc,x3idGV-7kSQ  # Journey - Don't Stop Believin'
+2PFIZFcGry0po3ZfRZkzKc yMzyleT2FqY,j2hRi-xEwIY,DRjWU5BdO-g  # Def Leppard - Hysteria
+0qxYx4F3vm1AOnfux6dDxP uq-gYOrU8bA,b9UcXl6lQgE,vjzG9OoleMg,p-YhToLO-mc  # Paul Simon - You Can Call Me Al
+39lSeqnyjZJejRuaREfyLL oJL-lCzEXgI,SSPexYpGF3U,s7pP5Z3uc-U  # Duran Duran - Hungry Like the Wolf
+0RO9W1xJoUEpq5MEelddFb QkF3oxziUI4,x8z6iqeiOIU  # Led Zeppelin - Stairway to Heaven
+54X78diSLoUDI3joC2bjMz uW1UIDYmYyI,MugcKV4a-Z8,p_b_exqZnL4,_URwHlxd4Yg  # Prince - Purple Rain
+6Qg7cgN1oZ5mG5nZe9UG0X E1S-6LCCfxo,KmbCOMM8peo,dMrImMedYRo,P7oCqonsaKg  # The Who - Behind Blue Eyes
+3dPQuX8Gs42Y7b454ybpMR 0J2QdDbelmY,KcZ73FRFLzY,-j3dvU70Bww  # The White Stripes - Seven Nation Army
+5SAUIWdZ04OxYfJFDchC7S 7MibW8t5DbI,pIkX3UqGfIc,_0kJLS4gzco  # Deep Purple - Smoke on the Water
+4d9RTWdrFLVAGhdzvqxkwn OKvCV8MFIaw,5IqkhhSycc4  # R.E.M. - Losing My Religion (yZp8k4kxfHo es en vivo)
+5UwbnHhjnbinJH8TefuQfN g8XiNKsKyVk,YbJ6vY1v084,DH11CPDXzr4,I0fcb5T1pcM  # The Hollies - Long Cool Woman
+1lqMLr9Wj7SM2F9AikGcxN bpZvg_FjL3Q,FvI6ZX0yNjM,4f19nowDsSE  # Bob Dylan - Hurricane
+5O4Gs450ApGmBTGypjWDeQ 8x23ajWSHyo,Gd6CtzYpDBs,41d8tVMCKgI  # Guns N' Roses - November Rain
+3gdewACMIVMEWVbyb8O9sY 1GAKOLOnfV4,DtVBCG6ThDk,fOWCoRr-wqc,obC-m0N7E3I  # Elton John - Rocket Man (GXXgxxvYhZs es 432 Hz)
+0S3gpZzlT9Hb7CCSV2owX7 oqpBP3Tjwi4,9wQTNlyzJcM  # Ozzy Osbourne - Mama, I'm Coming Home
+1UBQ5GK8JaQjm5VbkBZY66 7wRHBLwpASw,A3DERwjSJFA,LwH9v0rS7Zg,Pn2-b_opVTo,X_5YJoMNmXc  # ZZ Top - Sharp Dressed Man
+3d9DChrdc6BOeFsbrZ3Is0 GLvohMXgcBo,N7ZyzCNeFKY,8-tcdMwKnpQ  # Red Hot Chili Peppers - Under the Bridge
+78lgmZwycJ3nzsdgmPPGNx P3Y8OWkiUts,17CsLvJS4cc,J2_G3MnsThE  # Led Zeppelin - Immigrant Song
+1qOU8KzFifXE9YrgjVwYvc oohFGOmcxuo,kXC_hoD1wxc,WyF8RHM1OCg  # Whitesnake - Here I Go Again ('87)
+6Pur3hWy6Nzc27ilmsp5HA hReAuaAuJOE,lYC5wlY8d6A,zIW8uHgaghQ  # Los Enanitos Verdes - Lamento Boliviano
+3pJfnBjO3kjudEchcPEDxS K9NO5UY76jc,YEPz0maWiB0,DNbG5IIA71w,95QZvA7swMU  # Caifanes - Afuera
+78dbqYDvx6FOefROApu9w0 fgvD663h9Os,ilwnUEGda-c,nYbcVK2jjXc  # Shakira - Inevitable
+4Ofg5uuH7qqDIXpAJMpXZV 8lbsQyMhMT8,g6jTHRSaPPQ,FnxWAhvhSEw  # Maná - Rayando el Sol
+3oqWr0jDWNXxWufNogGREp PAmWdwJVQQY,Is1e50aVs1k  # Gustavo Cerati - Crimen
+6iRkrVOhCjgKFB2cBWnx4M OvtoekZmx30,36J9jVULlBE,pEDT_qv08nM,yld2JP8FbAs  # Jaguares - Te Lo Pido por Favor
+7qIw4D1PcDHigDohKkLB0W kQ1z3x-HxTA,XvX_TUvlsc8,lBPr7Uio1Tc  # Andrés Calamaro - Te quiero igual (Gjngs52lK-c es en directo)
+1ZGs4W7LBJy68hRPTsvMFc JUwTh6fZugQ,-vQ1uHa8ras  # Los Rodriguez - Para no olvidar
+2WoqgtWEBbbBKMDN6Becs7 t6omUxqhG78,Smv6aTMFIMo,8SmNR53q0Ew,cLqhKOrwgjA  # Santana - Corazón Espinado
+41MfyUSxQoo1BgIsNj8eDS yoYarhesIrc,NhsUcmV32HY,kMca9Q-Q3C0  # Los Fabulosos Cadillacs - Manuel Santillán (Versión Reggae)
+1l0mEM93oZMERzBmOCuiHe Ch-tXdcjR2w,JQfPj-VWgm8,AOX5N6vIU6g,BMlbG4yjIPQ  # Miguel Mateos - Obsesión
+0bIye27QbOvSrTAmCViX5O eQF2-qrPfwc,ebiS5R2ceDg,6u3kZguu4-Q  # Vilma Palma e Vampiros - La pachanga
+4HCOHRCSQelz2GPX8iTamO 5dPwBWvmcbQ,tSg_rARSw9w,UQsFdPzhQjA  # Justice - Flower In A Hurricane
+1o9mAOmNm3wT2NdyGV1Ard 8g25GeJgxgs,akiAh12Vt-U,XdrBvXrDOrg,1N8EFtKLZ0w  # Jamie Miller - Babydoll
+0QPdjsMOUhwouq1NS3HwfQ _3GKsIFtEoE,W1a3vVWpVpE,M4qX5wzx-wY  # Harry Styles - Coming Up Roses
+7yNf9YjeO5JXUE3JEBgnYc nb8CnIo_-_A,-J2rSm8K9_Y,pTmwTQrY3Ts  # Dominic Fike - Babydoll
+55lijDD6OAjLFFUHU9tcDm rK5TyISxZ_M,Dml0JEgRpc0,gzjVn9UhaRE  # RAYE - WHERE IS MY HUSBAND!
+3oTuTpF1F3A7rEC6RKsMRz SOJpE1KMUbo,bhoybya39QU,t4yafKiE-5U  # Dave - Raindance (feat. Tems)
+7e4zDInS6tA2jwzphvs2Ay hghqd1eBTYQ,QB3135rfnOs  # HUGEL, SOLTO - Jamaican (Bam Bam)
+6VDw2mGBIa4csypjOhS6JT wROPn_SFE5s,mjC1QrkBlbY,V_g-b4i2tlg  # Fuerza Regida - Suzuki

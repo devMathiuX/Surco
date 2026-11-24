@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 
 pub use http_stream::{HttpStream, StreamProgress};
 pub use reqwest::Client as HttpClient;
-pub use ytdlp::{StreamInfo, YtDlp, AUDIO_FORMAT, BINARY_NAME};
+pub use ytdlp::{SearchResult, StreamInfo, YtDlp, AUDIO_FORMAT, BINARY_NAME};
 
 /// Errores de este crate.
 #[derive(Debug, thiserror::Error)]
