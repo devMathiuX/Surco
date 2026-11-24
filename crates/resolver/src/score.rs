@@ -7,7 +7,7 @@ use crate::clean::{allowed_by, contains_word, normalize, CleanTitle, VERSION_WOR
 use crate::Candidate;
 
 /// Desglose del puntaje, útil para depurar y para `tools/eval_resolver`.
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Default, serde::Serialize, serde::Deserialize)]
 pub struct Breakdown {
     pub duration: f32,
     pub title: f32,

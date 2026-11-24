@@ -43,7 +43,7 @@ pub const SEARCH_RESULTS: usize = 5;
 pub const MAX_CONCURRENT: usize = 3;
 
 /// Un video candidato.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Candidate {
     pub id: String,
     pub title: String,
@@ -53,7 +53,7 @@ pub struct Candidate {
 }
 
 /// Candidato con su puntaje.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Scored {
     pub candidate: Candidate,
     pub score: u8,
@@ -61,7 +61,7 @@ pub struct Scored {
 }
 
 /// Resultado de resolver una canción.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Match {
     /// Video elegido (el mejor, o el que eligió el usuario).
     pub youtube_id: String,
@@ -178,6 +178,13 @@ impl Resolver {
             searcher,
             cache: Mutex::new(HashMap::new()),
             limit: Semaphore::new(MAX_CONCURRENT),
+        }
+    }
+
+    /// Carga matches guardados (de la base de datos) en la caché en memoria.
+    pub fn seed(&self, matches: impl IntoIterator<Item = (String, Match)>) {
+        if let Ok(mut cache) = self.cache.lock() {
+            cache.extend(matches);
         }
     }
 
