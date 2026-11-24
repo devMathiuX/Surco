@@ -179,7 +179,7 @@ Medido en la Fase 7 (Linux, Xvfb, binario release con la biblioteca de 100 canci
 | Arranque hasta la ventana visible | **35-55 ms** (6 corridas) | < 1 s |
 | CPU reproduciendo | ~2,8 % | |
 
-Los tamaños de Windows y macOS salen en el paso "Tamaños" de cada job del workflow Release.
+Tamaños en los otros sistemas (workflow Release, paso "Tamaños"): `surco.exe` **8,6 MB** (`.zip` portable 4,2 MB); macOS **7,9 MB** en Apple Silicon y 8,7 MB en Intel (`.dmg` universal de 9,0 MB). En Linux pesa más por `zbus` (MPRIS) y el portal de archivos de XDG.
 
 ## Estructura
 
