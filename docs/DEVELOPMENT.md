@@ -5,7 +5,7 @@ Detalles técnicos de Surco: cómo compilarlo, cómo está armado y qué se midi
 ## Releases y CI
 
 - **CI** (`.github/workflows/ci.yml`): en cada PR y push a `main` corre en Linux `cargo fmt`, `clippy`, los tests y el build release.
-- **Release** (`.github/workflows/release.yml`): compila y empaqueta en Linux, Windows y macOS. Corre solo con un tag `v*` (y entonces publica un Release de GitHub con todos los archivos) o a mano desde la pestaña Actions ("Run workflow"), que deja los paquetes como artefactos del run.
+- **Release** (`.github/workflows/release.yml`): compila y empaqueta en Linux, Windows y macOS. Corre solo con un tag `v*` (y entonces publica un Release de GitHub con todos los archivos y sube el `.deb` al repositorio APT) o a mano desde la pestaña Actions ("Run workflow"), que deja los paquetes como artefactos del run.
 - Para publicar una versión: subir `version` en `[workspace.package]` de `Cargo.toml`, y después `git tag v0.3.0 && git push origin v0.3.0`.
 
 | Archivo | Sale de |
@@ -18,6 +18,39 @@ Detalles técnicos de Surco: cómo compilarlo, cómo está armado y qué se midi
 | `Surco-<v>-macos-universal.dmg` | `packaging/macos/build-app.sh` (lipo + codesign ad hoc) |
 
 Los binarios de Linux se compilan en Ubuntu 22.04 (glibc 2.35) para que corran en distros no tan nuevas.
+
+### Repositorio APT (`sudo apt install surco`)
+
+Después de crear el Release, `release.yml` llama a **`apt.yml`**, que baja el `.deb` del Release y lo publica en un repositorio APT firmado, servido por GitHub Pages desde la rama `gh-pages`:
+
+- URL: `https://devmathiux.github.io/Surco` (suite `stable`, componente `main`, solo `amd64`).
+- Lo arma `packaging/linux/build-apt-repo.sh` con `apt-ftparchive`: parte de lo publicado en `gh-pages`, agrega el `.deb` nuevo y deja las últimas 3 versiones (`SURCO_APT_KEEP`). Firma `InRelease` y `Release.gpg`, y exporta la clave pública como `surco.gpg` y `surco.asc`.
+- También deja `install.sh` (instalador de una línea, `packaging/linux/apt/install.sh`) e `index.html` con las instrucciones.
+- `gh-pages` se reescribe con un solo commit en cada publicación, así los `.deb` viejos no quedan en la historia. Las versiones viejas siguen en Releases.
+- Se puede publicar un Release existente a mano: Actions > **Repo APT** > Run workflow, con el tag (por ejemplo `v0.3.0`).
+- Si falta el secreto `APT_GPG_PRIVATE_KEY`, el job avisa y no publica (el Release sale igual).
+
+**Configuración, una sola vez:**
+
+1. Crear la clave de firma, sin contraseña (en Linux; en Windows sirve Git Bash, que trae `gpg`):
+
+   ```sh
+   gpg --batch --passphrase '' --quick-gen-key "Surco APT <163420138+devMathiuX@users.noreply.github.com>" rsa4096 sign never
+   gpg --armor --export-secret-keys "Surco APT" > surco-apt-privada.asc
+   ```
+
+2. En GitHub: Settings > Secrets and variables > Actions > **New repository secret**, nombre `APT_GPG_PRIVATE_KEY`, y pegar todo el contenido de `surco-apt-privada.asc`. Si la clave tiene contraseña, agregarla en `APT_GPG_PASSPHRASE`.
+3. Guardar `surco-apt-privada.asc` en un lugar seguro, fuera del repo. Si se pierde, hay que crear otra y cada usuario tiene que volver a correr `install.sh` para tomar la clave nueva.
+4. Correr Actions > **Repo APT** > Run workflow con `v0.3.0`. Crea la rama `gh-pages` e intenta activar Pages solo.
+5. Si Pages no quedó activo: Settings > Pages > Source **Deploy from a branch**, rama `gh-pages`, carpeta `/ (root)`.
+
+**Probarlo localmente** (con una clave de prueba en un `GNUPGHOME` aparte):
+
+```sh
+packaging/linux/build-apt-repo.sh <carpeta-con-.deb> site http://127.0.0.1:8765
+(cd site && python3 -m http.server 8765) &
+curl -fsSL http://127.0.0.1:8765/install.sh | sudo sh
+```
 
 ## Requisitos para compilar
 
@@ -155,7 +188,7 @@ Medido en la Fase 6 (Linux, Xvfb, playlist de 100 canciones restaurada desde la 
 ```
 packaging/
 ├─ icons/     surco.ico, surco.icns, PNG de 16 a 1024 px (make_icons.py los genera)
-├─ linux/     surco.desktop, build-appimage.sh (el .deb lo arma cargo-deb, ver crates/app/Cargo.toml)
+├─ linux/     surco.desktop, build-appimage.sh, build-apt-repo.sh y apt/ (el .deb lo arma cargo-deb, ver crates/app/Cargo.toml)
 ├─ windows/   surco.iss (Inno Setup)
 └─ macos/     Info.plist, build-app.sh (lipo + codesign ad hoc + .dmg)
 ```
