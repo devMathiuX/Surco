@@ -238,6 +238,22 @@ fn bad_credentials_and_not_found() {
         Err(Error::BadCredentials)
     ));
 
+    // La API da 404 (playlist editorial para una app nueva, o inexistente):
+    // la cascada sigue con la embed, que decide.
+    let importer = Importer::new(vec![
+        Box::new(WebApi::with_endpoints(
+            client.clone(),
+            creds(),
+            format!("{base}/v1"),
+            format!("{base}/token"),
+        )),
+        Box::new(Embed::with_base(client.clone(), base.clone())),
+    ]);
+    assert!(matches!(
+        rt.block_on(importer.import_id(ID)),
+        Err(Error::AllFailed(_)) | Err(Error::NotFound)
+    ));
+
     // La embed da 404: la playlist no existe, la cascada corta ahí.
     let importer = Importer::new(vec![Box::new(Embed::with_base(client, base))]);
     assert!(matches!(

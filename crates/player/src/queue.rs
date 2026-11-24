@@ -124,8 +124,68 @@ impl Queue {
             self.shuffle_range(1, len);
         } else {
             self.order.sort_unstable();
-            self.pos = cur.unwrap_or(0);
+            // Puede faltar alguna (quitada de la cola): buscar la actual.
+            self.pos = cur
+                .and_then(|c| self.order.iter().position(|&i| i == c))
+                .unwrap_or(0);
         }
+    }
+
+    /// Orden completo (índices de canciones) y posición de la actual en él.
+    pub fn order(&self) -> &[usize] {
+        &self.order
+    }
+
+    pub fn pos(&self) -> usize {
+        self.pos
+    }
+
+    /// Agrega la canción `index` al final de la cola.
+    pub fn push(&mut self, index: usize) {
+        self.order.push(index);
+    }
+
+    /// Agrega la canción `index` para que suene después de la actual.
+    pub fn insert_next(&mut self, index: usize) {
+        let at = (self.pos + 1).min(self.order.len());
+        self.order.insert(at, index);
+    }
+
+    /// Saca de la cola lo que está en la posición `p` (no la actual).
+    pub fn remove_at(&mut self, p: usize) -> Option<usize> {
+        if p == self.pos || p >= self.order.len() {
+            return None;
+        }
+        let removed = self.order.remove(p);
+        if p < self.pos {
+            self.pos -= 1;
+        }
+        Some(removed)
+    }
+
+    /// Mueve lo que está en `from` a la posición `to` (arrastrar en la cola).
+    pub fn move_item(&mut self, from: usize, to: usize) {
+        let len = self.order.len();
+        if from >= len || to >= len || from == to {
+            return;
+        }
+        let cur = self.current();
+        let item = self.order.remove(from);
+        self.order.insert(to, item);
+        if let Some(c) = cur {
+            if let Some(p) = self.order.iter().position(|&i| i == c) {
+                self.pos = p;
+            }
+        }
+    }
+
+    /// Salta a la posición `p` de la cola (clic en la cola).
+    pub fn jump_to_pos(&mut self, p: usize) -> Option<usize> {
+        if p >= self.order.len() {
+            return None;
+        }
+        self.pos = p;
+        self.current()
     }
 
     fn next_pos(&self, forward: bool) -> Option<usize> {
@@ -186,6 +246,41 @@ impl Queue {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn edits_keep_the_current_song() {
+        let mut q = Queue::new(5, 2, false, RepeatMode::Off, 1);
+        q.insert_next(9);
+        assert_eq!(q.order(), &[0, 1, 2, 9, 3, 4]);
+        q.push(7);
+        assert_eq!(q.peek_next(), Some(9));
+        // No se puede quitar la que suena.
+        assert_eq!(q.remove_at(2), None);
+        assert_eq!(q.remove_at(0), Some(0));
+        assert_eq!(q.current(), Some(2));
+        assert_eq!(q.pos(), 1);
+        // Mover la actual al final.
+        q.move_item(1, 5);
+        assert_eq!(q.order(), &[1, 9, 3, 4, 7, 2]);
+        assert_eq!(q.current(), Some(2));
+        // Mover otra delante de la actual.
+        q.move_item(0, 4);
+        assert_eq!(q.order(), &[9, 3, 4, 7, 1, 2]);
+        assert_eq!(q.current(), Some(2));
+        assert_eq!(q.jump_to_pos(0), Some(9));
+        assert_eq!(q.upcoming(2), vec![3, 4]);
+    }
+
+    #[test]
+    fn shuffle_off_after_removing_finds_current() {
+        let mut q = Queue::new(6, 4, true, RepeatMode::Off, 3);
+        let cur = q.current();
+        let other = q.order().iter().position(|&i| Some(i) != cur).unwrap_or(0);
+        q.remove_at(other);
+        q.set_shuffle(false);
+        assert_eq!(q.current(), cur);
+        assert_eq!(q.len(), 5);
+    }
 
     fn collect(q: &mut Queue, n: usize) -> Vec<usize> {
         let mut v = vec![q.current().unwrap()];

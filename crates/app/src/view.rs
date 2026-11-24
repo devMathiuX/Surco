@@ -11,12 +11,14 @@ use surco_core::{format_duration, PlayerState, Playlist, Track};
 use crate::icons::{self, Kind};
 use crate::playback::TrackRes;
 use crate::settings::{Change, Precache};
-use crate::{theme, Message, Surco, YtDlpState, FILTER_INPUT, IMPORT_INPUT};
+use crate::{theme, Message, Screen, Surco, YtDlpState, FILTER_INPUT, IMPORT_INPUT};
 
 impl Surco {
     pub(crate) fn view(&self) -> Element<'_, Message> {
         let main: Element<'_, Message> = match self.selected.and_then(|i| self.playlists.get(i)) {
-            _ if self.show_settings => self.view_settings(),
+            _ if self.screen == Screen::Settings => self.view_settings(),
+            _ if self.screen == Screen::Queue => self.view_queue(),
+            _ if self.screen == Screen::Search => self.view_search(),
             Some((playlist, source)) => {
                 self.view_playlist(self.selected.unwrap_or(0), playlist, source)
             }
@@ -46,11 +48,60 @@ impl Surco {
                 .on_press(Message::SelectPlaylist(Some(i)))
                 .width(Length::Fill)
                 .padding([6, 8])
-                .style(theme::list_button(self.selected == Some(i))),
+                .style(theme::list_button(
+                    self.screen == Screen::Library && self.selected == Some(i),
+                )),
             );
         }
+        let nav = |kind: Kind, label: &'static str, screen: Screen, msg: Message| {
+            let on = self.screen == screen;
+            button(
+                row![
+                    icons::icon(
+                        kind,
+                        if on {
+                            theme::colors().accent
+                        } else {
+                            theme::colors().text_secondary
+                        },
+                        16.0
+                    ),
+                    text(label).size(theme::SIZE_S),
+                ]
+                .spacing(8)
+                .align_y(Alignment::Center),
+            )
+            .on_press(msg)
+            .width(Length::Fill)
+            .padding([6, 8])
+            .style(theme::list_button(on))
+        };
+        let queue_len = self
+            .active
+            .as_ref()
+            .map(|a| a.queue.len().saturating_sub(a.queue.pos() + 1))
+            .unwrap_or(0);
+        let nav = column![
+            nav(
+                Kind::Search,
+                "Buscar",
+                Screen::Search,
+                Message::Search(crate::search::SearchMsg::Open)
+            ),
+            nav(
+                Kind::Queue,
+                if queue_len > 0 {
+                    "Cola"
+                } else {
+                    "Cola (vacía)"
+                },
+                Screen::Queue,
+                Message::ToggleQueue
+            ),
+        ]
+        .spacing(2);
 
-        let input = text_input("Link de Spotify o archivo .csv", &self.import_input)
+        let input = text_input("Link de Spotify, YouTube o .csv", &self.import_input)
             .id(Id::new(IMPORT_INPUT))
             .on_input(Message::ImportInputChanged)
             .on_submit(Message::Import)
@@ -78,7 +129,7 @@ impl Surco {
         let gear = tooltip(
             button(icons::icon(
                 Kind::Settings,
-                if self.show_settings {
+                if self.screen == Screen::Settings {
                     theme::colors().accent
                 } else {
                     theme::colors().text_secondary
@@ -103,6 +154,7 @@ impl Surco {
                 gear,
             ]
             .align_y(Alignment::Center),
+            nav,
             scrollable(list).height(Length::Fill),
             input,
             column![import, pick_csv].spacing(4),
@@ -156,7 +208,12 @@ impl Surco {
             p.tracks.len(),
             format_duration(total_ms)
         );
-        if self.active.as_ref().is_some_and(|a| a.playlist == index) && self.precache.target > 0 {
+        if self
+            .active
+            .as_ref()
+            .is_some_and(|a| a.origin == Some(index))
+            && self.precache.target > 0
+        {
             info.push_str(&format!(
                 " · precargadas {} de {}{}",
                 self.precache.ready,
@@ -189,7 +246,7 @@ impl Surco {
             .enumerate()
             .filter(|(_, t)| matches_filter(t, query));
         let rows = Column::with_children(shown.map(|(i, t)| {
-            let playing = self.now() == Some((index, i));
+            let playing = self.now_in_playlist() == Some((index, i));
             let badge: Element<'_, Message> = match self.resolution(t) {
                 Some(TrackRes::Resolving) => text("buscando…")
                     .size(theme::SIZE_S)
@@ -216,7 +273,7 @@ impl Surco {
                 _ => Space::new().into(),
             };
             let number = container(if playing {
-                icons::icon(Kind::Volume, theme::colors().accent, 16.0)
+                icons::glyph(Kind::Volume, theme::colors().accent, 16.0)
             } else {
                 text(i + 1)
                     .size(theme::SIZE_S)
@@ -256,6 +313,7 @@ impl Surco {
                     .spacing(2)
                     .width(Length::Fill),
                     badge,
+                    crate::search::add_button(t),
                     text(format_duration(t.duration_ms))
                         .size(theme::SIZE_S)
                         .style(theme::secondary_text),
@@ -419,10 +477,68 @@ impl Surco {
                 ),
             ]
             .spacing(10),
+            self.view_spotify_keys(),
         ]
         .spacing(28)
-        .max_width(760);
+        .max_width(760)
+        .padding(iced::Padding::ZERO.right(16));
         scrollable(body).height(Length::Fill).into()
+    }
+
+    /// Claves de Spotify: cuáles se usan y cargar las propias.
+    fn view_spotify_keys(&self) -> Element<'_, Message> {
+        use crate::spotify_keys::{msg, KeySource, KeysMsg};
+        let status = match self.spotify_source {
+            KeySource::Own => "Usando tus claves.",
+            KeySource::Config => "Usando las claves de config.toml.",
+            KeySource::Builtin => "Usando las claves incluidas en Surco.",
+            KeySource::None => "Sin claves: de cada playlist se importan hasta 100 canciones (o usá un CSV de Exportify).",
+        };
+        let form = row![
+            text_input("Client ID", &self.keys_form.id)
+                .on_input(|s| msg(KeysMsg::Id(s)))
+                .padding(8)
+                .size(theme::SIZE_S)
+                .style(theme::input),
+            text_input("Client Secret", &self.keys_form.secret)
+                .on_input(|s| msg(KeysMsg::Secret(s)))
+                .on_submit(msg(KeysMsg::Save))
+                .secure(true)
+                .padding(8)
+                .size(theme::SIZE_S)
+                .style(theme::input),
+            button(text("Guardar").size(theme::SIZE_S))
+                .on_press_maybe(
+                    (!self.keys_form.id.trim().is_empty()
+                        && !self.keys_form.secret.trim().is_empty())
+                    .then(|| msg(KeysMsg::Save)),
+                )
+                .padding([6, 12])
+                .style(theme::primary_button),
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center);
+        let mut col = column![
+            column![
+                text("Spotify").size(theme::SIZE_M),
+                text("Con claves de la Web API las playlists se importan enteras. Si Spotify no deja (por ejemplo, con sus playlists editoriales), se usa la página pública. Para usar tus propias claves, creá una app en developer.spotify.com.")
+                    .size(theme::SIZE_S)
+                    .style(theme::secondary_text),
+            ]
+            .spacing(2),
+            text(status).size(theme::SIZE_S),
+            form,
+        ]
+        .spacing(10);
+        if self.spotify_source == KeySource::Own {
+            col = col.push(
+                button(text("Borrar mis claves").size(theme::SIZE_S))
+                    .on_press(msg(KeysMsg::Clear))
+                    .padding([4, 10])
+                    .style(theme::ghost_button),
+            );
+        }
+        col.into()
     }
 
     /// Selector de video para una canción (los candidatos con su puntaje).

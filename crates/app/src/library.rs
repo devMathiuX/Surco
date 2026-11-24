@@ -159,10 +159,7 @@ impl Surco {
         let Some(store) = &self.store else {
             return;
         };
-        let Some(at) = self.now() else {
-            return;
-        };
-        let Some(track) = self.track(at) else {
+        let Some(track) = self.now_track() else {
             return;
         };
         // Solo si lo que suena es la canción actual de la cola.
@@ -173,7 +170,12 @@ impl Surco {
         if source != video.map(|v| Source::YouTube(v.to_owned())) {
             return;
         }
-        let playlist_id = self.playlists.get(at.0).map(|(p, _)| p.id.as_str());
+        let playlist_id = self
+            .active
+            .as_ref()
+            .and_then(|a| a.origin)
+            .and_then(|p| self.playlists.get(p))
+            .map(|(p, _)| p.id.as_str());
         log_err(
             "guardar historial",
             store.record_play(track, playlist_id, video),
@@ -190,14 +192,13 @@ impl Surco {
             log_err("borrar playlist", store.delete_playlist(&removed.id));
         }
         // Los índices de las que siguen se corren uno.
-        match &mut self.active {
-            Some(a) if a.playlist == index => {
-                self.active = None;
-                self.preloaded = None;
-                self.send(Command::Stop);
-            }
-            Some(a) if a.playlist > index => a.playlist -= 1,
-            _ => {}
+        // La cola sigue sonando; solo deja de apuntar a esa playlist.
+        if let Some(a) = &mut self.active {
+            a.origin = match a.origin {
+                Some(p) if p == index => None,
+                Some(p) if p > index => Some(p - 1),
+                other => other,
+            };
         }
         if let Some((p, i)) = self.choosing {
             self.choosing = match p.cmp(&index) {
