@@ -28,6 +28,8 @@ surco-storage = { path = "crates/storage" }
 
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+rusqlite = { version = "0.37", features = ["bundled"] }
+tracing-appender = "0.2"
 strsim = "0.11"
 toml = { version = "0.9", default-features = false, features = ["parse", "serde"] }
 thiserror = "2"
@@ -62,6 +64,33 @@ lto = "fat"
 codegen-units = 1
 panic = "abort"
 strip = true
+
+# Las dependencias se optimizan para tamaño ("s"): red, D-Bus, SQLite, layout…
+# no necesitan opt-level 3. La decodificación de audio y el dibujado sí.
+[profile.release.package."*"]
+opt-level = "s"
+
+[profile.release.package.symphonia-core]
+opt-level = 3
+
+[profile.release.package.symphonia-codec-aac]
+opt-level = 3
+
+[profile.release.package.symphonia-format-isomp4]
+opt-level = 3
+
+[profile.release.package.rodio]
+opt-level = 3
+
+# El dibujado por CPU corre en cada cuadro: también en 3.
+[profile.release.package.tiny-skia]
+opt-level = 3
+
+[profile.release.package.tiny-skia-path]
+opt-level = 3
+
+[profile.release.package.iced_tiny_skia]
+opt-level = 3
 
 # Variante optimizada para tamaño, para comparar: `cargo build --profile release-z`
 [profile.release-z]
