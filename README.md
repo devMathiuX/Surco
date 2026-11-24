@@ -6,7 +6,7 @@ Reproductor de música de escritorio, ultraliviano, escrito en Rust. Importa pla
 
 ## Instalar
 
-Los paquetes salen del workflow **Release** (`.github/workflows/release.yml`): en cada tag `v*` se publican en [Releases](https://github.com/devMathiuX/Surco/releases), y en cualquier run quedan como artefactos en la pestaña Actions.
+Los paquetes salen del workflow **Release** (`.github/workflows/release.yml`), que corre solo al publicar una versión (tag `v*`) o a mano desde la pestaña Actions. En cada tag se publican en [Releases](https://github.com/devMathiuX/Surco/releases). En PRs, la CI compila y prueba solo en Linux.
 
 | Sistema | Archivo | Cómo |
 |---|---|---|
