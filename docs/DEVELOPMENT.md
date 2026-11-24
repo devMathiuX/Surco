@@ -1,0 +1,300 @@
+# Surco: notas de desarrollo
+
+Detalles técnicos de Surco: cómo compilarlo, cómo está armado y qué se midió. La guía para usuarios está en el [README](../README.md).
+
+## Releases y CI
+
+- **CI** (`.github/workflows/ci.yml`): en cada PR y push a `main` corre en Linux `cargo fmt`, `clippy`, los tests y el build release.
+- **Release** (`.github/workflows/release.yml`): compila y empaqueta en Linux, Windows y macOS. Corre solo con un tag `v*` (y entonces publica un Release de GitHub con todos los archivos) o a mano desde la pestaña Actions ("Run workflow"), que deja los paquetes como artefactos del run.
+- Para publicar una versión: subir `version` en `[workspace.package]` de `Cargo.toml`, y después `git tag v0.2.0 && git push origin v0.2.0`.
+
+| Archivo | Sale de |
+|---|---|
+| `surco_<v>-1_amd64.deb` | `cargo deb -p surco` |
+| `Surco-<v>-x86_64.AppImage` | `packaging/linux/build-appimage.sh` |
+| `surco-<v>-linux-x86_64.tar.gz` | binario + `.desktop` + ícono |
+| `Surco-<v>-windows-x64-setup.exe` | Inno Setup (`packaging/windows/surco.iss`) |
+| `Surco-<v>-windows-x64-portable.zip` | `surco.exe` + README |
+| `Surco-<v>-macos-universal.dmg` | `packaging/macos/build-app.sh` (lipo + codesign ad hoc) |
+
+Los binarios de Linux se compilan en Ubuntu 22.04 (glibc 2.35) para que corran en distros no tan nuevas.
+
+## Requisitos para compilar
+
+- Rust estable ≥ 1.88 (`rustup`).
+- **Linux:** para compilar, `libasound2-dev` (ALSA; en Debian/Ubuntu `sudo apt install libasound2-dev`, en Fedora `alsa-lib-devel`). Para correr, X11 o Wayland con `libxkbcommon` (viene con cualquier escritorio).
+- **Windows:** toolchain MSVC. Nada más.
+- **macOS:** las Xcode Command Line Tools (`xcode-select --install`). Nada más. Los atajos con Ctrl usan Cmd.
+- [`yt-dlp`](https://github.com/yt-dlp/yt-dlp): si no está en el `PATH`, la app ofrece descargarlo de los releases oficiales a su carpeta de datos (`~/.local/share/surco/` en Linux, `%APPDATA%\Surco\data\` en Windows, `~/Library/Application Support/Surco/` en macOS). `ffmpeg` no hace falta por ahora.
+- Un runtime de JavaScript para yt-dlp: desde fines de 2025 yt-dlp lo necesita para YouTube. Recomendado [`deno`](https://deno.com); si no está, Surco usa `node`, `bun` o QuickJS si los encuentra en el `PATH`.
+
+## Cómo correrlo
+
+```sh
+cargo run                 # debug
+cargo run --release       # release (opt-level 3)
+cargo build --profile release-z   # variante optimizada para tamaño
+```
+
+## Probar el audio (Fase 2)
+
+1. `cargo run --release`
+2. El campo ya trae un link de prueba ("Big Buck Bunny", Blender Foundation, CC BY). Apretá **Reproducir** (o Enter).
+3. Espacio pausa y reanuda; ←/→ mueven 5 s; la barra de progreso también hace seek; el volumen está a la derecha.
+
+El campo acepta también un ID de video, una URL directa a un `.m4a` o una ruta local, útil para probar sin YouTube.
+
+Variables de entorno útiles:
+
+- `RUST_LOG=surco=debug` para más detalle en los logs.
+- `SURCO_NULL_AUDIO=1` para correr sin placa de sonido (descarta el audio en tiempo real; lo usan los tests).
+
+## Importar playlists (Fase 3)
+
+En la barra lateral, pegá en el campo de abajo (o apretá **Ctrl+L**) cualquiera de estos y Enter / **+ Importar**:
+
+- `https://open.spotify.com/playlist/{id}` (con o sin `?si=…`, también `/intl-es/…` y `/embed/…`)
+- `spotify:playlist:{id}`
+- la ruta a un `.csv` exportado con [Exportify](https://exportify.net)
+
+Surco prueba tres estrategias en cascada (trait `PlaylistSource` en `crates/spotify`):
+
+1. **Web API de Spotify** con Client Credentials, solo si pusiste `client_id`/`client_secret` en `config.toml` (`~/.config/surco/config.toml` en Linux, `%APPDATA%\Surco\config\config.toml` en Windows; se crea una plantilla en el primer arranque). Paginación completa y manejo de 429 con `Retry-After`. **Ojo:** desde febrero de 2026 las apps en *Development Mode* tienen restricciones: el endpoint pasó a `/playlists/{id}/items` y, para playlists ajenas, Spotify puede devolver solo los metadatos. En ese caso Surco sigue con la estrategia 2.
+2. **Página embed pública** (`open.spotify.com/embed/playlist/{id}`), sin credenciales. Lee el JSON que trae embebido (`__NEXT_DATA__`). Trae título, artistas y duración, pero **no** álbum ni ISRC, y **solo las primeras 100 canciones** (la app lo avisa). No es una API pública: puede romperse si Spotify cambia el HTML.
+3. **CSV** (Exportify, formato viejo y nuevo, o uno hecho a mano con `title,artist,album,duration`). Trae la playlist completa con álbum e ISRC. Es la vía recomendada para playlists de más de 100 canciones sin credenciales.
+
+## Resolver Spotify → YouTube (Fase 4)
+
+Clic en una canción de la playlist: Surco la busca en YouTube, la reproduce y resuelve de antemano las 3 siguientes (como mucho 3 búsquedas a la vez). Al terminar pasa sola a la siguiente; **Ctrl+←/→** va a la anterior/siguiente. Si una canción falla, la saltea con un aviso; después de 3 errores seguidos frena (típico cuando YouTube bloquea la red).
+
+Cómo elige el video (`crates/resolver`):
+
+1. **Limpia el título**: saca "- Remastered 2011", "(Remastered 2009)", "- Radio Edit", "- From \"Footloose\"", "[From …: Original Score]"; separa los "(feat. X)", "(with X)", "ft. X". Lo que marca otra versión ("- Live", "(Versión Reggae)", "- Acústico") se conserva.
+2. **Busca** `"{artista principal} - {título}"` con `yt-dlp "ytsearch5:…" --flat-playlist --dump-json` (no resuelve cada video, es rápido).
+3. **Puntúa** cada candidato de 0 a 100:
+   - Duración (35): ±3 s puntaje completo; baja hasta 15 s; más de 30 s de diferencia resta.
+   - Título (30): el título limpio aparece en el del video, o similitud Jaro-Winkler (`strsim`).
+   - Artista (20): en el título o en el canal.
+   - Canal (15): "Artista - Topic", VEVO, canal oficial, o "Official Audio" en el título.
+   - Penalización (40 por palabra, tope 60): live, cover, karaoke, 8D, slowed, sped up, reverb, nightcore, remix, instrumental, 432 Hz… **salvo** que el original también lo diga (con sinónimos: "en vivo" = "live", "acústico" = "unplugged").
+4. Si el mejor queda **por debajo de 60**, hace una segunda búsqueda (`"… audio"`) y suma esos candidatos. Si sigue abajo de 60, la canción se marca **"dudosa"** en la lista: clic en "dudosa" (o **Cambiar video** en la barra de abajo) muestra los candidatos con su puntaje para elegir otro a mano.
+
+Los matches se guardan en SQLite (ver Fase 6).
+
+### Evaluación (`tools/eval_resolver`)
+
+```sh
+cargo run -p eval_resolver --release                       # necesita yt-dlp e internet
+cargo run -p eval_resolver --release -- --report /tmp/r.tsv  # además, un TSV con todos los candidatos
+```
+
+`songs.csv` tiene 50 canciones tomadas tal cual de 4 playlists públicas de Spotify (80s, clásicos del rock con títulos "Remaster", rock en español y hits actuales con "feat." y "[From GTAVI]"). `labels.txt` tiene, para cada una, los videos que cuentan como correctos, etiquetados a mano con este criterio: la grabación de estudio correcta (Topic, audio oficial, video con letra o video oficial con el audio de estudio), a menos de ~15 s de la duración de Spotify; no cuentan en vivo, covers, remixes, otras ediciones ni afinación alterada.
+
+Resultados del 2026-11-24 (las búsquedas de YouTube cambian entre corridas):
+
+| Corrida | Correctas | Notas |
+|---|---|---|
+| 1 (sin etiquetas) | 49/50 a ojo | Rocket Man eligió una versión "432hz": se agregó a las penalizaciones. |
+| 2 | 45/50 (90 %) | Los 5 ✗ eran videos correctos nuevos que no estaban en las etiquetas; se agregaron. |
+| 3 y 4 | 50/50 (100 %) | |
+| 5 | 49/50 (98 %) | Otra vez un video correcto sin etiquetar; se agregó. |
+
+Resolver las 50 tarda ~25 s (3 búsquedas en paralelo). Si un ✗ resulta ser un video correcto que no estaba en la lista, se agrega a `labels.txt`.
+
+## Reproductor (Fase 5)
+
+![Reproductor](fase5-reproductor.png)
+
+- **Barra inferior:** portada, título y artista, shuffle, anterior, play/pausa, siguiente, repetir (apagado → toda la playlist → una canción), barra de progreso con tiempos, volumen y "Cambiar video".
+- **Cola:** clic en una canción arma la cola desde ahí. Con shuffle se mezcla todo menos la actual (Fisher-Yates); con "repetir todo" se vuelve a mezclar en cada vuelta. "Anterior" con más de 3 s reproducidos vuelve al principio de la canción.
+- **Sin silencio entre canciones:** se resuelven de antemano las próximas 3 y el motor abre y decodifica la siguiente mientras suena la actual; al terminar, la pega sin corte (test `preloaded_track_follows_without_gap`).
+- **Errores:** si una canción falla se saltea con un aviso discreto; después de 3 errores seguidos (por ejemplo, sin internet) frena.
+- **Portadas:** la miniatura del video de YouTube, recortada al cuadrado (sin las franjas negras) y guardada en 64 y 256 px en la caché (`~/.cache/surco/covers/`, `%LOCALAPPDATA%\Surco\cache\covers\`). Sin credenciales Spotify no da la portada del álbum, así que se usa siempre la de YouTube.
+- **Controles del sistema:** con [`souvlaki`](https://crates.io/crates/souvlaki). En Linux aparece como `org.mpris.MediaPlayer2.surco` (teclas multimedia, widget de GNOME/KDE, `playerctl`); en Windows, en el panel de medios (SMTC); en macOS, en "Está sonando". `SURCO_NO_MEDIA_KEYS=1` los desactiva.
+- **Importar CSV:** botón "Elegir CSV…" (diálogo nativo con `rfd`; en Linux usa el portal de XDG).
+
+| Atajo | Acción |
+|---|---|
+| Espacio | Play / pausa (sin nada sonando, arranca la playlist abierta) |
+| ← / → | −5 s / +5 s |
+| Ctrl+← / Ctrl+→ | Anterior / siguiente |
+| Ctrl+L | Ir al campo para pegar un link |
+| Ctrl+F | Buscar en la playlist (sin distinguir mayúsculas ni tildes) |
+| Esc | Cerrar la búsqueda o el selector de video |
+
+En macOS, Ctrl es Cmd. Los controles del sistema aparecen en el Centro de control ("Está sonando"). Los íconos se dibujan con `canvas` para no depender de qué fuentes tenga el sistema.
+
+Medido en la Fase 5 (Linux, Xvfb, playlist de 100 canciones importada, 10 resueltas, portadas cargadas): **~24 MB de RAM**. Binario release: **12,3 MB** (sube por `image`, `souvlaki` + `zbus` y `rfd`).
+
+## Biblioteca y caché (Fase 6)
+
+Todo se guarda en un archivo SQLite (`rusqlite` con SQLite embebido, sin dependencias del sistema):
+
+| SO | Base de datos | Logs |
+|---|---|---|
+| Linux | `~/.local/share/surco/surco.db` | `~/.local/share/surco/logs/` |
+| Windows | `%APPDATA%\Surco\data\surco.db` | `%LOCALAPPDATA%\Surco\data\logs\` |
+| macOS | `~/Library/Application Support/Surco/surco.db` | `~/Library/Application Support/Surco/logs/` |
+
+- **Playlists:** se guardan al importarlas; reimportar la misma la reemplaza en su lugar. "Quitar" la saca de la biblioteca.
+- **Matches:** cada canción resuelta (o con video elegido a mano) se guarda con sus candidatos. Al reabrir, la segunda reproducción no vuelve a buscar en YouTube, y "Cambiar video" sigue mostrando las opciones.
+- **Historial:** cada canción que empieza a sonar (hasta 5.000 entradas).
+- **Ajustes:** volumen, shuffle, repetir y la playlist abierta.
+- **Logs:** un archivo por día, se guardan los últimos 7. `RUST_LOG=surco=debug` da más detalle.
+- El esquema se versiona con `PRAGMA user_version`; una versión vieja de Surco no abre una base más nueva (avisa en el log y sigue sin guardar).
+- Las URLs de audio de YouTube no se guardan en disco: vencen a las ~6 h y se piden de nuevo en ~1 s.
+- `SURCO_DB=/ruta/a/otra.db` usa otra base (útil para probar).
+
+Medido en la Fase 6 (Linux, Xvfb, playlist de 100 canciones restaurada desde la base): **~27-30 MB de RAM** y ~2,8 % de CPU reproduciendo. Binario release: **12,3 MB** (ver "Perfil release").
+
+## Empaquetado (Fase 7)
+
+```
+packaging/
+├─ icons/     surco.ico, surco.icns, PNG de 16 a 1024 px (make_icons.py los genera)
+├─ linux/     surco.desktop, build-appimage.sh (el .deb lo arma cargo-deb, ver crates/app/Cargo.toml)
+├─ windows/   surco.iss (Inno Setup)
+└─ macos/     Info.plist, build-app.sh (lipo + codesign ad hoc + .dmg)
+```
+
+- El `.exe` lleva el ícono y los datos de versión embebidos (`crates/app/build.rs` con `winresource`) y no abre consola.
+- La ventana usa el ícono en Linux y Windows; en macOS lo pone el `.app`.
+- El `.deb` depende solo de `libasound2` y `libxkbcommon0`, y *sugiere* `yt-dlp` y `deno`. No los pide como dependencia porque el yt-dlp de las distros suele estar viejo y YouTube lo rompe.
+
+Medido en la Fase 7 (Linux, Xvfb, binario release con la biblioteca de 100 canciones guardada):
+
+| | Valor | Límite |
+|---|---|---|
+| Binario | **13,8 MB** | < 15 MB |
+| `.deb` | 4,3 MB | |
+| RAM al abrir | **~24 MB** | < 80 MB |
+| RAM reproduciendo, portadas cargadas | ~27-30 MB | < 80 MB |
+| Arranque hasta la ventana visible | **35-55 ms** (6 corridas) | < 1 s |
+| CPU reproduciendo | ~2,8 % | |
+
+Tamaños en los otros sistemas (workflow Release, paso "Tamaños"): `surco.exe` **8,6 MB** (`.zip` portable 4,2 MB); macOS **7,9 MB** en Apple Silicon y 8,7 MB en Intel (`.dmg` universal de 9,0 MB). En Linux pesa más por `zbus` (MPRIS) y el portal de archivos de XDG.
+
+## Ajustes, temas, precarga y radio
+
+![Ajustes](ajustes.png)
+
+El engranaje de arriba a la izquierda abre los ajustes. Todo se guarda en la biblioteca.
+
+- **Temas:** Oscuro (el de siempre), Verde (estilo Spotify), Rosa, Claro y Claro rosa. Se cambian al instante. Los colores viven en `crates/app/src/theme.rs` (`THEMES`); agregar uno es sumar una entrada.
+- **Portadas en la lista:** muestra la miniatura al lado de cada canción ya encontrada en YouTube (las demás, un cuadro vacío hasta que se buscan). Se bajan de a 4 y quedan en la caché de portadas.
+- **Sin cortes entre canciones:** además de pre-cargar la siguiente en memoria, el decodificador se saltea el silencio del principio (hasta 10 s) y del final de cada video, que en YouTube suele sonar como un hueco entre canciones. El silencio del medio de una canción se respeta (test `skips_leading_and_trailing_silence`).
+- **Precargar canciones:** "Las próximas 5" o "Toda la playlist" bajan el audio a disco antes de que suene, de a una canción por vez, así no hay que esperar a que cargue ni depende de la red en ese momento. Van a `~/.cache/surco/audio/` (`%LOCALAPPDATA%\Surco\cache\audio\`, `~/Library/Caches/Surco/audio/`), con un tope de 2 GB: al pasarse se borran las menos escuchadas. "Vaciar" borra todo. Por defecto está apagado.
+- **Radio (canciones parecidas):** el botón de ondas de la barra de abajo arma una playlist "Radio" con ~25 canciones parecidas a la que suena, sacadas del Mix de YouTube (sin buscar una por una), y sigue sin cortar la actual. Con "Al terminar, seguir con canciones parecidas" (prendido por defecto), cuando se termina la cola, o un video suelto, arranca sola una radio a partir de la última canción. Hay una sola playlist de radio: una nueva reemplaza a la anterior.
+
+## Buscador, cola y playlists de YouTube
+
+- **Buscador** ("Buscar" en la barra lateral): canciones, artistas y playlists de YouTube, con yt-dlp (`ytsearch` y la búsqueda de YouTube con filtro de canales y de playlists). Un artista muestra sus canciones más escuchadas; una playlist se puede escuchar o "Guardar en la biblioteca".
+- **Música sin fin:** lo que se escucha desde el buscador nunca se corta. Cuando quedan menos de 3 canciones en la cola, se agregan unas 25 parecidas a la última (el Mix de YouTube). Con "Al terminar, seguir con canciones parecidas" lo mismo pasa con cualquier cola sin "repetir".
+- **Cola** ("Cola" en la barra lateral o el botón de la barra de abajo): la que suena y lo que sigue. Se arrastra una canción para cambiarle el lugar, la × la saca, y un clic la pone a sonar. El + de cada canción (en las playlists y en el buscador) la agrega al final.
+- **Playlists de YouTube y YouTube Music:** se pega el link (`youtube.com/playlist?list=…`, `music.youtube.com/playlist?list=…`, o un video con `&list=`) en el mismo campo que los de Spotify. Se importan enteras (hasta 2000), ya resueltas: no hace falta buscar cada canción.
+
+## Spotify sin límite de 100 canciones
+
+La página pública de Spotify muestra hasta 100 canciones. Con claves de la Web API (Client Credentials) la playlist se importa entera, de a 100 por página. Las claves se eligen en este orden:
+
+1. Las que el usuario carga en **Ajustes → Spotify**.
+2. Las de `config.toml`.
+3. Las que trae el build oficial: el workflow Release las inyecta al compilar desde los secretos del repo `SPOTIFY_CLIENT_ID` y `SPOTIFY_CLIENT_SECRET` (variables `SURCO_SPOTIFY_CLIENT_ID` / `SURCO_SPOTIFY_CLIENT_SECRET`, leídas con `option_env!`). No están en el código. Un build local sin esas variables sale sin claves.
+
+Si la API falla (403 o 404, como con las playlists editoriales de Spotify para apps nuevas, o 429), la importación sigue con la página pública y, si hace falta, con un CSV de Exportify. Las claves incluidas en un programa que se distribuye se pueden extraer: solo dan acceso a datos públicos, y si se abusa de ellas se cambian.
+
+## Estructura
+
+```
+crates/
+├─ core/      surco-core      modelos (Track, Playlist, QueueItem, PlayerState…)
+├─ spotify/   surco-spotify   importación de playlists (Fase 3)
+├─ resolver/  surco-resolver  Spotify -> YouTube, búsqueda + scoring (Fase 4)
+├─ provider/  surco-provider  wrapper de yt-dlp, URLs de stream (Fase 2)
+├─ player/    surco-player    motor de audio, cola, estados (Fases 2 y 5)
+├─ storage/   surco-storage   SQLite: biblioteca, matches, historial, ajustes (Fase 6)
+└─ app/       surco           GUI (iced) + binario
+```
+
+Los paquetes llevan el prefijo `surco-` porque `core` choca con el crate `core` de la librería estándar.
+
+## Decisiones técnicas
+
+### GUI: iced 0.14
+
+Elegimos `iced` sobre `egui/eframe` porque:
+
+- Es retenido y basado en mensajes (arquitectura Elm), que encaja con la comunicación GUI ↔ motor por canales: la GUI solo recibe mensajes y nunca bloquea.
+- No redibuja cada frame: con la ventana quieta no consume CPU, a diferencia del modo inmediato de egui.
+- Compila en Windows sin dependencias nativas extra (sin OpenSSL, sin webview), así que el empaquetado no se complica.
+
+### Render: CPU (tiny-skia) por defecto, GPU opcional
+
+Medido en Linux/X11 (Xvfb), ventana vacía, 4 s después de abrir:
+
+| Backend | Binario (opt 3) | Binario (opt z) | RAM (RSS) |
+|---|---|---|---|
+| wgpu + tiny-skia (default de iced) | 10,5 MB | 7,6 MB | ~115 MB |
+| **solo tiny-skia (elegido)** | **6,4 MB** | **4,9 MB** | **~14 MB** |
+
+Con wgpu, la mayor parte de la RAM son los drivers gráficos mapeados en memoria (en la medición, llvmpipe/Vulkan por software; con GPU real también son decenas de MB). Eso solo ya rompe el límite de 80 MB, así que el render por defecto es por CPU. Para una UI plana como esta (listas, texto, rectángulos) alcanza de sobra.
+
+Quien quiera GPU puede compilar con `cargo build --release --features gpu`.
+
+### Perfil release
+
+`lto = "fat"`, `codegen-units = 1`, `panic = "unwind"`, `strip = true`. Medimos `opt-level = 3` y `"z"` (perfil `release-z`):
+
+- `z` ahorra ~1,5 MB (4,9 vs 6,4 MB) sin diferencia de RAM.
+- Ambos quedan muy por debajo de 15 MB.
+
+Desde la Fase 6, el código de Surco y las partes calientes (decodificación AAC/MP4 de symphonia, rodio y el dibujado de tiny-skia) van con `opt-level = 3`, y el resto de las dependencias (red, D-Bus, SQLite, layout, imágenes…) con `"s"`. Con SQLite adentro, todo en 3 daba 15,1 MB; así queda en **12,3 MB**, y reproduciendo usa ~2,8 % de CPU (todo en `"s"` daba 3,8 %).
+
+Hasta la Fase 7 el perfil usaba `panic = "abort"`. Lo pasamos a `"unwind"` (+1,3 MB, queda en 13,8 MB) porque con `abort` el pánico de un hilo de una dependencia tumba toda la app. Pasaba con `souvlaki`, que hace `unwrap()` si no puede conectarse a D-Bus. Además, ahora Surco prueba conectarse al bus de sesión antes de activar MPRIS: si no hay bus, sigue sin controles multimedia.
+
+### Audio
+
+```
+yt-dlp -f "bestaudio[ext=m4a]/bestaudio" --print ...  ->  URL de googlevideo (caché en memoria, 5 h)
+HttpStream: bloques de 512 KiB con Range, en memoria, prioriza el bloque que pide el seek
+hilo decodificador (symphonia, AAC) -> buffer de muestras (2 s antes de sonar, hasta 5 s)
+RingSource (rodio/cpal): nunca bloquea; si la red no llegó, suena silencio en vez de colgarse
+```
+
+- Si la URL de stream vence (HTTP 403), se re-resuelve una vez con yt-dlp y se retoma desde la misma posición.
+- yt-dlp corre con timeout (45 s) y, en Windows, sin abrir consola (`CREATE_NO_WINDOW`).
+- **rodio** se usa solo como salida y mezclador (feature `playback`, sin decodificadores propios). La decodificación es nuestra, con symphonia 0.5 (la misma versión que usa rodio).
+- Errores (sin yt-dlp, red caída, formato no soportado) quedan en el estado `Error` y se muestran en la UI; la app nunca se cae.
+
+Medido en la Fase 2 (Linux, Xvfb, reproduciendo un m4a de 3 min por HTTP): **~23 MB de RAM** y ~1,5 % de CPU. Binario: **10,1 MB** (opt 3) / **7,8 MB** (opt z). El salto desde 6,4 MB viene de tokio, reqwest + rustls, symphonia y cpal.
+
+## Calidad
+
+- `cargo clippy --workspace --all-targets -- -D warnings`
+- `cargo test --workspace`
+- Tests: parser de la salida de yt-dlp, caché con TTL, `HttpStream` contra un servidor HTTP local (seek antes de terminar la descarga, 403), y el motor de punta a punta con salida nula (sonar, pausar, seek, fin, errores). Hay un test con un yt-dlp falso que primero devuelve una URL vencida.
+- Los archivos de prueba (`crates/player/tests/fixtures/*.m4a`) son tonos generados con ffmpeg (`padded.m4a`: 1,5 s mudos, 2 s de tono y 3 s mudos, para probar que se saltea el silencio). Los de 8 s: `ffmpeg -f lavfi -i sine=frequency=440:duration=8 -ac 2 -c:a aac -b:a 64k tone.m4a` (y `-movflags +dash+global_sidx` para la versión fragmentada, como las de YouTube).
+- `unwrap()` está prohibido por lint (`clippy::unwrap_used = "deny"`) en todo el workspace.
+- Spotify: parser de links (todas las variantes), CSV (comillas, saltos de línea, BOM, formatos de Exportify), página embed, y la Web API contra un servidor local que imita a Spotify (token, 250 canciones en 3 páginas, 429 con `Retry-After`, formato viejo `tracks` y nuevo `items`, y la cascada cayendo a la embed cuando la API esconde las canciones). `crates/spotify/tests/fixtures/exportify_sample.csv` es un CSV de ejemplo de 120 canciones.
+- Pruebas contra la red real, ignoradas por defecto:
+  - `cargo test -p surco-spotify --test import -- --ignored --nocapture` (embed real; con `SPOTIFY_CLIENT_ID`/`SPOTIFY_CLIENT_SECRET` también la Web API)
+  - `cargo test -p surco-player --test network -- --ignored --nocapture` (streaming HTTPS real con pausa y seek; con `SURCO_TEST_YOUTUBE=<id>` también YouTube)
+- CI en GitHub Actions (Linux): fmt, clippy, tests y build release. Windows y macOS se compilan en el workflow Release.
+
+## Limitaciones conocidas
+
+- **Firmas:** la app de macOS va firmada ad hoc (sin notarizar) y el `.exe` de Windows sin firmar: los dos muestran un aviso la primera vez (ver el README). Firmar requiere cuentas pagas de Apple y un certificado de código.
+- **macOS:** una app abierta desde el Finder no hereda el `PATH` de la terminal, así que Surco además busca yt-dlp y deno en `/opt/homebrew/bin`, `/usr/local/bin` y `~/.deno/bin`.
+- **Linux ARM / Windows ARM:** por ahora solo hay paquetes x86_64 (en macOS el binario es universal).
+- **Opus/WebM:** si YouTube solo ofrece el audio en WebM/Opus, por ahora se muestra un error. El fallback (crate `opus` o ffmpeg) queda pendiente; casi todos los videos tienen m4a.
+- En un MP4 fragmentado sin duración en el contenedor (URLs directas) la barra usa la duración de Spotify; con YouTube la duración la da yt-dlp.
+- La lista de canciones no está virtualizada: con playlists de miles de canciones el scroll puede ponerse pesado.
+- **YouTube y redes "marcadas":** desde IPs de datacenter, VPN o redes con mucho tráfico, YouTube puede pedir "confirmar que no sos un bot" y yt-dlp falla. La app lo muestra como un error claro (no crashea). En una conexión hogareña normal no pasa.
+- **Resolver:** si la grabación exacta no está entre los 5-10 primeros resultados de YouTube (por ejemplo, una versión en vivo poco conocida), puede elegir un cover parecido. Para eso está el selector manual.
+- **Historial:** se guarda, pero todavía no hay una vista para verlo.
+- **Spotify sin credenciales:** máximo 100 canciones por playlist (ver arriba). Para playlists más largas, importar un CSV de Exportify.
+- La canción entera queda en memoria mientras suena (~4 MB por cada 4 minutos). Para audios de horas habría que limitarlo.
+
+## Aviso legal
+
+El uso de contenido de YouTube y de Spotify queda bajo responsabilidad de cada usuario y de los términos de servicio de cada plataforma. Surco no aloja ni redistribuye contenido.
