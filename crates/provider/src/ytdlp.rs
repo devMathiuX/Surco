@@ -134,6 +134,25 @@ impl YtDlp {
         parse_stream_info(&out)
     }
 
+    /// Busca en YouTube (`ytsearch{n}:{query}`) sin resolver cada video
+    /// (`--flat-playlist`): rápido y sin tocar los servidores de video.
+    pub async fn search(&self, query: &str, n: usize) -> Result<Vec<SearchResult>> {
+        let target = format!("ytsearch{}:{}", n.clamp(1, 20), query);
+        let out = self
+            .run(
+                [
+                    "--flat-playlist",
+                    "--dump-json",
+                    "--no-warnings",
+                    "--",
+                    &target,
+                ],
+                RESOLVE_TIMEOUT,
+            )
+            .await?;
+        Ok(parse_search(&out))
+    }
+
     async fn run<I, S>(&self, args: I, timeout: Duration) -> Result<String>
     where
         I: IntoIterator<Item = S>,
@@ -171,6 +190,41 @@ impl YtDlp {
         }
         Ok(String::from_utf8_lossy(&output.stdout).into_owned())
     }
+}
+
+/// Un resultado de búsqueda.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SearchResult {
+    pub id: String,
+    pub title: String,
+    pub channel: Option<String>,
+    pub duration: Option<Duration>,
+    pub views: Option<u64>,
+}
+
+/// Una línea JSON por resultado. Las líneas que no se entienden se ignoran.
+fn parse_search(out: &str) -> Vec<SearchResult> {
+    out.lines()
+        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+        .filter_map(|v| {
+            let id = v["id"].as_str()?.to_owned();
+            // Los resultados de canales o playlists no sirven.
+            if id.len() != 11 {
+                return None;
+            }
+            let text = |k: &str| v[k].as_str().filter(|s| !s.is_empty()).map(str::to_owned);
+            Some(SearchResult {
+                id,
+                title: text("title")?,
+                channel: text("channel").or_else(|| text("uploader")),
+                duration: v["duration"]
+                    .as_f64()
+                    .filter(|d| d.is_finite() && *d > 0.0)
+                    .map(Duration::from_secs_f64),
+                views: v["view_count"].as_u64(),
+            })
+        })
+        .collect()
 }
 
 /// Parsea la salida de `--print ext --print duration --print title --print url`.
@@ -288,6 +342,20 @@ mod tests {
     fn rejects_bad_output() {
         assert!(parse_stream_info("").is_err());
         assert!(parse_stream_info("m4a\n1\nt\nnot-a-url").is_err());
+    }
+
+    #[test]
+    fn parses_search_results() {
+        let out = r#"{"id":"a01QQZyl-_I","title":"Queen - Under Pressure","channel":"Queen Official","duration":254.0,"view_count":10}
+{"id":"UCxxxxxxxxxxxxxxxxxxxxxx","title":"Un canal"}
+no es json
+{"id":"dN3gax_Z7tw","title":"Live","uploader":"Alguien","duration":null}"#;
+        let r = parse_search(out);
+        assert_eq!(r.len(), 2);
+        assert_eq!(r[0].channel.as_deref(), Some("Queen Official"));
+        assert_eq!(r[0].duration, Some(Duration::from_secs(254)));
+        assert_eq!(r[1].channel.as_deref(), Some("Alguien"));
+        assert_eq!(r[1].duration, None);
     }
 
     #[test]
