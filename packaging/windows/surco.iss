@@ -1,5 +1,5 @@
 ; Instalador de Surco para Windows (Inno Setup 6).
-; Uso: ISCC.exe /DAppVersion=0.1.0 /DSourceExe=..\..\target\release\surco.exe /O..\..\dist surco.iss
+; Uso: ISCC.exe /DAppVersion=0.1.0 /DSourceExe=C:\ruta\surco.exe /OC:\ruta\dist packaging\windows\surco.iss
 ;
 ; Se instala por usuario (no pide permisos de administrador), en
 ; %LOCALAPPDATA%\Programs\Surco, con acceso directo en el menú Inicio.
