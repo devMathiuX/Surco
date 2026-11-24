@@ -179,3 +179,30 @@ fn load_reuses_preloaded_source() {
         s.state == PlayerState::Idle
     });
 }
+
+/// El silencio del principio y del final del video no suena: el archivo tiene
+/// 1,5 s mudos, 2 s de tono y 3 s mudos.
+#[test]
+fn skips_leading_and_trailing_silence() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let p = surco_player::spawn(None, rt.handle().clone(), Options { null_output: true }).unwrap();
+    p.send(Command::Load(Source::File(fixture("padded.m4a"))));
+    let s = wait_for(&p, "Playing", Duration::from_secs(5), |s| {
+        s.state == PlayerState::Playing
+    });
+    // La posición arranca donde empieza el sonido.
+    assert!(
+        s.position >= Duration::from_millis(1300),
+        "posición {:?}",
+        s.position
+    );
+    let start = Instant::now();
+    wait_for(&p, "fin (Idle)", Duration::from_secs(6), |s| {
+        s.state == PlayerState::Idle
+    });
+    let played = start.elapsed();
+    assert!(
+        played < Duration::from_millis(3200),
+        "sonó {played:?}: no se salteó el silencio final"
+    );
+}

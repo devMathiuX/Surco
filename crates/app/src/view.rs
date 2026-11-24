@@ -2,18 +2,21 @@
 //! selector de video y panel de prueba.
 
 use iced::widget::{
-    button, column, container, row, scrollable, text, text_input, tooltip, Column, Id, Space,
+    button, column, container, image, row, scrollable, text, text_input, toggler, tooltip, Column,
+    Id, Space,
 };
 use iced::{Alignment, Element, Length};
 use surco_core::{format_duration, PlayerState, Playlist, Track};
 
 use crate::icons::{self, Kind};
 use crate::playback::TrackRes;
+use crate::settings::{Change, Precache};
 use crate::{theme, Message, Surco, YtDlpState, FILTER_INPUT, IMPORT_INPUT};
 
 impl Surco {
     pub(crate) fn view(&self) -> Element<'_, Message> {
         let main: Element<'_, Message> = match self.selected.and_then(|i| self.playlists.get(i)) {
+            _ if self.show_settings => self.view_settings(),
             Some((playlist, source)) => {
                 self.view_playlist(self.selected.unwrap_or(0), playlist, source)
             }
@@ -72,11 +75,34 @@ impl Surco {
             .padding([6, 10])
             .style(theme::ghost_button);
 
+        let gear = tooltip(
+            button(icons::icon(
+                Kind::Settings,
+                if self.show_settings {
+                    theme::colors().accent
+                } else {
+                    theme::colors().text_secondary
+                },
+                18.0,
+            ))
+            .on_press(Message::ToggleSettings)
+            .padding(4)
+            .style(theme::icon_button),
+            container(text("Ajustes").size(theme::SIZE_S))
+                .padding(6)
+                .style(theme::card),
+            tooltip::Position::Bottom,
+        );
         let mut col = column![
-            button(text("Surco").size(theme::SIZE_L))
-                .on_press(Message::SelectPlaylist(None))
-                .padding(0)
-                .style(theme::list_button(false)),
+            row![
+                button(text("Surco").size(theme::SIZE_L))
+                    .on_press(Message::SelectPlaylist(None))
+                    .padding(0)
+                    .style(theme::list_button(false)),
+                Space::new().width(Length::Fill),
+                gear,
+            ]
+            .align_y(Alignment::Center),
             scrollable(list).height(Length::Fill),
             input,
             column![import, pick_csv].spacing(4),
@@ -120,16 +146,32 @@ impl Surco {
         source: &str,
     ) -> Element<'a, Message> {
         let total_ms: u64 = p.tracks.iter().map(|t| t.duration_ms).sum();
+        let origin = if source == "radio" {
+            "canciones parecidas, del Mix de YouTube".to_owned()
+        } else {
+            format!("importada desde {source}")
+        };
+        let mut info = format!(
+            "{} canciones · {} · {origin}",
+            p.tracks.len(),
+            format_duration(total_ms)
+        );
+        if self.active.as_ref().is_some_and(|a| a.playlist == index) && self.precache.target > 0 {
+            info.push_str(&format!(
+                " · precargadas {} de {}{}",
+                self.precache.ready,
+                self.precache.target,
+                if self.precache.running.is_some() {
+                    " (bajando…)"
+                } else {
+                    ""
+                }
+            ));
+        }
         let header = row![
             column![
                 text(&p.name).size(theme::SIZE_L),
-                text(format!(
-                    "{} canciones · {} · importada desde {source}",
-                    p.tracks.len(),
-                    format_duration(total_ms)
-                ))
-                .size(theme::SIZE_S)
-                .style(theme::secondary_text),
+                text(info).size(theme::SIZE_S).style(theme::secondary_text),
             ]
             .spacing(4)
             .width(Length::Fill),
@@ -173,17 +215,35 @@ impl Surco {
                 .into(),
                 _ => Space::new().into(),
             };
+            let number = container(if playing {
+                icons::icon(Kind::Volume, theme::colors().accent, 16.0)
+            } else {
+                text(i + 1)
+                    .size(theme::SIZE_S)
+                    .style(theme::secondary_text)
+                    .into()
+            })
+            .width(40);
+            let cover: Element<'_, Message> = if self.settings.covers_in_list {
+                match self.video_of((index, i)).and_then(|v| self.covers.get(v)) {
+                    Some(h) => image(h.clone())
+                        .width(LIST_COVER)
+                        .height(LIST_COVER)
+                        .border_radius(4.0)
+                        .into(),
+                    None => container(Space::new())
+                        .width(LIST_COVER)
+                        .height(LIST_COVER)
+                        .style(theme::cover_placeholder)
+                        .into(),
+                }
+            } else {
+                Space::new().width(0).into()
+            };
             button(
                 row![
-                    container(if playing {
-                        icons::icon(Kind::Volume, theme::ACCENT, 16.0)
-                    } else {
-                        text(i + 1)
-                            .size(theme::SIZE_S)
-                            .style(theme::secondary_text)
-                            .into()
-                    })
-                    .width(40),
+                    number,
+                    cover,
                     column![
                         text(&t.title)
                             .size(theme::SIZE_M)
@@ -215,7 +275,7 @@ impl Surco {
         if let Some(q) = &self.filter {
             col = col.push(
                 row![
-                    icons::icon(Kind::Search, theme::TEXT_SECONDARY, 18.0),
+                    icons::icon(Kind::Search, theme::colors().text_secondary, 18.0),
                     text_input("Buscar en la playlist", q)
                         .id(Id::new(FILTER_INPUT))
                         .on_input(Message::FilterChanged)
@@ -242,6 +302,127 @@ impl Surco {
             col = col.push(chooser);
         }
         col.push(scrollable(rows).height(Length::Fill)).into()
+    }
+
+    /// Pantalla de ajustes: tema, portadas, precarga y radio automática.
+    pub(crate) fn view_settings(&self) -> Element<'_, Message> {
+        let section = |title: &'static str, hint: &'static str| {
+            column![
+                text(title).size(theme::SIZE_M),
+                text(hint).size(theme::SIZE_S).style(theme::secondary_text),
+            ]
+            .spacing(2)
+        };
+
+        // Temas: botón con dos muestras de color (fondo y acento).
+        let themes = row(theme::THEMES.iter().enumerate().map(|(i, t)| {
+            let sw = |c| {
+                container(Space::new())
+                    .width(14)
+                    .height(14)
+                    .style(theme::swatch(c))
+            };
+            button(
+                row![
+                    sw(t.background),
+                    sw(t.accent),
+                    text(t.name).size(theme::SIZE_S)
+                ]
+                .spacing(6)
+                .align_y(Alignment::Center),
+            )
+            .on_press(Message::Setting(Change::Theme(i)))
+            .padding([6, 10])
+            .style(theme::choice_button(self.settings.theme == i))
+            .into()
+        }))
+        .spacing(8)
+        .wrap();
+
+        let precache = row(Precache::ALL.iter().map(|&p| {
+            button(text(p.label()).size(theme::SIZE_S))
+                .on_press(Message::Setting(Change::Precache(p)))
+                .padding([6, 10])
+                .style(theme::choice_button(self.settings.precache == p))
+                .into()
+        }))
+        .spacing(8);
+        let usage = self
+            .provider
+            .as_ref()
+            .and_then(|p| p.audio_cache())
+            .map(|c| c.usage())
+            .unwrap_or_default();
+        let cache_row = row![
+            text(format!(
+                "En disco: {} canciones, {}",
+                usage.files,
+                format_bytes(usage.bytes)
+            ))
+            .size(theme::SIZE_S)
+            .style(theme::secondary_text),
+            button(text("Vaciar").size(theme::SIZE_S))
+                .on_press_maybe((usage.files > 0).then_some(Message::ClearAudioCache))
+                .padding([4, 10])
+                .style(theme::ghost_button),
+        ]
+        .spacing(12)
+        .align_y(Alignment::Center);
+
+        let switch = |label: &'static str, on: bool, f: fn(bool) -> Change| {
+            toggler(on)
+                .label(label)
+                .on_toggle(move |v| Message::Setting(f(v)))
+                .size(20)
+                .text_size(theme::SIZE_S)
+                .spacing(10)
+                .style(theme::switch)
+        };
+
+        let body = column![
+            text("Ajustes").size(theme::SIZE_L),
+            column![
+                section("Tema", "Cómo se ve Surco."),
+                themes,
+            ]
+            .spacing(10),
+            column![
+                section(
+                    "Portadas en la lista",
+                    "Muestra la portada al lado de cada canción ya encontrada en YouTube."
+                ),
+                switch(
+                    "Mostrar portadas",
+                    self.settings.covers_in_list,
+                    Change::CoversInList
+                ),
+            ]
+            .spacing(10),
+            column![
+                section(
+                    "Precargar canciones",
+                    "Baja el audio antes de que suene, así no hay que esperar a que cargue. La siguiente siempre se prepara en memoria para que no haya cortes."
+                ),
+                precache,
+                cache_row,
+            ]
+            .spacing(10),
+            column![
+                section(
+                    "Canciones parecidas",
+                    "Con el botón de radio de la barra de abajo armás una lista de canciones parecidas a la que suena."
+                ),
+                switch(
+                    "Al terminar, seguir con canciones parecidas",
+                    self.settings.autoplay,
+                    Change::Autoplay
+                ),
+            ]
+            .spacing(10),
+        ]
+        .spacing(28)
+        .max_width(760);
+        scrollable(body).height(Length::Fill).into()
     }
 
     /// Selector de video para una canción (los candidatos con su puntaje).
@@ -382,6 +563,20 @@ impl Surco {
             col = col.push(text(e).size(theme::SIZE_S).style(theme::error_text));
         }
         col.into()
+    }
+}
+
+/// Tamaño de las portadas en la lista.
+const LIST_COVER: f32 = 36.0;
+
+/// `1536000` → `1,5 MB`.
+fn format_bytes(b: u64) -> String {
+    const MB: f64 = 1024.0 * 1024.0;
+    let mb = b as f64 / MB;
+    if mb >= 1024.0 {
+        format!("{:.1} GB", mb / 1024.0).replace('.', ",")
+    } else {
+        format!("{mb:.0} MB")
     }
 }
 

@@ -157,6 +157,31 @@ impl YtDlp {
         Ok(parse_search(&out))
     }
 
+    /// Videos parecidos a `video`: el "Mix" de YouTube (`list=RD<id>`), sin
+    /// resolver cada uno. El primero suele ser el mismo video.
+    pub async fn mix(&self, video: &str, n: usize) -> Result<Vec<SearchResult>> {
+        if !crate::is_video_id(video) {
+            return Err(Error::Parse(format!("ID de video inválido: {video}")));
+        }
+        let url = format!("https://www.youtube.com/watch?v={video}&list=RD{video}");
+        let end = n.clamp(1, 50).to_string();
+        let out = self
+            .run(
+                [
+                    "--flat-playlist",
+                    "--dump-json",
+                    "--no-warnings",
+                    "--playlist-end",
+                    &end,
+                    "--",
+                    &url,
+                ],
+                RESOLVE_TIMEOUT,
+            )
+            .await?;
+        Ok(parse_search(&out))
+    }
+
     async fn run<I, S>(&self, args: I, timeout: Duration) -> Result<String>
     where
         I: IntoIterator<Item = S>,
