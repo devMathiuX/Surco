@@ -6,6 +6,7 @@ pub use surco_core as core;
 mod audio_cache;
 mod deno;
 mod http_stream;
+pub mod update;
 mod ytdlp;
 
 use std::collections::{HashMap, HashSet};

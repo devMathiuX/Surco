@@ -344,20 +344,35 @@ impl<Message> canvas::Program<Message> for Icon {
                 );
             }
             Kind::Settings => {
-                // Engranaje: aro y 8 dientes.
-                frame.stroke(&Path::circle(p(12.0, 12.0), 5.0 * s), line(2.0));
-                frame.stroke(&Path::circle(p(12.0, 12.0), 1.8 * s), line(1.6));
-                for i in 0..8 {
-                    let ang = i as f32 * std::f32::consts::FRAC_PI_4;
-                    let (sin, cos) = ang.sin_cos();
-                    frame.stroke(
-                        &Path::line(
-                            p(12.0 + 6.0 * cos, 12.0 + 6.0 * sin),
-                            p(12.0 + 8.5 * cos, 12.0 + 8.5 * sin),
-                        ),
-                        line(2.6),
-                    );
-                }
+                // Engranaje: contorno de 8 dientes trapezoidales y agujero.
+                const TEETH: usize = 8;
+                let (inner, outer) = (6.6, 9.4);
+                let at = |deg: f32, r: f32| {
+                    let (sin, cos) = deg.to_radians().sin_cos();
+                    p(12.0 + r * cos, 12.0 + r * sin)
+                };
+                let step = 360.0 / TEETH as f32;
+                let gear = Path::new(|b| {
+                    for i in 0..TEETH {
+                        let c = i as f32 * step;
+                        let start = at(c - 13.0, inner);
+                        if i == 0 {
+                            b.move_to(start);
+                        } else {
+                            b.line_to(start);
+                        }
+                        b.line_to(at(c - 8.0, outer));
+                        b.line_to(at(c + 8.0, outer));
+                        b.line_to(at(c + 13.0, inner));
+                        // Tramo del aro hasta el diente siguiente.
+                        b.line_to(at(c + step / 2.0, inner));
+                    }
+                    b.close();
+                });
+                let mut st = line(1.8);
+                st.line_join = stroke::LineJoin::Round;
+                frame.stroke(&gear, st);
+                frame.stroke(&Path::circle(p(12.0, 12.0), 2.8 * s), line(1.8));
             }
         }
         vec![frame.into_geometry()]

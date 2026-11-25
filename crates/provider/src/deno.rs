@@ -74,8 +74,8 @@ pub async fn download_deno(client: &reqwest::Client, dir: &Path) -> Result<PathB
 
 /// Saca el archivo `name` de un zip (guardado o comprimido con deflate),
 /// leyendo el directorio central del final.
-fn extract(zip: &[u8], name: &str) -> Result<Vec<u8>> {
-    let bad = |what: &str| Error::Parse(format!("zip de deno inválido: {what}"));
+pub(crate) fn extract(zip: &[u8], name: &str) -> Result<Vec<u8>> {
+    let bad = |what: &str| Error::Parse(format!("zip inválido: {what}"));
     let u16_at = |at: usize| -> Result<usize> {
         zip.get(at..at + 2)
             .map(|b| usize::from(u16::from_le_bytes([b[0], b[1]])))

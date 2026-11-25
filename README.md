@@ -186,6 +186,14 @@ Cuando Surco no está seguro de haber encontrado la canción correcta, la marca 
 
 El botón de ondas de la barra de abajo arma la playlist "Radio" con unas 25 canciones parecidas a la que suena. En **Ajustes**, la opción **"Al terminar, seguir con canciones parecidas"** (prendida de entrada) arranca una radio sola cuando se termina la cola.
 
+### Actualizaciones
+
+Al abrir Surco, si hay internet, se fija si salió una versión nueva. Si hay, aparece un aviso abajo a la izquierda con **Instalar**: baja la versión que corresponde a cómo lo instalaste (instalador o portable en Windows, AppImage, `.deb` o portable en Linux) y Surco se reinicia solo. Con el `.deb`, el sistema pide tu contraseña. En macOS se abre el `.dmg` para que arrastres la app a Aplicaciones.
+
+### Bandeja de Windows
+
+En Windows, la X esconde la ventana y Surco sigue sonando en la bandeja (la flechita al lado del reloj). Tocá el ícono para volver a abrirlo. Con clic derecho podés pausar o **Salir** del todo.
+
 ### Ajustes
 
 ![Ajustes](docs/ajustes.png)
