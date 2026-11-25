@@ -545,6 +545,10 @@ pub fn search_path() -> Option<OsString> {
             dirs.push(PathBuf::from(d));
         }
     }
+    // El deno que bajó Surco.
+    if let Some(dir) = crate::deno::tools_dir() {
+        dirs.push(dir.to_path_buf());
+    }
     let mut seen = std::collections::HashSet::new();
     dirs.retain(|d| seen.insert(d.clone()));
     std::env::join_paths(dirs).ok()
@@ -568,14 +572,14 @@ pub(crate) fn hide_console(cmd: &mut Command) {
 }
 
 #[cfg(unix)]
-async fn make_executable(path: &Path) -> Result<()> {
+pub(crate) async fn make_executable(path: &Path) -> Result<()> {
     use std::os::unix::fs::PermissionsExt;
     tokio::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).await?;
     Ok(())
 }
 
 #[cfg(not(unix))]
-async fn make_executable(_: &Path) -> Result<()> {
+pub(crate) async fn make_executable(_: &Path) -> Result<()> {
     Ok(())
 }
 

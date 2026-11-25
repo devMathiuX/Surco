@@ -4,6 +4,7 @@
 pub use surco_core as core;
 
 mod audio_cache;
+mod deno;
 mod http_stream;
 mod ytdlp;
 
@@ -26,6 +27,7 @@ pub fn stream_client() -> HttpClient {
         .unwrap_or_default()
 }
 
+pub use deno::{download_deno, set_tools_dir, DENO_BINARY};
 pub use http_stream::{download_all, download_all_with, HttpStream, StreamProgress};
 pub use reqwest::Client as HttpClient;
 pub use ytdlp::{js_runtime, Listing, SearchResult, StreamInfo, YtDlp, AUDIO_FORMAT, BINARY_NAME};
@@ -166,6 +168,13 @@ impl Provider {
             cache.insert(video.to_owned(), (info.clone(), Instant::now()));
         }
         Ok(info)
+    }
+
+    /// Olvida todas las URLs cacheadas (por ejemplo, al instalar deno).
+    pub fn forget_urls(&self) {
+        if let Ok(mut cache) = self.cache.lock() {
+            cache.clear();
+        }
     }
 
     /// Olvida la URL cacheada de `video` (por ejemplo, después de un 403).

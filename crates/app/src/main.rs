@@ -66,6 +66,10 @@ fn main() -> anyhow::Result<()> {
         .enable_all()
         .build()?;
     let _ = RUNTIME.set(rt);
+    // yt-dlp busca ahí el deno que baja Surco.
+    if let Some(dir) = data_dir() {
+        surco_provider::set_tools_dir(dir);
+    }
 
     iced::application(Surco::new, Surco::update, Surco::view)
         .title("Surco")
@@ -182,6 +186,16 @@ enum YtDlpState {
     Failed(String),
 }
 
+/// deno (el runtime de JavaScript que yt-dlp necesita para YouTube).
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum DenoState {
+    /// Hay deno (u otro runtime), o todavía no se sabe.
+    Ok,
+    Missing,
+    Downloading,
+    Failed(String),
+}
+
 struct Surco {
     player: Option<PlayerHandle>,
     status: Status,
@@ -189,6 +203,7 @@ struct Surco {
     /// Valor del slider mientras se arrastra (segundos).
     seeking: Option<f32>,
     fatal: Option<String>,
+    deno: DenoState,
     spotify_creds: Option<Credentials>,
     spotify_source: spotify_keys::KeySource,
     keys_form: spotify_keys::KeysForm,
@@ -332,6 +347,8 @@ enum Message {
     Status(Status),
     DownloadYtDlp,
     YtDlpDownloaded(Result<PathBuf, String>),
+    DownloadDeno,
+    DenoDownloaded(Result<PathBuf, String>),
     ImportInputChanged(String),
     Import,
     PickCsv,
@@ -422,20 +439,28 @@ impl Surco {
             Some(rt) => tracing::info!(runtime = rt, "runtime de JavaScript para yt-dlp"),
             None => {
                 tracing::warn!("no hay deno, node ni bun: YouTube puede rechazar el audio (403)");
-                let install = if cfg!(windows) {
-                    "irm https://deno.land/install.ps1 | iex"
-                } else {
-                    "curl -fsSL https://deno.land/install.sh | sh"
-                };
-                self.notice = Some(Notice {
-                    error: true,
-                    text: trf!(
-                        "Falta deno: sin él YouTube puede rechazar las canciones. Instalalo ({install}) y volvé a abrir Surco.",
-                        "deno is missing: without it YouTube may reject songs. Install it ({install}) and reopen Surco."
-                    ),
-                });
+                self.deno = DenoState::Missing;
             }
         }
+    }
+
+    /// Botón "Instalar deno": lo baja a la carpeta de datos de Surco.
+    fn download_deno(&mut self) -> Task<Message> {
+        let (Some(dir), Some(rt)) = (data_dir(), RUNTIME.get()) else {
+            self.deno = DenoState::Failed(tr!("no hay carpeta de datos", "no data folder").into());
+            return Task::none();
+        };
+        self.deno = DenoState::Downloading;
+        let client = self.http.clone();
+        let job = rt.spawn(async move {
+            surco_provider::download_deno(&client, &dir)
+                .await
+                .map_err(|e| e.to_string())
+        });
+        Task::perform(
+            async move { job.await.unwrap_or_else(|e| Err(e.to_string())) },
+            Message::DenoDownloaded,
+        )
     }
 
     fn new() -> (Self, Task<Message>) {
@@ -464,6 +489,7 @@ impl Surco {
             },
             seeking: None,
             fatal,
+            deno: DenoState::Ok,
             spotify_creds: None,
             spotify_source: spotify_keys::KeySource::None,
             keys_form: spotify_keys::KeysForm::default(),
@@ -595,6 +621,20 @@ impl Surco {
                 return self.resolve_in_background();
             }
             Message::YtDlpDownloaded(Err(e)) => self.ytdlp = YtDlpState::Failed(e),
+            Message::DownloadDeno => return self.download_deno(),
+            Message::DenoDownloaded(Ok(path)) => {
+                tracing::info!(path = %path.display(), "deno listo");
+                self.deno = DenoState::Ok;
+                // Las URLs que se pidieron sin deno pueden estar rechazadas.
+                if let Some(p) = &self.provider {
+                    p.forget_urls();
+                }
+                self.notice = Some(Notice {
+                    error: false,
+                    text: tr!("deno instalado.", "deno installed.").into(),
+                });
+            }
+            Message::DenoDownloaded(Err(e)) => self.deno = DenoState::Failed(e),
             Message::ImportInputChanged(s) => self.import_input = s,
             Message::Import => return self.start_import(),
             Message::PickCsv => {

@@ -128,7 +128,7 @@ Surco usa dos programas gratuitos para sacar el audio de YouTube:
 | macOS | Con [Homebrew](https://brew.sh): `brew install deno`. Sin Homebrew, en la Terminal: `curl -fsSL https://deno.land/install.sh \| sh` |
 | Linux | En una terminal: `curl -fsSL https://deno.land/install.sh \| sh` |
 
-Después de instalar deno, cerrá y volvé a abrir Surco. Si ya tenés `node` o `bun` instalados, Surco los usa y deno no hace falta.
+Si Surco no encuentra deno, en el Inicio aparece el botón **Instalar deno**, que lo baja solo. Si preferís instalarlo a mano, después cerrá y volvé a abrir Surco. Si ya tenés `node` o `bun` instalados, Surco los usa y deno no hace falta.
 
 ## Cómo se usa
 
