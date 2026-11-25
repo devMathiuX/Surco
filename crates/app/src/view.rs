@@ -46,7 +46,15 @@ impl Surco {
             self.view_player_bar()
         ]
         .into();
-        let layer = if let Some(menu) = &self.song_menu {
+        let layer = if let Some(i) = self.confirm_remove {
+            Some(self.view_confirm_remove(i))
+        } else if let Some(card) = self
+            .chooser_popup
+            .then(|| self.view_chooser_popup())
+            .flatten()
+        {
+            Some(card)
+        } else if let Some(menu) = &self.song_menu {
             Some(self.view_song_menu(menu))
         } else if let Some(i) = self.playlist_menu {
             Some(self.view_playlist_menu(i))
@@ -186,10 +194,7 @@ impl Surco {
                 .style(theme::card),
             tooltip::Position::Bottom,
         );
-        let logo: Element<'_, Message> = match &self.logo {
-            Some(h) => image(h.clone()).width(26).height(26).into(),
-            None => Space::new().into(),
-        };
+        let logo = icons::logo(28.0);
         let brand = button(
             row![logo, text("Surco").size(theme::SIZE_L)]
                 .spacing(8)
@@ -438,7 +443,7 @@ impl Surco {
                 theme::colors().text_secondary,
                 16.0,
             ))
-            .on_press(Message::RemovePlaylist(index))
+            .on_press(Message::AskRemovePlaylist(Some(index)))
             .padding(7)
             .style(theme::icon_button)
             .into(),
@@ -630,8 +635,10 @@ impl Surco {
                 .spacing(10),
             );
         }
-        if let Some(chooser) = self.view_chooser(index) {
-            col = col.push(chooser);
+        if !self.chooser_popup {
+            if let Some(chooser) = self.view_chooser(index) {
+                col = col.push(chooser);
+            }
         }
         col.push(
             scrollable(rows)
@@ -779,6 +786,35 @@ impl Surco {
                 .style(theme::switch)
         };
 
+        let scale = row![
+            button(text("−").size(theme::SIZE_M))
+                .on_press_maybe(
+                    (self.settings.ui_scale > crate::settings::SCALE_MIN)
+                        .then_some(Message::Setting(Change::Scale(-1)))
+                )
+                .padding([2, 12])
+                .style(theme::ghost_button),
+            text(format!("{} %", self.settings.ui_scale))
+                .size(theme::SIZE_S)
+                .width(56)
+                .align_x(iced::alignment::Horizontal::Center),
+            button(text("+").size(theme::SIZE_M))
+                .on_press_maybe(
+                    (self.settings.ui_scale < crate::settings::SCALE_MAX)
+                        .then_some(Message::Setting(Change::Scale(1)))
+                )
+                .padding([2, 12])
+                .style(theme::ghost_button),
+            button(text(tr!("Normal", "Reset")).size(theme::SIZE_S))
+                .on_press_maybe(
+                    (self.settings.ui_scale != 100).then_some(Message::Setting(Change::Scale(0)))
+                )
+                .padding([4, 10])
+                .style(theme::ghost_button),
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center);
+
         let body = column![
             text(tr!("Ajustes", "Settings")).size(theme::SIZE_L),
             column![
@@ -790,6 +826,17 @@ impl Surco {
                     )
                 ),
                 languages,
+            ]
+            .spacing(10),
+            column![
+                section(
+                    tr!("Tamaño de la interfaz", "Interface size"),
+                    tr!(
+                        "También con Ctrl + y Ctrl − (Ctrl 0 vuelve al normal).",
+                        "Also with Ctrl + and Ctrl − (Ctrl 0 resets it)."
+                    )
+                ),
+                scale,
             ]
             .spacing(10),
             column![
@@ -985,9 +1032,87 @@ impl Surco {
         col.into()
     }
 
-    /// Selector de video para una canción (los candidatos con su puntaje).
+    /// Selector de video arriba de la lista de la playlist.
     pub(crate) fn view_chooser(&self, playlist: usize) -> Option<Element<'_, Message>> {
         let at = self.choosing.filter(|(p, _)| *p == playlist)?;
+        Some(
+            container(self.chooser_body(at)?)
+                .padding(12)
+                .max_height(260)
+                .style(theme::surface)
+                .into(),
+        )
+    }
+
+    /// Selector de video flotando sobre el botón de la barra de abajo.
+    fn view_chooser_popup(&self) -> Option<Element<'_, Message>> {
+        const WIDTH: f32 = 520.0;
+        const HEIGHT: f32 = 300.0;
+        let at = self.choosing?;
+        let card = container(self.chooser_body(at)?)
+            .padding(14)
+            .width(WIDTH)
+            .max_height(HEIGHT)
+            .style(theme::dialog);
+        Some(self.anchored_at(
+            card,
+            iced::Size::new(WIDTH, HEIGHT),
+            Message::OpenChooser(None),
+            true,
+        ))
+    }
+
+    /// Confirmación antes de quitar una playlist.
+    fn view_confirm_remove(&self, index: usize) -> Element<'_, Message> {
+        let name = self
+            .playlists
+            .get(index)
+            .map(|(p, _)| p.name.as_str())
+            .unwrap_or_default();
+        let card = container(
+            column![
+                text(trf!("¿Quitar «{}»?", "Remove “{}”?", name)).size(theme::SIZE_M),
+                text(tr!(
+                    "Se borra de tu biblioteca junto con sus descargas. No se puede deshacer.",
+                    "It's removed from your library along with its downloads. This can't be undone."
+                ))
+                .size(theme::SIZE_S)
+                .style(theme::secondary_text),
+                row![
+                    Space::new().width(Length::Fill),
+                    button(text(tr!("Cancelar", "Cancel")).size(theme::SIZE_S))
+                        .on_press(Message::AskRemovePlaylist(None))
+                        .padding([6, 14])
+                        .style(theme::ghost_button),
+                    button(text(tr!("Quitar", "Remove")).size(theme::SIZE_S))
+                        .on_press(Message::RemovePlaylist(index))
+                        .padding([6, 14])
+                        .style(theme::danger_button),
+                ]
+                .spacing(8),
+            ]
+            .spacing(12),
+        )
+        .padding(20)
+        .width(380)
+        .style(theme::dialog);
+        let backdrop = iced::widget::mouse_area(
+            container(Space::new())
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .style(theme::scrim),
+        )
+        .on_press(Message::AskRemovePlaylist(None));
+        iced::widget::opaque(stack![
+            backdrop,
+            container(iced::widget::opaque(card))
+                .center_x(Length::Fill)
+                .center_y(Length::Fill),
+        ])
+    }
+
+    /// Lista de candidatos para elegir el video de la canción `at`.
+    fn chooser_body(&self, at: (usize, usize)) -> Option<Element<'_, Message>> {
         let track = self.track(at)?;
         let Some(TrackRes::Done(m)) = self.resolution(track) else {
             return None;
@@ -1048,10 +1173,8 @@ impl Surco {
         ]
         .align_y(Alignment::Center);
         Some(
-            container(column![header, scrollable(list).height(Length::Shrink)].spacing(8))
-                .padding(12)
-                .max_height(260)
-                .style(theme::surface)
+            column![header, scrollable(list).height(Length::Shrink)]
+                .spacing(8)
                 .into(),
         )
     }

@@ -618,7 +618,7 @@ impl Surco {
         }
         options = options.push(option(
             tr!("Quitar playlist", "Remove playlist").into(),
-            Message::RemovePlaylist(index),
+            Message::AskRemovePlaylist(Some(index)),
             true,
         ));
         let card = container(
@@ -742,8 +742,23 @@ impl Surco {
         size: Size,
         close: Message,
     ) -> Element<'a, Message> {
+        self.anchored_at(card, size, close, false)
+    }
+
+    /// Como [`anchored`](Self::anchored); con `above`, se abre hacia arriba.
+    pub(crate) fn anchored_at<'a>(
+        &self,
+        card: impl Into<Element<'a, Message>>,
+        size: Size,
+        close: Message,
+        above: bool,
+    ) -> Element<'a, Message> {
         let (at, window) = self.menu_at;
-        let pos = crate::pointer::place(at, size, window);
+        let pos = if above {
+            crate::pointer::place_above(at, size, window)
+        } else {
+            crate::pointer::place(at, size, window)
+        };
         let backdrop = mouse_area(
             container(Space::new())
                 .width(Length::Fill)

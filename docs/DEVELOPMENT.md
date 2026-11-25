@@ -6,7 +6,7 @@ Detalles técnicos de Surco: cómo compilarlo, cómo está armado y qué se midi
 
 - **CI** (`.github/workflows/ci.yml`): en cada PR y push a `main` corre en Linux `cargo fmt`, `clippy`, los tests y el build release.
 - **Release** (`.github/workflows/release.yml`): compila y empaqueta en Linux, Windows y macOS. Corre solo con un tag `v*` (y entonces publica un Release de GitHub con todos los archivos y sube el `.deb` al repositorio APT) o a mano desde la pestaña Actions ("Run workflow"), que deja los paquetes como artefactos del run.
-- Para publicar una versión: subir `version` en `[workspace.package]` de `Cargo.toml`, y después `git tag v0.5.5 && git push origin v0.5.5`.
+- Para publicar una versión: subir `version` en `[workspace.package]` de `Cargo.toml`, y después `git tag v0.5.6 && git push origin v0.5.6`.
 
 | Archivo | Sale de |
 |---|---|

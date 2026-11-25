@@ -79,6 +79,7 @@ fn main() -> anyhow::Result<()> {
         .theme(Surco::theme)
         .style(Surco::style)
         .subscription(Surco::subscription)
+        .scale_factor(|s: &Surco| s.settings.ui_scale as f32 / 100.0)
         .window(window::Settings {
             size: Size::new(1000.0, 640.0),
             min_size: Some(Size::new(800.0, 500.0)),
@@ -149,15 +150,6 @@ fn window_icon() -> Option<window::Icon> {
         .to_rgba8();
     let (w, h) = img.dimensions();
     window::icon::from_rgba(img.into_raw(), w, h).ok()
-}
-
-/// Logo para la barra lateral.
-fn logo() -> Option<image::Handle> {
-    let img = ::image::load_from_memory_with_format(ICON_PNG, ::image::ImageFormat::Png)
-        .ok()?
-        .to_rgba8();
-    let (w, h) = img.dimensions();
-    Some(image::Handle::from_rgba(w, h, img.into_raw()))
 }
 
 /// Carpeta del audio precargado.
@@ -278,6 +270,11 @@ struct Surco {
     song_menu: Option<playlists::SongMenu>,
     /// Playlist de la barra lateral con el menú de clic derecho abierto.
     playlist_menu: Option<usize>,
+    /// Playlist que se pidió quitar: espera la confirmación.
+    confirm_remove: Option<usize>,
+    /// El selector de video se abrió desde la barra de abajo: flota sobre
+    /// el botón en vez de ir arriba de la lista.
+    chooser_popup: bool,
     /// Menú de la flechita de una playlist descargada (borrar descargas).
     download_menu: Option<usize>,
     /// Último clic (y tamaño de la ventana), para abrir menús al lado.
@@ -307,7 +304,6 @@ struct Surco {
     /// Ícono en la bandeja (Windows) y la ventana escondida ahí.
     tray: Option<tray::Tray>,
     hidden: Option<window::Id>,
-    logo: Option<image::Handle>,
 }
 
 /// Qué lista se está arrastrando.
@@ -371,11 +367,15 @@ enum Message {
     /// La lista de la playlist se desplazó: (desplazamiento, alto visible).
     ListScrolled(f32, f32),
     RemovePlaylist(usize),
+    /// Pedir confirmación para quitar una playlist (`None` cancela).
+    AskRemovePlaylist(Option<usize>),
     FocusImport,
     PlayTrack(usize, usize),
     Resolved(String, Result<Match, String>),
     /// Abrir (o cerrar, con `None`) el selector de video de una canción.
     OpenChooser(Option<(usize, usize)>),
+    /// Abrir el selector de video flotando sobre el botón de la barra.
+    OpenChooserPopup((usize, usize)),
     ChooseVideo(String),
     /// Siguiente (`1`) o anterior (`-1`).
     Skip(isize),
@@ -554,6 +554,8 @@ impl Surco {
             home: home::HomeState::default(),
             song_menu: None,
             playlist_menu: None,
+            confirm_remove: None,
+            chooser_popup: false,
             download_menu: None,
             pointer: Default::default(),
             menu_at: Default::default(),
@@ -569,7 +571,6 @@ impl Surco {
             update: updater::Update::default(),
             tray: tray::create(),
             hidden: None,
-            logo: logo(),
         };
         state.restore();
         state.load_settings();
@@ -691,8 +692,13 @@ impl Surco {
                 self.open_playlist(i);
                 return self.on_playlist_opened();
             }
+            Message::AskRemovePlaylist(i) => {
+                self.playlist_menu = None;
+                self.confirm_remove = i;
+            }
             Message::RemovePlaylist(i) => {
                 self.playlist_menu = None;
+                self.confirm_remove = None;
                 self.forget_offline(i);
                 self.remove_playlist(i);
             }
@@ -702,8 +708,19 @@ impl Surco {
             }
             Message::PlayTrack(p, i) => return self.play_track(p, i),
             Message::Resolved(key, result) => return self.on_resolved(key, result),
-            Message::OpenChooser(at) => self.choosing = at,
-            Message::ChooseVideo(id) => return self.choose_video(&id),
+            Message::OpenChooser(at) => {
+                self.choosing = at;
+                self.chooser_popup = false;
+            }
+            Message::OpenChooserPopup(at) => {
+                self.menu_at = self.pointer;
+                self.choosing = Some(at);
+                self.chooser_popup = true;
+            }
+            Message::ChooseVideo(id) => {
+                self.chooser_popup = false;
+                return self.choose_video(&id);
+            }
             Message::Skip(dir) => return self.skip(dir),
             Message::ToggleShuffle => return self.toggle_shuffle(),
             Message::CycleRepeat => return self.cycle_repeat(),
@@ -1071,6 +1088,8 @@ impl Surco {
     fn page(&self) -> (Screen, Option<usize>, bool) {
         let dialog = self.song_menu.is_some()
             || self.playlist_menu.is_some()
+            || self.confirm_remove.is_some()
+            || self.chooser_popup
             || self.download_menu.is_some();
         (self.screen, self.selected, dialog)
     }
@@ -1126,6 +1145,12 @@ fn on_key(event: keyboard::Event) -> Option<Message> {
             Key::Character("f") | Key::Character("F") => Some(Message::OpenFilter),
             Key::Named(key::Named::ArrowLeft) => Some(Message::Skip(-1)),
             Key::Named(key::Named::ArrowRight) => Some(Message::Skip(1)),
+            // Tamaño de la interfaz, como en el navegador.
+            Key::Character("+") | Key::Character("=") => {
+                Some(Message::Setting(settings::Change::Scale(1)))
+            }
+            Key::Character("-") => Some(Message::Setting(settings::Change::Scale(-1))),
+            Key::Character("0") => Some(Message::Setting(settings::Change::Scale(0))),
             _ => None,
         };
     }

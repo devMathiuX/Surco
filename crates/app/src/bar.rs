@@ -235,7 +235,7 @@ impl Surco {
             // Las de la radio no tienen otros candidatos.
             (Some(at), Some(TrackRes::Done(m))) if !m.candidates.is_empty() => tooltip(
                 button(icons::icon(Kind::SwapVideo, theme::colors().text, 20.0))
-                    .on_press(Message::OpenChooser(Some(at)))
+                    .on_press(Message::OpenChooserPopup(at))
                     .padding(5)
                     .style(theme::icon_button),
                 container(

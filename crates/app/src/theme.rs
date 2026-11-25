@@ -372,6 +372,35 @@ pub fn primary_button(_: &Theme, status: button::Status) -> button::Style {
     }
 }
 
+/// Acción que borra algo: rellena con el color de peligro.
+pub fn danger_button(_: &Theme, status: button::Status) -> button::Style {
+    let c = colors();
+    let alpha = match status {
+        button::Status::Hovered | button::Status::Pressed => 0.85,
+        _ => 1.0,
+    };
+    button::Style {
+        background: Some(
+            Color {
+                a: alpha,
+                ..c.danger
+            }
+            .into(),
+        ),
+        text_color: Color::WHITE,
+        border: border::rounded(RADIUS),
+        ..button::Style::default()
+    }
+}
+
+/// Velo oscuro detrás de un diálogo.
+pub fn scrim(_: &Theme) -> container::Style {
+    container::Style {
+        background: Some(Color::from_rgba(0.0, 0.0, 0.0, 0.45).into()),
+        ..container::Style::default()
+    }
+}
+
 pub fn ghost_button(_: &Theme, status: button::Status) -> button::Style {
     let c = colors();
     let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);

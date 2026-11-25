@@ -187,6 +187,15 @@ pub fn place(at: Point, size: Size, window: Size) -> Point {
     Point::new(x, y)
 }
 
+/// Como [`place`], pero el menú se abre hacia arriba del mouse (para los
+/// botones de la barra de abajo); si no entra arriba, se baja lo justo.
+pub fn place_above(at: Point, size: Size, window: Size) -> Point {
+    const GAP: f32 = 4.0;
+    let below = place(at, size, window);
+    let y = (at.y - GAP - size.height).max(0.0);
+    Point::new(below.x, y)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -209,5 +218,17 @@ mod tests {
             place(Point::new(100.0, 600.0), menu, win),
             Point::new(104.0, 440.0)
         );
+    }
+
+    #[test]
+    fn bar_menus_open_above() {
+        let win = Size::new(1000.0, 700.0);
+        let menu = Size::new(300.0, 200.0);
+        assert_eq!(
+            place_above(Point::new(900.0, 680.0), menu, win),
+            Point::new(596.0, 476.0)
+        );
+        // Sin lugar arriba: pegado al borde de arriba.
+        assert_eq!(place_above(Point::new(10.0, 50.0), menu, win).y, 0.0);
     }
 }

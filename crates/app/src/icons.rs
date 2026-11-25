@@ -443,3 +443,93 @@ pub fn glyph<'a, Message: 'a>(kind: Kind, color: Color, size: f32) -> Element<'a
         .align_x(iced::alignment::Horizontal::Center)
         .into()
 }
+
+/// Logo de Surco: un vinilo con la etiqueta del color de acento y una "S"
+/// de dos semicírculos. Es el mismo dibujo que el ícono de la app
+/// (`packaging/icons/make_icons.py`), pero sigue al tema.
+struct Logo {
+    accent: Color,
+}
+
+impl<Message> canvas::Program<Message> for Logo {
+    type State = ();
+
+    fn draw(
+        &self,
+        _state: &(),
+        renderer: &Renderer,
+        _theme: &Theme,
+        bounds: Rectangle,
+        _cursor: mouse::Cursor,
+    ) -> Vec<Geometry> {
+        let mut frame = Frame::new(renderer, bounds.size());
+        let size = bounds.width.min(bounds.height);
+        let c = Point::new(size / 2.0, size / 2.0);
+        let big = size * 0.48;
+        let disc = Color::from_rgb8(0x14, 0x14, 0x16);
+        let groove = Color::from_rgb8(0x2C, 0x2C, 0x30);
+
+        frame.fill(&Path::circle(c, big), disc);
+        // Surcos (en tamaños chicos alcanza con uno).
+        let grooves: &[f32] = if size < 32.0 {
+            &[0.74]
+        } else {
+            &[0.86, 0.74, 0.62]
+        };
+        for k in grooves {
+            frame.stroke(
+                &Path::circle(c, big * k),
+                Stroke::default()
+                    .with_color(groove)
+                    .with_width((size * 0.012).max(0.8)),
+            );
+        }
+        // Brillo: dos cuñas claras opuestas.
+        let r = big * 0.95;
+        for start in [200.0_f32, 20.0] {
+            let wedge = Path::new(|b| {
+                b.move_to(c);
+                b.arc(path::Arc {
+                    center: c,
+                    radius: r,
+                    start_angle: start.to_radians().into(),
+                    end_angle: (start + 50.0).to_radians().into(),
+                });
+                b.close();
+            });
+            frame.fill(&wedge, Color::from_rgba(1.0, 1.0, 1.0, 0.10));
+        }
+        // Etiqueta.
+        let label = big * 0.47;
+        frame.fill(&Path::circle(c, label), self.accent);
+        // "S": dos semicírculos que se tocan en el centro.
+        let sr = label * 0.36;
+        let ink = Stroke::default()
+            .with_color(disc)
+            .with_width(label * 0.20)
+            .with_line_cap(stroke::LineCap::Butt);
+        let half = |center: Point, from: f32, to: f32| {
+            Path::new(|b| {
+                b.arc(path::Arc {
+                    center,
+                    radius: sr,
+                    start_angle: from.to_radians().into(),
+                    end_angle: to.to_radians().into(),
+                })
+            })
+        };
+        frame.stroke(&half(Point::new(c.x, c.y - sr), 90.0, 330.0), ink);
+        frame.stroke(&half(Point::new(c.x, c.y + sr), 270.0, 510.0), ink);
+        vec![frame.into_geometry()]
+    }
+}
+
+/// Logo de Surco de `size` px, con el acento del tema.
+pub fn logo<'a, Message: 'a>(size: f32) -> Element<'a, Message> {
+    Canvas::new(Logo {
+        accent: theme::colors().accent,
+    })
+    .width(Length::Fixed(size))
+    .height(Length::Fixed(size))
+    .into()
+}
