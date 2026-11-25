@@ -278,14 +278,18 @@ impl Surco {
 
     // ── Descargas ──────────────────────────────────────────────────────────
 
-    /// Recalcula cuánto hay descargado de cada playlist.
+    /// Recalcula cuánto hay descargado de cada playlist descargada.
     pub(crate) fn refresh_downloads(&mut self) {
         let Some(cache) = self.provider.as_ref().and_then(|p| p.audio_cache()) else {
             self.downloads.clear();
             return;
         };
         let mut out = Downloads::new();
-        for (p, _) in &self.playlists {
+        for (p, _) in self
+            .playlists
+            .iter()
+            .filter(|(p, _)| self.offline.contains(&p.id))
+        {
             let mut seen = std::collections::HashSet::new();
             let (mut files, mut bytes) = (0, 0);
             for t in &p.tracks {

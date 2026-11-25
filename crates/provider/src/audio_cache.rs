@@ -48,11 +48,14 @@ impl AudioCache {
         }
     }
 
-    /// Cambia los videos fijados (los de las playlists descargadas).
-    pub fn set_pinned(&self, videos: HashSet<String>) {
-        if let Ok(mut p) = self.pinned.lock() {
-            *p = videos;
-        }
+    /// Cambia los videos fijados (los de las playlists descargadas) y
+    /// devuelve los que estaban fijados y ya no.
+    pub fn set_pinned(&self, videos: HashSet<String>) -> Vec<String> {
+        let Ok(mut p) = self.pinned.lock() else {
+            return Vec::new();
+        };
+        let old = std::mem::replace(&mut *p, videos);
+        old.into_iter().filter(|v| !p.contains(v)).collect()
     }
 
     pub fn is_pinned(&self, video: &str) -> bool {
@@ -199,7 +202,7 @@ mod tests {
     fn pinned_are_never_evicted_nor_cleared() {
         let dir = temp_dir("pinned");
         let c = AudioCache::new(&dir, 15);
-        c.set_pinned(["aaaaaaaaaaa".to_owned()].into());
+        assert!(c.set_pinned(["aaaaaaaaaaa".to_owned()].into()).is_empty());
         c.put("aaaaaaaaaaa", b"0123456789").unwrap();
         std::thread::sleep(Duration::from_millis(20));
         c.put("bbbbbbbbbbb", b"0123456789").unwrap();
@@ -212,6 +215,7 @@ mod tests {
         c.clear();
         assert!(c.contains("aaaaaaaaaaa"));
         assert!(!c.contains("ccccccccccc"));
+        assert_eq!(c.set_pinned(HashSet::new()), vec!["aaaaaaaaaaa".to_owned()]);
         let _ = std::fs::remove_dir_all(dir);
     }
 

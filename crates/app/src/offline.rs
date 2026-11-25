@@ -6,8 +6,12 @@
 //! - Sus videos quedan "fijados" en la caché de audio: no cuentan para el
 //!   tope y nunca se borran solos.
 //! - Al dejar de descargarla, o al quitar la playlist, se borra el audio de
-//!   las canciones que no estén en otra playlist descargada. El resto de la
-//!   caché (precarga y lo que sonó) se borra solo cuando hace falta lugar.
+//!   las canciones que no estén en otra playlist descargada. Lo mismo pasa
+//!   con una canción que sale de una playlist descargada (o a la que se le
+//!   cambia el video).
+//! - El resto de la caché (la precarga) es temporal: se borra al abrir
+//!   Surco. Así, lo único que queda guardado de una vez para otra es lo de
+//!   las playlists descargadas.
 
 use std::collections::HashSet;
 
@@ -54,10 +58,33 @@ impl Surco {
             .collect()
     }
 
-    /// Fija en la caché el audio de las playlists descargadas.
+    /// Fija en la caché el audio de las playlists descargadas y borra el de
+    /// las canciones que dejaron de estar en alguna (las sacaron de la
+    /// playlist o se eligió otro video).
     pub(crate) fn update_pins(&self) {
         if let Some(cache) = self.provider.as_ref().and_then(|p| p.audio_cache()) {
-            cache.set_pinned(self.offline_videos(None));
+            for v in cache.set_pinned(self.offline_videos(None)) {
+                if cache.remove(&v) > 0 {
+                    tracing::info!(video = %v, "audio que ya no está en una playlist descargada, borrado");
+                }
+            }
+        }
+    }
+
+    /// Al arrancar: borra la precarga de la vez anterior. Solo queda el audio
+    /// de las playlists descargadas (tiene que ir después de cargar la
+    /// biblioteca y fijar sus videos).
+    pub(crate) fn drop_temporary_audio(&self) {
+        if let Some(cache) = self.provider.as_ref().and_then(|p| p.audio_cache()) {
+            let before = cache.usage();
+            cache.clear();
+            let after = cache.usage();
+            if before.files > after.files {
+                tracing::info!(
+                    files = before.files - after.files,
+                    "precarga de la vez anterior borrada"
+                );
+            }
         }
     }
 
