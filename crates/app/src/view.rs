@@ -21,7 +21,15 @@ const SIDEBAR_COVER: f32 = 28.0;
 impl Surco {
     pub(crate) fn view(&self) -> Element<'_, Message> {
         let main: Element<'_, Message> = match self.screen {
-            Screen::Welcome => return self.with_backdrop(self.view_welcome()),
+            Screen::Welcome => {
+                // El diálogo de herramientas también va encima de la bienvenida:
+                // se bajan mientras se elige el tema.
+                let welcome = self.with_backdrop(self.view_welcome());
+                return match self.view_tools_popup() {
+                    Some(popup) => stack![welcome, popup].into(),
+                    None => welcome,
+                };
+            }
             Screen::Settings => self.view_settings(),
             Screen::Queue => self.view_queue(),
             Screen::Search => self.view_search(),
@@ -85,7 +93,9 @@ impl Surco {
             .into()
         };
         let app = self.with_backdrop(app);
-        let layer = if let Some(i) = self.confirm_remove {
+        let layer = if let Some(card) = self.view_tools_popup() {
+            Some(card)
+        } else if let Some(i) = self.confirm_remove {
             Some(self.view_confirm_remove(i))
         } else if let Some(card) = self
             .chooser_popup

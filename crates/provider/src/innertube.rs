@@ -20,13 +20,15 @@ const ONLY_VIDEOS: &str = "EgIQAQ%3D%3D";
 const ONLY_CHANNELS: &str = "EgIQAg%3D%3D";
 const ONLY_PLAYLISTS: &str = "EgIQAw%3D%3D";
 
-/// Cliente de YouTube para pedir el audio: el de los visores de realidad
-/// virtual no necesita resolver el desafío de JavaScript ni PO token.
-const VR_NAME: &str = "ANDROID_VR";
-const VR_ID: &str = "28";
-const VR_VERSION: &str = "1.65.10";
-pub(crate) const VR_USER_AGENT: &str = "com.google.android.apps.youtube.vr.oculus/1.65.10 \
-     (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip";
+/// Cliente de YouTube para pedir el audio: el de Apple Vision Pro, el mismo
+/// que yt-dlp usa cuando no hay runtime de JavaScript. No necesita resolver
+/// el desafío de JavaScript ni PO token. (El de Android VR, que usaba la
+/// 0.6.3, recibe 403 en todos los formatos desde agosto de 2026.)
+const VR_NAME: &str = "VISIONOS";
+const VR_ID: &str = "101";
+const VR_VERSION: &str = "1.02";
+pub(crate) const VR_USER_AGENT: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 15_7_3) \
+     AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Safari/605.1.15";
 
 /// Fallos seguidos tras los cuales se deja de usar en la sesión.
 const MAX_FAILURES: u32 = 3;
@@ -296,19 +298,18 @@ fn parse_suggestions(bytes: &[u8]) -> Result<Vec<String>> {
         .collect())
 }
 
-/// URL del audio pedida directamente a YouTube con el cliente de visores de
-/// realidad virtual. `client` tiene que salir por IPv4, igual que la descarga
+/// URL del audio pedida directamente a YouTube con el cliente de Vision Pro. `client` tiene que salir por IPv4, igual que la descarga
 /// (la URL queda atada a la IP que la pidió).
 pub(crate) async fn player(client: &reqwest::Client, video: &str) -> Result<StreamInfo> {
     let body = json!({
         "context": {"client": {
             "clientName": VR_NAME,
             "clientVersion": VR_VERSION,
-            "deviceMake": "Oculus",
-            "deviceModel": "Quest 3",
-            "androidSdkVersion": 32,
-            "osName": "Android",
-            "osVersion": "12L",
+            "deviceMake": "Apple",
+            "deviceModel": "RealityDevice17,1",
+            "userAgent": VR_USER_AGENT,
+            "osName": "visionOS",
+            "osVersion": "26.5.23O471",
             "hl": "en",
             "gl": "US",
         }},

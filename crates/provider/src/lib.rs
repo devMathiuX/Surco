@@ -30,7 +30,7 @@ pub fn stream_client() -> HttpClient {
         .unwrap_or_default()
 }
 
-pub use deno::{download_deno, set_tools_dir, DENO_BINARY};
+pub use deno::{download_deno, refresh_deno, set_tools_dir, DENO_BINARY};
 pub use http_stream::{download_all, download_all_with, HttpStream, StreamProgress};
 pub use reqwest::Client as HttpClient;
 pub use ytdlp::{js_runtime, Listing, SearchResult, StreamInfo, YtDlp, AUDIO_FORMAT, BINARY_NAME};
@@ -112,6 +112,9 @@ pub struct Provider {
     direct_urls: Mutex<HashSet<String>>,
     /// Fallos del pedido directo en esta sesión.
     direct_failures: AtomicU32,
+    /// De dónde salió la última URL rechazada de cada video (ver
+    /// [`invalidate`](Self::invalidate)).
+    rejected: Mutex<HashMap<String, Source>>,
 }
 
 impl Provider {
@@ -126,6 +129,7 @@ impl Provider {
             direct: false,
             direct_urls: Mutex::new(HashSet::new()),
             direct_failures: AtomicU32::new(0),
+            rejected: Mutex::new(HashMap::new()),
         }
     }
 
@@ -213,11 +217,23 @@ impl Provider {
                 return Ok(info);
             }
         }
-        // Después de un rechazo (`refresh`) va directo al cliente normal.
-        if !refresh && self.direct_enabled() {
+        // Después de un rechazo (`refresh`) no se repite lo que falló: si
+        // YouTube rechazó la URL directa se prueba el cliente rápido de
+        // yt-dlp, y si rechazó ese, el normal.
+        let rejected = if refresh {
+            self.rejected
+                .lock()
+                .ok()
+                .and_then(|r| r.get(video).copied())
+                .or(Some(Source::Normal))
+        } else {
+            None
+        };
+        let try_fast = matches!(rejected, None | Some(Source::Direct));
+        if rejected.is_none() && self.direct_enabled() {
             match innertube::player(direct_client(), video).await {
                 Ok(info) => {
-                    tracing::debug!(video, "URL de stream pedida directo a YouTube");
+                    tracing::info!(video, "URL del audio pedida directo a YouTube");
                     self.remember(video, &info, Source::Direct);
                     return Ok(info);
                 }
@@ -227,14 +243,14 @@ impl Provider {
                 }
             }
         }
-        if !refresh && self.fast_enabled() {
+        if try_fast && self.fast_enabled() {
             match self
                 .ytdlp
                 .stream_info_with(video, Some(FAST_CLIENT), FAST_TIMEOUT)
                 .await
             {
                 Ok(info) if info.is_supported() => {
-                    tracing::debug!(video, "URL de stream con el cliente rápido");
+                    tracing::info!(video, "URL del audio con yt-dlp (cliente rápido)");
                     self.remember(video, &info, Source::Fast);
                     return Ok(info);
                 }
@@ -251,6 +267,7 @@ impl Provider {
             }
         }
         let info = self.ytdlp.stream_info(video).await?;
+        tracing::info!(video, "URL del audio con yt-dlp (cliente normal)");
         self.remember(video, &info, Source::Normal);
         Ok(info)
     }
@@ -317,12 +334,18 @@ impl Provider {
         if let Ok(mut cache) = self.cache.lock() {
             cache.remove(video);
         }
-        // YouTube rechazó una URL del cliente rápido: cuenta como fallo.
+        // YouTube rechazó una URL del cliente rápido o directa: cuenta como fallo.
+        let mut source = Source::Normal;
         if self.fast_urls.lock().is_ok_and(|mut s| s.remove(video)) {
             self.fast_failed();
+            source = Source::Fast;
         }
         if self.direct_urls.lock().is_ok_and(|mut s| s.remove(video)) {
             self.direct_failed();
+            source = Source::Direct;
+        }
+        if let Ok(mut r) = self.rejected.lock() {
+            r.insert(video.to_owned(), source);
         }
     }
 
@@ -398,6 +421,19 @@ mod tests {
         .unwrap();
         std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
         (script, log)
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn rejected_direct_url_retries_with_the_fast_client() {
+        let (script, log) = fake_ytdlp("direct", true);
+        let p = Provider::new(YtDlp::new(&script));
+        // Una URL directa que YouTube rechazó (403).
+        p.remember("aqz-KE-bpKQ", &info(), Source::Direct);
+        p.invalidate("aqz-KE-bpKQ");
+        p.stream_info("aqz-KE-bpKQ", true).await.unwrap();
+        let calls = std::fs::read_to_string(&log).unwrap();
+        assert_eq!(calls.lines().collect::<Vec<_>>(), ["fast"]);
     }
 
     #[cfg(unix)]

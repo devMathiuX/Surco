@@ -151,6 +151,56 @@ fn read_entry(zip: &[u8], e: &Entry<'_>) -> Result<Vec<u8>> {
     }
 }
 
+/// Cada cuánto se fija si hay un deno nuevo.
+const CHECK_EVERY: std::time::Duration = std::time::Duration::from_secs(24 * 60 * 60);
+
+/// Si en `dir` hay un deno que bajó Surco y salió uno nuevo, lo actualiza
+/// (como mucho una vez por día). Devuelve la ruta si lo actualizó.
+pub async fn refresh_deno(client: &reqwest::Client, dir: &Path) -> Result<Option<PathBuf>> {
+    let path = dir.join(DENO_BINARY);
+    if !path.is_file() {
+        return Ok(None);
+    }
+    let stamp = dir.join(".deno_check");
+    let recent = std::fs::metadata(&stamp)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.elapsed().ok())
+        .is_some_and(|age| age < CHECK_EVERY);
+    if recent {
+        return Ok(None);
+    }
+    let asset = ASSET.ok_or_else(|| Error::Parse("no hay deno para este sistema".into()))?;
+    let latest =
+        crate::ytdlp::latest_tag("https://github.com/denoland/deno/releases", asset).await?;
+    let _ = std::fs::write(&stamp, &latest);
+    let out = tokio::process::Command::new(&path)
+        .arg("--version")
+        .stdin(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .kill_on_drop(true)
+        .output()
+        .await;
+    let installed = out
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .and_then(|s| parse_deno_version(&s).map(str::to_owned));
+    if installed.as_deref() == Some(latest.trim_start_matches('v')) {
+        return Ok(None);
+    }
+    tracing::info!(?installed, %latest, "actualizando deno");
+    download_deno(client, dir).await.map(Some)
+}
+
+/// `deno 2.5.6 (stable, release, x86_64-unknown-linux-gnu)` → `2.5.6`.
+fn parse_deno_version(out: &str) -> Option<&str> {
+    out.lines()
+        .next()?
+        .strip_prefix("deno ")?
+        .split_whitespace()
+        .next()
+}
+
 /// Saca el archivo `name` de un zip (guardado o comprimido con deflate),
 /// leyendo el directorio central del final.
 pub(crate) fn extract(zip: &[u8], name: &str) -> Result<Vec<u8>> {
@@ -209,6 +259,35 @@ mod tests {
         assert_eq!(extract(ZIP, "README.txt").unwrap(), b"hola");
         assert!(extract(ZIP, "deno.exe").is_err());
         assert!(extract(b"no es un zip", "deno").is_err());
+    }
+
+    /// Un deno viejo se reemplaza por el último:
+    /// `cargo test -p surco-provider real_refresh_deno -- --ignored`.
+    #[cfg(unix)]
+    #[tokio::test]
+    #[ignore = "usa la red"]
+    async fn real_refresh_deno() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("surco-deno-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let old = dir.join(DENO_BINARY);
+        std::fs::write(&old, "#!/bin/sh\necho 'deno 0.0.1 (stable)'\n").unwrap();
+        std::fs::set_permissions(&old, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let client = reqwest::Client::new();
+        assert!(refresh_deno(&client, &dir).await.unwrap().is_some());
+        // Ya revisado hoy: no vuelve a mirar.
+        assert!(refresh_deno(&client, &dir).await.unwrap().is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn reads_deno_version() {
+        assert_eq!(
+            parse_deno_version("deno 2.5.6 (stable, release, x86_64-unknown-linux-gnu)\nv8 14.0"),
+            Some("2.5.6")
+        );
+        assert_eq!(parse_deno_version("otra cosa"), None);
     }
 
     #[test]

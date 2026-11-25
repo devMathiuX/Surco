@@ -230,6 +230,8 @@ struct Current {
     spec: Option<AudioSpec>,
     /// Re-resoluciones hechas por URL vencida.
     retries: u32,
+    /// Cuándo se pidió (para medir cuánto tardó en sonar).
+    since: std::time::Instant,
 }
 
 /// La canción pre-cargada.
@@ -454,6 +456,7 @@ impl Engine {
             shared: None,
             spec: None,
             retries,
+            since: std::time::Instant::now(),
         });
         if let Err(e) = &self.output {
             self.fail(format!("no hay salida de audio: {e}"));
@@ -521,6 +524,7 @@ impl Engine {
             rate = spec.rate,
             channels = spec.channels,
             ?duration,
+            ms = cur.since.elapsed().as_millis() as u64,
             "reproduciendo"
         );
     }
@@ -742,6 +746,7 @@ impl Engine {
             shared: n.shared,
             spec: if n.appended { n.spec } else { None },
             retries: 0,
+            since: std::time::Instant::now(),
         });
         if n.appended {
             // Ya estaba encolada detrás de la vieja: suena enseguida.
@@ -888,10 +893,12 @@ async fn open_source(
             }
             let mut refresh = refresh;
             for attempt in 0..=EXPIRED_RETRIES {
+                let t0 = std::time::Instant::now();
                 let info = provider
                     .stream_info(&video, refresh)
                     .await
                     .map_err(|e| e.to_string())?;
+                let url_ms = t0.elapsed().as_millis() as u64;
                 if !info.is_supported() {
                     return Err(format!(
                         "YouTube solo ofrece este audio en formato {}, que todavía no está soportado",
@@ -906,6 +913,12 @@ async fn open_source(
                 .await
                 {
                     Ok(stream) => {
+                        tracing::info!(
+                            video,
+                            url_ms,
+                            first_chunk_ms = t0.elapsed().as_millis() as u64 - url_ms,
+                            "audio abierto"
+                        );
                         // Bajada entera, queda en la caché de disco: si se
                         // vuelve a escuchar (o se retoma al abrir) no espera.
                         if let Some(cache) = provider.audio_cache().cloned() {

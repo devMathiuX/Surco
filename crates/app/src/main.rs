@@ -26,6 +26,7 @@ mod settings;
 mod skeleton;
 mod spotify_keys;
 mod theme;
+mod tools;
 mod tray;
 mod updater;
 mod view;
@@ -110,8 +111,9 @@ fn init_logging() -> Option<tracing_appender::non_blocking::WorkerGuard> {
     use tracing_subscriber::prelude::*;
     use tracing_subscriber::{fmt, EnvFilter};
 
-    let filter =
-        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("surco=info,warn"));
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+        EnvFilter::new("surco=info,surco_player=info,surco_provider=info,warn")
+    });
     let (file_layer, guard) = match log_dir().and_then(|dir| {
         // Si la carpeta no existe, tracing-appender se queja al limpiar logs viejos.
         std::fs::create_dir_all(&dir).ok()?;
@@ -279,6 +281,8 @@ struct Surco {
     playlist_menu: Option<usize>,
     /// Playlist que se pidió quitar: espera la confirmación.
     confirm_remove: Option<usize>,
+    /// Diálogo para bajar las herramientas que faltan (ver `tools`).
+    tools_popup: bool,
     /// El selector de video se abrió desde la barra de abajo: flota sobre
     /// el botón en vez de ir arriba de la lista.
     chooser_popup: bool,
@@ -370,6 +374,12 @@ enum Message {
     YtDlpRefreshed(Result<Option<PathBuf>, String>),
     DownloadDeno,
     DenoDownloaded(Result<PathBuf, String>),
+    /// Diálogo de herramientas faltantes (abrir o cerrar).
+    ToolsPopup(bool),
+    /// No hace nada (tareas que solo dejan un log).
+    Noop,
+    /// "Descargar" en ese diálogo: baja yt-dlp y deno si faltan.
+    DownloadTools,
     ImportInputChanged(String),
     Import,
     PickCsv,
@@ -474,10 +484,12 @@ impl Surco {
         }
         match surco_provider::js_runtime() {
             Some(rt) => tracing::info!(runtime = rt, "runtime de JavaScript para yt-dlp"),
-            None => {
+            // Si se está bajando (diálogo de herramientas), no se pisa.
+            None if self.deno == DenoState::Ok => {
                 tracing::warn!("no hay deno, node ni bun: YouTube puede rechazar el audio (403)");
                 self.deno = DenoState::Missing;
             }
+            None => {}
         }
     }
 
@@ -569,6 +581,7 @@ impl Surco {
             song_menu: None,
             playlist_menu: None,
             confirm_remove: None,
+            tools_popup: false,
             chooser_popup: false,
             download_menu: None,
             pointer: Default::default(),
@@ -595,6 +608,7 @@ impl Surco {
         let resume = state.restore_resume();
         state.drop_temporary_audio();
         state.check_js_runtime();
+        state.maybe_ask_tools();
         let covers = state.queue_list_covers();
         let home = state.refresh_home();
         // Los controles del sistema necesitan la ventana (HWND en Windows).
@@ -605,9 +619,10 @@ impl Surco {
             })
             .map(Message::WindowHandle);
         let ytdlp = state.refresh_ytdlp();
+        let deno = state.refresh_deno();
         (
             state,
-            Task::batch([handle, covers, home, updater::check(), ytdlp, resume]),
+            Task::batch([handle, covers, home, updater::check(), ytdlp, deno, resume]),
         )
     }
 
@@ -667,9 +682,13 @@ impl Surco {
                 self.send(Command::SetProvider(provider));
                 self.ytdlp = YtDlpState::Found(path);
                 self.check_js_runtime();
+                self.tools_changed();
                 return self.resolve_in_background();
             }
-            Message::YtDlpDownloaded(Err(e)) => self.ytdlp = YtDlpState::Failed(e),
+            Message::YtDlpDownloaded(Err(e)) => {
+                self.ytdlp = YtDlpState::Failed(e);
+                self.tools_changed();
+            }
             Message::YtDlpRefreshed(Ok(Some(path))) => {
                 tracing::info!(path = %path.display(), "yt-dlp actualizado");
                 return self.update(Message::YtDlpDownloaded(Ok(path)));
@@ -690,8 +709,15 @@ impl Surco {
                     error: false,
                     text: tr!("deno instalado.", "deno installed.").into(),
                 });
+                self.tools_changed();
             }
-            Message::DenoDownloaded(Err(e)) => self.deno = DenoState::Failed(e),
+            Message::DenoDownloaded(Err(e)) => {
+                self.deno = DenoState::Failed(e);
+                self.tools_changed();
+            }
+            Message::ToolsPopup(open) => self.tools_popup = open,
+            Message::Noop => {}
+            Message::DownloadTools => return self.download_tools(),
             Message::ImportInputChanged(s) => self.import_input = s,
             Message::Import => return self.start_import(),
             Message::PickCsv => {
@@ -1144,6 +1170,7 @@ impl Surco {
         let dialog = self.song_menu.is_some()
             || self.playlist_menu.is_some()
             || self.confirm_remove.is_some()
+            || self.tools_popup
             || self.chooser_popup
             || self.download_menu.is_some();
         (self.screen, self.selected, dialog)
