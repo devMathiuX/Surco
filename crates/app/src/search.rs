@@ -572,6 +572,7 @@ impl Surco {
                 .spacing(2)
                 .width(Length::Fill)
                 .clip(true),
+                icons::waves_if(playing),
                 add,
                 text(format_duration(track.duration_ms))
                     .size(theme::SIZE_S)
@@ -581,9 +582,9 @@ impl Surco {
             .align_y(Alignment::Center),
         )
         .on_press(on_play)
-        .padding([4, 8])
+        .padding([5, 8])
         .width(Length::Fill)
-        .style(theme::list_button(playing));
+        .style(theme::song_row(playing));
         with_hover(
             iced::widget::mouse_area(row).on_right_press(menu),
             &track,
@@ -623,7 +624,7 @@ impl Surco {
                     Message::Search(SearchMsg::PlaySong(i)),
                 )
             }))
-            .spacing(2);
+            .spacing(theme::row_gap());
             col = col.push(column![section(tr!("Canciones", "Songs")), list].spacing(10));
         }
         if !r.playlists.is_empty() {
@@ -684,7 +685,7 @@ impl Surco {
                 Message::Search(SearchMsg::PlayPreview(i)),
             )
         }))
-        .spacing(2);
+        .spacing(theme::row_gap());
         column![
             column![
                 text(&p.title).size(theme::SIZE_L),
@@ -751,14 +752,10 @@ fn with_hover<'a>(
 /// playlist (`from`: playlist y posición, para poder quitarla de ahí).
 pub fn add_button<'a>(track: &Track, from: Option<(usize, usize)>) -> Element<'a, Message> {
     iced::widget::tooltip(
-        button(icons::glyph(
-            Kind::Add,
-            theme::colors().text_secondary,
-            14.0,
-        ))
-        .on_press(song_menu(track, from))
-        .padding(6)
-        .style(theme::icon_button),
+        button(icons::glyph(Kind::Add, theme::add_icon(), 14.0))
+            .on_press(song_menu(track, from))
+            .padding([2, 4])
+            .style(theme::add_button),
         container(text(tr!("Agregar a…", "Add to…")).size(theme::SIZE_S))
             .padding(6)
             .style(theme::card),

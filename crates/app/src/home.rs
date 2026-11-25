@@ -20,7 +20,7 @@ const TILES: usize = 8;
 const RECENT_SONGS: usize = 8;
 /// Historial que se lee para armar esa lista (con repetidas).
 const HISTORY_READ: usize = 120;
-const TILE_WIDTH: f32 = 250.0;
+const TILE_WIDTH: f32 = 270.0;
 const TILE_COVER: f32 = 52.0;
 
 /// Lo que muestra el inicio (se recalcula al entrar).
@@ -80,10 +80,9 @@ impl Surco {
             .iter()
             .filter_map(|(_, v)| v.clone())
             .collect();
+        // Portadas de las playlists (inicio y barra lateral).
         videos.extend(
-            self.home_playlists()
-                .into_iter()
-                .filter_map(|i| self.playlist_cover(i).map(str::to_owned)),
+            (0..self.playlists.len()).filter_map(|i| self.playlist_cover(i).map(str::to_owned)),
         );
         Task::batch(
             videos
@@ -115,7 +114,7 @@ impl Surco {
     }
 
     /// Video de la primera canción encontrada de una playlist (su portada).
-    fn playlist_cover(&self, p: usize) -> Option<&str> {
+    pub(crate) fn playlist_cover(&self, p: usize) -> Option<&str> {
         let (playlist, _) = self.playlists.get(p)?;
         playlist.tracks.iter().find_map(|t| self.video_of_track(t))
     }
@@ -154,7 +153,7 @@ impl Surco {
         .spacing(10)
         .align_y(Alignment::Center);
 
-        let mut col = column![text(tr!("Inicio", "Home")).size(theme::SIZE_L), search].spacing(18);
+        let mut col = column![search].spacing(18);
 
         if let Some(banner) = self.view_ytdlp_banner() {
             col = col.push(banner);
@@ -191,15 +190,17 @@ impl Surco {
             let tiles = row(self.home_playlists().into_iter().map(|i| self.tile(i))).spacing(10);
             col = col.push(
                 column![
-                    text(if self.home.recent_playlists.is_empty() {
-                        tr!("Tus playlists", "Your playlists")
-                    } else {
-                        tr!("Escuchadas hace poco", "Recently played")
-                    })
-                    .size(theme::SIZE_M),
+                    heading(
+                        if self.home.recent_playlists.is_empty() {
+                            tr!("Tus playlists", "Your playlists")
+                        } else {
+                            tr!("Escuchadas hace poco", "Recently played")
+                        },
+                        true
+                    ),
                     tiles.wrap().vertical_spacing(10)
                 ]
-                .spacing(10),
+                .spacing(12),
             );
         }
 
@@ -212,13 +213,13 @@ impl Surco {
                     .enumerate()
                     .map(|(i, (t, v))| self.recent_row(i, t, v.as_deref())),
             )
-            .spacing(2);
+            .spacing(theme::row_gap());
             col = col.push(
                 column![
-                    text(tr!("Canciones que escuchaste", "Songs you played")).size(theme::SIZE_M),
+                    heading(tr!("Canciones que escuchaste", "Songs you played"), false),
                     list
                 ]
-                .spacing(10),
+                .spacing(12),
             );
         }
 
@@ -249,26 +250,65 @@ impl Surco {
         } else {
             crate::view::songs(p.tracks.len())
         };
+        let detail: Element<'_, Message> = if theme::colors().look == theme::Look::Brutal {
+            container(text(detail).size(theme::SIZE_S).color(iced::Color::BLACK))
+                .padding([1, 6])
+                .style(theme::badge)
+                .into()
+        } else {
+            text(detail)
+                .size(theme::SIZE_S)
+                .style(theme::secondary_text)
+                .into()
+        };
+        // Play directo: si ya suena esta playlist, pausa.
+        let this_playing = self.active.as_ref().is_some_and(|a| a.origin == Some(i))
+            && matches!(self.status.state, surco_core::PlayerState::Playing);
+        let play = button(
+            container(icons::icon(
+                if this_playing {
+                    Kind::Pause
+                } else {
+                    Kind::Play
+                },
+                theme::tile_play_icon(),
+                14.0,
+            ))
+            .center(14),
+        )
+        .on_press_maybe((!p.tracks.is_empty()).then(|| {
+            if self.active.as_ref().is_some_and(|a| a.origin == Some(i)) {
+                Message::TogglePause
+            } else {
+                Message::PlayTrack(i, 0)
+            }
+        }))
+        .padding(8)
+        .style(theme::tile_play);
         button(
             row![
                 cover,
                 column![
                     text(&p.name)
                         .size(theme::SIZE_S + 1)
+                        .font(if theme::colors().look == theme::Look::Brutal {
+                            theme::BOLD
+                        } else {
+                            iced::Font::DEFAULT
+                        })
                         .wrapping(text::Wrapping::None),
-                    text(detail)
-                        .size(theme::SIZE_S)
-                        .style(theme::secondary_text),
+                    detail,
                 ]
-                .spacing(2)
+                .spacing(4)
                 .width(Length::Fill)
                 .clip(true),
+                play,
             ]
             .spacing(12)
             .align_y(Alignment::Center),
         )
         .on_press(Message::SelectPlaylist(Some(i)))
-        .padding(6)
+        .padding(8)
         .width(TILE_WIDTH)
         .style(theme::tile)
         .into()
@@ -315,6 +355,7 @@ impl Surco {
                 .spacing(2)
                 .width(Length::Fill)
                 .clip(true),
+                icons::waves_if(playing),
                 crate::search::add_button(t, None),
                 text(duration)
                     .size(theme::SIZE_S)
@@ -324,9 +365,9 @@ impl Surco {
             .align_y(Alignment::Center),
         )
         .on_press(Message::PlayRecent(i))
-        .padding([4, 8])
+        .padding([5, 8])
         .width(Length::Fill)
-        .style(theme::list_button(playing));
+        .style(theme::song_row(playing));
         crate::search::with_menu(row, t, None)
     }
 
@@ -430,4 +471,26 @@ impl Surco {
             .into(),
         })
     }
+}
+
+/// Título de una sección. En Brutal va en negrita, y el primero subrayado
+/// con el acento.
+pub fn heading<'a>(label: &'a str, first: bool) -> Element<'a, Message> {
+    let c = theme::colors();
+    if c.look != theme::Look::Brutal {
+        return text(label).size(theme::SIZE_M + 1).into();
+    }
+    if !first {
+        return text(label).size(theme::SIZE_L + 4).font(theme::BOLD).into();
+    }
+    column![
+        text(label).size(theme::SIZE_M + 3).font(theme::BOLD),
+        // Ancho aproximado del texto (la regla no se puede medir contra él).
+        container(Space::new())
+            .width(label.chars().count() as f32 * 10.5)
+            .height(4)
+            .style(theme::rule(c.accent)),
+    ]
+    .spacing(0)
+    .into()
 }

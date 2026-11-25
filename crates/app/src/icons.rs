@@ -444,11 +444,79 @@ pub fn glyph<'a, Message: 'a>(kind: Kind, color: Color, size: f32) -> Element<'a
         .into()
 }
 
-/// Logo de Surco: un vinilo con la etiqueta del color de acento y una "S"
-/// de dos semicírculos. Es el mismo dibujo que el ícono de la app
+/// Ondas quietas de la canción que suena: barritas de distinto alto. Son
+/// rectángulos (no un `canvas`) para que no dejen restos al hacer scroll.
+pub fn waves<'a, Message: 'a>() -> Element<'a, Message> {
+    const HEIGHTS: [f32; 9] = [5.0, 9.0, 13.0, 8.0, 16.0, 11.0, 14.0, 7.0, 4.0];
+    let c = theme::colors();
+    let (from, to) = match c.look {
+        theme::Look::Glass => (
+            Color::from_rgb8(0x9F, 0xC2, 0xFF),
+            Color::from_rgb8(0xC6, 0x9C, 0xFF),
+        ),
+        theme::Look::Glow => (Color::from_rgb8(0x6E, 0x9B, 0xFF), c.accent),
+        _ => (c.accent, c.accent),
+    };
+    let n = HEIGHTS.len() as f32;
+    let bars = HEIGHTS.iter().enumerate().map(|(i, &h)| {
+        let t = i as f32 / (n - 1.0);
+        let color = Color {
+            r: from.r + (to.r - from.r) * t,
+            g: from.g + (to.g - from.g) * t,
+            b: from.b + (to.b - from.b) * t,
+            a: 1.0,
+        };
+        iced::widget::container(iced::widget::Space::new())
+            .width(2)
+            .height(h)
+            .style(move |_: &Theme| iced::widget::container::Style {
+                background: Some(color.into()),
+                border: iced::border::rounded(1),
+                ..Default::default()
+            })
+            .into()
+    });
+    iced::widget::Row::with_children(bars)
+        .spacing(2)
+        .height(18)
+        .align_y(iced::Alignment::Center)
+        .into()
+}
+
+/// [`waves`] si `playing`; si no, nada.
+pub fn waves_if<'a, Message: 'a>(playing: bool) -> Element<'a, Message> {
+    if playing {
+        waves()
+    } else {
+        iced::widget::Space::new().width(0).into()
+    }
+}
+
+/// Logo de Surco: un vinilo con surcos, etiqueta y brazo del color de
+/// acento (en degradado). Es el mismo dibujo que el ícono de la app
 /// (`packaging/icons/make_icons.py`), pero sigue al tema.
 struct Logo {
     accent: Color,
+}
+
+impl Logo {
+    /// Extremos del degradado del acento: más claro arriba a la izquierda.
+    fn gradient(&self) -> (Color, Color) {
+        let a = self.accent;
+        let light = Color {
+            r: a.r + (1.0 - a.r) * 0.35,
+            g: a.g + (1.0 - a.g) * 0.35,
+            b: a.b + (1.0 - a.b) * 0.35,
+            a: 1.0,
+        };
+        let dark = Color {
+            r: a.r * 0.8,
+            g: a.g * 0.8,
+            b: a.b * 0.8,
+            a: 1.0,
+        };
+        (light, dark)
+    }
 }
 
 impl<Message> canvas::Program<Message> for Logo {
@@ -462,64 +530,112 @@ impl<Message> canvas::Program<Message> for Logo {
         bounds: Rectangle,
         _cursor: mouse::Cursor,
     ) -> Vec<Geometry> {
+        use canvas::gradient::Linear;
         let mut frame = Frame::new(renderer, bounds.size());
-        let size = bounds.width.min(bounds.height);
-        let c = Point::new(size / 2.0, size / 2.0);
-        let big = size * 0.48;
-        let disc = Color::from_rgb8(0x14, 0x14, 0x16);
-        let groove = Color::from_rgb8(0x2C, 0x2C, 0x30);
-
-        frame.fill(&Path::circle(c, big), disc);
-        // Surcos (en tamaños chicos alcanza con uno).
-        let grooves: &[f32] = if size < 32.0 {
-            &[0.74]
-        } else {
-            &[0.86, 0.74, 0.62]
+        // El dibujo original es de 256×256.
+        let k = bounds.width.min(bounds.height) / 256.0;
+        let p = |x: f32, y: f32| Point::new(x * k, y * k);
+        let c = p(128.0, 128.0);
+        let disc = Color::from_rgb8(0x10, 0x13, 0x1A);
+        let label = Color::from_rgb8(0x14, 0x18, 0x20);
+        let (light, dark) = self.gradient();
+        let accent = |a: f32, b: f32, x: f32, y: f32| {
+            canvas::Style::Gradient(canvas::Gradient::Linear(
+                Linear::new(p(a, b), p(x, y))
+                    .add_stop(0.0, light)
+                    .add_stop(1.0, dark),
+            ))
         };
-        for k in grooves {
+        let groove = canvas::Style::Gradient(canvas::Gradient::Linear(
+            Linear::new(p(40.0, 40.0), p(216.0, 216.0))
+                .add_stop(0.0, light.scale_alpha(0.85))
+                .add_stop(0.5, self.accent.scale_alpha(0.3))
+                .add_stop(1.0, light.scale_alpha(0.85)),
+        ));
+        let min = 0.7;
+        let width = |w: f32| (w * k).max(min);
+
+        frame.fill(&Path::circle(c, 112.0 * k), disc);
+        frame.stroke(
+            &Path::circle(c, 112.0 * k),
+            Stroke::default()
+                .with_color(Color::from_rgb8(0x28, 0x31, 0x42))
+                .with_width(width(5.0)),
+        );
+        // Surcos (en tamaños chicos, dos).
+        let grooves: &[f32] = if k < 0.15 {
+            &[90.0, 64.0]
+        } else {
+            &[96.0, 82.0, 68.0, 54.0]
+        };
+        for &r in grooves {
             frame.stroke(
-                &Path::circle(c, big * k),
-                Stroke::default()
-                    .with_color(groove)
-                    .with_width((size * 0.012).max(0.8)),
+                &Path::circle(c, r * k),
+                Stroke {
+                    style: groove,
+                    width: width(2.0),
+                    ..Stroke::default()
+                },
             );
         }
-        // Brillo: dos cuñas claras opuestas.
-        let r = big * 0.95;
-        for start in [200.0_f32, 20.0] {
-            let wedge = Path::new(|b| {
-                b.move_to(c);
-                b.arc(path::Arc {
-                    center: c,
-                    radius: r,
-                    start_angle: start.to_radians().into(),
-                    end_angle: (start + 50.0).to_radians().into(),
-                });
-                b.close();
-            });
-            frame.fill(&wedge, Color::from_rgba(1.0, 1.0, 1.0, 0.10));
-        }
-        // Etiqueta.
-        let label = big * 0.47;
-        frame.fill(&Path::circle(c, label), self.accent);
-        // "S": dos semicírculos que se tocan en el centro.
-        let sr = label * 0.36;
-        let ink = Stroke::default()
-            .with_color(disc)
-            .with_width(label * 0.20)
-            .with_line_cap(stroke::LineCap::Butt);
-        let half = |center: Point, from: f32, to: f32| {
-            Path::new(|b| {
-                b.arc(path::Arc {
-                    center,
-                    radius: sr,
-                    start_angle: from.to_radians().into(),
-                    end_angle: to.to_radians().into(),
-                })
-            })
-        };
-        frame.stroke(&half(Point::new(c.x, c.y - sr), 90.0, 330.0), ink);
-        frame.stroke(&half(Point::new(c.x, c.y + sr), 270.0, 510.0), ink);
+        // Etiqueta y eje.
+        frame.fill(&Path::circle(c, 36.0 * k), label);
+        frame.stroke(
+            &Path::circle(c, 36.0 * k),
+            Stroke {
+                style: accent(76.0, 76.0, 180.0, 180.0),
+                width: width(3.5).max(1.2),
+                ..Stroke::default()
+            },
+        );
+        frame.fill(&Path::circle(c, 8.0 * k), disc);
+        frame.stroke(
+            &Path::circle(c, 8.0 * k),
+            Stroke {
+                style: accent(76.0, 76.0, 180.0, 180.0),
+                width: width(3.0),
+                ..Stroke::default()
+            },
+        );
+        // Brazo.
+        let arm = Path::new(|b| {
+            b.move_to(p(196.0, 42.0));
+            b.line_to(p(187.0, 77.0));
+            b.quadratic_curve_to(p(185.6, 82.6), p(182.1, 85.4));
+            b.line_to(p(172.0, 95.0));
+        });
+        frame.stroke(
+            &arm,
+            Stroke {
+                style: accent(196.0, 42.0, 172.0, 95.0),
+                width: width(6.0).max(1.4),
+                line_cap: stroke::LineCap::Round,
+                line_join: stroke::LineJoin::Round,
+                ..Stroke::default()
+            },
+        );
+        // Cápsula: rectángulo girado -43° alrededor de (155, 96).
+        frame.with_save(|f| {
+            f.translate(iced::Vector::new(155.0 * k, 96.0 * k));
+            f.rotate(-43.0_f32.to_radians());
+            let head = Path::rounded_rectangle(
+                Point::ORIGIN,
+                iced::Size::new(19.0 * k, 10.0 * k),
+                (3.0 * k).into(),
+            );
+            f.fill(&head, label);
+            f.stroke(
+                &head,
+                Stroke::default().with_color(light).with_width(width(3.0)),
+            );
+        });
+        frame.stroke(
+            &Path::line(p(158.0, 106.0), p(153.0, 111.0)),
+            Stroke::default()
+                .with_color(light)
+                .with_width(width(3.0))
+                .with_line_cap(stroke::LineCap::Round),
+        );
         vec![frame.into_geometry()]
     }
 }

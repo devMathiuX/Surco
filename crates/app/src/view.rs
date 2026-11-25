@@ -15,6 +15,9 @@ use crate::playlists::{OWN_SOURCE, RENAME_INPUT};
 use crate::settings::{Change, Precache};
 use crate::{skeleton, theme, DragList, Message, Screen, Surco, FILTER_INPUT, IMPORT_INPUT};
 
+/// Portada de las playlists de la barra lateral.
+const SIDEBAR_COVER: f32 = 28.0;
+
 impl Surco {
     pub(crate) fn view(&self) -> Element<'_, Message> {
         let main: Element<'_, Message> = match self.screen {
@@ -42,11 +45,45 @@ impl Surco {
             .width(Length::Fill)
             .height(Length::Fill);
 
-        let app: Element<'_, Message> = column![
-            row![self.view_sidebar(), main].height(Length::Fill),
-            self.view_player_bar()
-        ]
-        .into();
+        let app: Element<'_, Message> = if theme::colors().look == theme::Look::Glass {
+            // Vidrio: dos paneles flotando sobre el fondo.
+            column![
+                container(row![self.view_sidebar(), main])
+                    .height(Length::Fill)
+                    .clip(true)
+                    .style(theme::glass_panel),
+                self.view_player_bar()
+            ]
+            .spacing(10)
+            .padding(12)
+            .into()
+        } else {
+            let (line, width) = theme::divider().unwrap_or((Color::TRANSPARENT, 0.0));
+            let vertical = container(Space::new())
+                .width(if theme::colors().look == theme::Look::Brutal {
+                    2.0
+                } else {
+                    width
+                })
+                .height(Length::Fill)
+                .style(theme::rule(
+                    if theme::colors().look == theme::Look::Brutal {
+                        theme::colors().border
+                    } else {
+                        line
+                    },
+                ));
+            let horizontal = container(Space::new())
+                .width(Length::Fill)
+                .height(width)
+                .style(theme::rule(line));
+            column![
+                row![self.view_sidebar(), vertical, main].height(Length::Fill),
+                horizontal,
+                self.view_player_bar()
+            ]
+            .into()
+        };
         let app = self.with_backdrop(app);
         let layer = if let Some(i) = self.confirm_remove {
             Some(self.view_confirm_remove(i))
@@ -101,20 +138,27 @@ impl Surco {
                 .size(theme::SIZE_S)
                 .wrapping(text::Wrapping::None)
                 .width(Length::Fill);
-            let content: Element<'_, Message> = if playing {
-                row![
-                    label,
-                    icons::glyph(Kind::Volume, theme::colors().accent, 13.0)
-                ]
-                .align_y(Alignment::Center)
-                .into()
-            } else {
-                label.into()
-            };
+            let cover: Element<'_, Message> =
+                match self.playlist_cover(i).and_then(|v| self.covers.get(v)) {
+                    Some(h) => image(h.clone())
+                        .width(SIDEBAR_COVER)
+                        .height(SIDEBAR_COVER)
+                        .border_radius(if theme::radius() > 0.0 { 4.0 } else { 0.0 })
+                        .into(),
+                    None => container(Space::new())
+                        .width(SIDEBAR_COVER)
+                        .height(SIDEBAR_COVER)
+                        .style(theme::cover_placeholder)
+                        .into(),
+                };
+            let mut content = row![cover, label].spacing(10).align_y(Alignment::Center);
+            if playing {
+                content = content.push(icons::glyph(Kind::Volume, theme::colors().accent, 13.0));
+            }
             list = list.push(
                 mouse_area(
                     container(content)
-                        .padding([6, 8])
+                        .padding([4, 6])
                         .width(Length::Fill)
                         .clip(true)
                         .style(theme::drag_row(selected, hovered, target, lifted)),
@@ -134,6 +178,7 @@ impl Surco {
                 }),
             );
         }
+        let brutal = theme::colors().look == theme::Look::Brutal;
         let nav = |kind: Kind, label: &'static str, screen: Screen, msg: Message| {
             let on = self.screen == screen;
             button(
@@ -154,7 +199,7 @@ impl Surco {
             )
             .on_press(msg)
             .width(Length::Fill)
-            .padding([6, 8])
+            .padding(if brutal { [8, 10] } else { [6, 8] })
             .style(theme::list_button(on))
         };
         let queue_len = self
@@ -192,7 +237,7 @@ impl Surco {
                 Message::OpenImport
             ),
         ]
-        .spacing(2);
+        .spacing(theme::nav_gap());
 
         let gear = tooltip(
             button(icons::icon(
@@ -205,32 +250,54 @@ impl Surco {
                 18.0,
             ))
             .on_press(Message::ToggleSettings)
-            .padding(4)
-            .style(theme::icon_button),
+            .padding(if brutal { 6 } else { 4 })
+            .style(if brutal {
+                theme::brand_button
+            } else {
+                theme::icon_button
+            }),
             container(text(tr!("Ajustes", "Settings")).size(theme::SIZE_S))
                 .padding(6)
                 .style(theme::card),
             tooltip::Position::Bottom,
         );
         let logo = icons::logo(28.0);
-        let brand = button(
-            row![logo, text("Surco").size(theme::SIZE_L)]
-                .spacing(8)
-                .align_y(Alignment::Center),
-        )
-        .on_press(Message::GoHome)
-        .padding(0)
-        .style(theme::list_button(false));
-        let library_header = row![
+        let name = if brutal {
+            text("Surco")
+                .size(theme::SIZE_L + 2)
+                .font(theme::BOLD)
+                .color(theme::colors().accent)
+        } else {
+            text("Surco").size(theme::SIZE_L)
+        };
+        let brand = button(row![logo, name].spacing(8).align_y(Alignment::Center))
+            .on_press(Message::GoHome)
+            .padding(if brutal { [6, 10] } else { [0, 0] })
+            .style(if brutal {
+                theme::brand_button
+            } else {
+                theme::plain_button
+            });
+        let library_title: Element<'_, Message> = if brutal {
+            text(tr!("Tu biblioteca", "Your library"))
+                .size(theme::SIZE_M + 1)
+                .font(theme::BOLD)
+                .width(Length::Fill)
+                .into()
+        } else {
             text(tr!("Tu biblioteca", "Your library"))
                 .size(theme::SIZE_S)
                 .style(theme::secondary_text)
-                .width(Length::Fill),
+                .width(Length::Fill)
+                .into()
+        };
+        let library_header = row![
+            library_title,
             tooltip(
-                button(icons::icon(Kind::Add, theme::colors().text_secondary, 14.0))
+                button(icons::icon(Kind::Add, theme::add_icon(), 14.0))
                     .on_press(Message::NewPlaylist)
                     .padding(4)
-                    .style(theme::icon_button),
+                    .style(theme::add_button),
                 container(text(tr!("Nueva playlist", "New playlist")).size(theme::SIZE_S))
                     .padding(6)
                     .style(theme::card),
@@ -242,7 +309,15 @@ impl Surco {
         let mut col = column![
             row![brand, Space::new().width(Length::Fill), gear].align_y(Alignment::Center),
             nav,
-            column![library_header, scrollable(list).height(Length::Fill)].spacing(6),
+            container(Space::new())
+                .width(Length::Fill)
+                .height(if brutal { 2 } else { 1 })
+                .style(theme::rule(theme::colors().border)),
+            column![library_header, scrollable(list).height(Length::Fill)].spacing(if brutal {
+                12
+            } else {
+                6
+            }),
         ]
         .spacing(16)
         .height(Length::Fill);
@@ -260,7 +335,7 @@ impl Surco {
             .padding(16)
             .width(220)
             .height(Length::Fill)
-            .style(theme::surface)
+            .style(theme::sidebar)
             .into()
     }
 
@@ -518,14 +593,11 @@ impl Surco {
                 .into(),
                 _ => Space::new().into(),
             };
-            let number = container(if playing {
-                icons::glyph(Kind::Volume, theme::colors().accent, 16.0)
+            let number = container(text(i + 1).size(theme::SIZE_S).style(if playing {
+                theme::accent_text
             } else {
-                text(i + 1)
-                    .size(theme::SIZE_S)
-                    .style(theme::secondary_text)
-                    .into()
-            })
+                theme::secondary_text
+            }))
             .width(40);
             let cover: Element<'_, Message> = if self.settings.covers_in_list {
                 match self.video_of((index, i)).and_then(|v| self.covers.get(v)) {
@@ -566,6 +638,7 @@ impl Surco {
                     .width(Length::Fill)
                     .clip(true),
                     badge,
+                    icons::waves_if(playing),
                     crate::search::add_button(t, Some((index, i))),
                     text(format_duration(t.duration_ms))
                         .size(theme::SIZE_S)
@@ -575,10 +648,11 @@ impl Surco {
                 .align_y(Alignment::Center),
             )
             .on_press(Message::PlayTrack(index, i))
-            .padding([6, 8])
+            .padding([2, 8])
             .width(Length::Fill)
-            .height(ROW_HEIGHT)
-            .style(theme::list_button(playing));
+            .height(ROW_HEIGHT - theme::row_gap() as f32)
+            .style(theme::song_row(playing));
+            let row = column![row, Space::new().height(theme::row_gap())];
             crate::search::with_menu(row, t, Some((index, i)))
         }));
         let rows = column![

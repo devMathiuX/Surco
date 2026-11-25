@@ -16,6 +16,12 @@ pub const SIZE_M: u32 = 15;
 pub const SIZE_L: u32 = 20;
 pub const RADIUS: f32 = 6.0;
 
+/// Fuente en negrita (títulos del tema Brutal).
+pub const BOLD: iced::Font = iced::Font {
+    weight: iced::font::Weight::Bold,
+    ..iced::Font::DEFAULT
+};
+
 /// Forma de un tema, más allá de los colores.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Look {
@@ -67,18 +73,18 @@ pub const THEMES: [Colors; 8] = [
         look: Look::Flat,
         radius: 6.0,
         border_width: 1.0,
-        background: color!(0x111111),
-        panel: color!(0x111111),
-        surface: color!(0x1A1A1A),
-        raised: color!(0x242424),
-        hover: color!(0x262626),
-        border: color!(0x2A2A2A),
-        rail: color!(0x333333),
-        text: color!(0xEDEDED),
-        text_secondary: color!(0x8A8A8A),
-        accent: color!(0x7C9CFF),
-        accent_hover: color!(0x93AEFF),
-        on_accent: color!(0x111111),
+        background: color!(0x0D1016),
+        panel: color!(0x131722),
+        surface: color!(0x10131A),
+        raised: color!(0x1A2030),
+        hover: color!(0x171C27),
+        border: color!(0x232A37),
+        rail: color!(0x2A3242),
+        text: color!(0xE8EBF1),
+        text_secondary: color!(0x8B94A5),
+        accent: color!(0x4C7EF3),
+        accent_hover: color!(0x6A95F7),
+        on_accent: color!(0xFFFFFF),
         danger: color!(0xE06C75),
         warning: color!(0xE5C07B),
     },
@@ -365,18 +371,12 @@ pub fn radius() -> f32 {
     colors().radius
 }
 
-/// Sombra plana (sin difuminar) de los temas neo-brutalistas. Opaca: al
-/// redibujar solo una parte no se acumula (ver [`dialog`]).
+/// Sombra de botones y tarjetas: ninguna. Con tiny-skia las sombras (aun
+/// sin difuminar) se dibujaban encima del contenido de las tarjetas con un
+/// botón adentro y dejaban restos al redibujar, así que Brutal marca los
+/// bordes con color en lugar de sombra.
 fn hard_shadow() -> iced::Shadow {
-    if colors().look == Look::Brutal {
-        iced::Shadow {
-            color: Color::BLACK,
-            offset: iced::Vector::new(3.0, 3.0),
-            blur_radius: 0.0,
-        }
-    } else {
-        iced::Shadow::default()
-    }
+    iced::Shadow::default()
 }
 
 /// `Theme` de iced para los widgets que no tienen estilo propio.
@@ -437,23 +437,22 @@ pub fn plain_text(_: &Theme) -> text::Style {
 /// Fila de la cola: la que suena resaltada, el destino del arrastre con una
 /// línea de acento arriba, la arrastrada más tenue.
 pub fn queue_row(current: bool, target: bool, lifted: bool) -> impl Fn(&Theme) -> container::Style {
-    move |_| {
+    move |theme| {
         let c = colors();
-        let background = if lifted {
-            Some(c.hover.into())
-        } else if current {
-            Some(c.raised.into())
+        let status = if lifted {
+            button::Status::Hovered
         } else {
-            None
+            button::Status::Active
         };
+        let row = song_row(current)(theme, status);
         container::Style {
-            background,
+            background: row.background,
             border: if target {
                 border::rounded(radius())
-                    .width(colors().border_width.max(2.0))
+                    .width(c.border_width.max(2.0))
                     .color(c.accent)
             } else {
-                border::rounded(radius())
+                row.border
             },
             ..container::Style::default()
         }
@@ -470,10 +469,18 @@ pub fn input(_: &Theme, status: text_input::Status) -> text_input::Style {
     let c = colors();
     let focused = matches!(status, text_input::Status::Focused { .. });
     text_input::Style {
-        background: c.surface.into(),
-        border: border::rounded(radius())
-            .width(colors().border_width)
-            .color(if focused { c.accent } else { c.border }),
+        background: match c.look {
+            Look::Glass => Color::from_rgba(1.0, 1.0, 1.0, 0.10).into(),
+            Look::Flat => mix(c.background, c.raised, 0.5).into(),
+            _ => c.surface.into(),
+        },
+        border: border::rounded(if c.look == Look::Glass {
+            999.0
+        } else {
+            radius()
+        })
+        .width(colors().border_width)
+        .color(if focused { c.accent } else { c.border }),
         icon: c.text_secondary,
         placeholder: c.text_secondary,
         value: c.text,
@@ -568,13 +575,23 @@ pub fn seek_slider(_: &Theme, status: slider::Status) -> slider::Style {
     };
     slider::Style {
         rail: slider::Rail {
-            backgrounds: (c.accent.into(), c.rail.into()),
+            backgrounds: (
+                match c.look {
+                    Look::Glass | Look::Glow => accent_gradient(1.0),
+                    _ => c.accent.into(),
+                },
+                c.rail.into(),
+            ),
             width: 4.0,
             border: border::rounded(2),
         },
         handle: slider::Handle {
             shape: slider::HandleShape::Circle { radius: 6.0 },
-            background: handle.into(),
+            background: if c.look == Look::Glass {
+                Color::WHITE.into()
+            } else {
+                handle.into()
+            },
             border_width: 0.0,
             border_color: Color::TRANSPARENT,
         },
@@ -606,25 +623,360 @@ pub fn list_button(selected: bool) -> impl Fn(&Theme, button::Status) -> button:
     move |_, status| {
         let c = colors();
         let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
-        let brutal = c.look == Look::Brutal;
+        match c.look {
+            // Cada opción en su caja; la elegida rellena con el acento y sombra.
+            Look::Brutal => button::Style {
+                background: Some(
+                    if selected {
+                        c.accent
+                    } else if hovered {
+                        c.hover
+                    } else {
+                        c.surface
+                    }
+                    .into(),
+                ),
+                text_color: if selected { c.on_accent } else { c.text },
+                border: border::rounded(0).width(c.border_width).color(if selected {
+                    Color::BLACK
+                } else {
+                    c.border
+                }),
+                shadow: if selected {
+                    hard_shadow()
+                } else {
+                    iced::Shadow::default()
+                },
+                ..button::Style::default()
+            },
+            _ => button::Style {
+                background: if selected {
+                    Some(tint().into())
+                } else {
+                    hovered.then(|| c.hover.into())
+                },
+                text_color: c.text,
+                border: if selected {
+                    border::rounded(radius()).width(1).color(tint_border())
+                } else {
+                    border::rounded(radius())
+                },
+                ..button::Style::default()
+            },
+        }
+    }
+}
+
+/// Fondo de lo elegido: el acento muy suave (vidrio: blanco translúcido).
+fn tint() -> Color {
+    let c = colors();
+    match c.look {
+        Look::Glass => Color::from_rgba(1.0, 1.0, 1.0, 0.16),
+        Look::Glow => Color::from_rgba(1.0, 1.0, 1.0, 0.07),
+        _ => c.accent.scale_alpha(0.14),
+    }
+}
+
+/// Borde de lo elegido.
+fn tint_border() -> Color {
+    let c = colors();
+    match c.look {
+        Look::Glass => Color::from_rgba(1.0, 1.0, 1.0, 0.30),
+        Look::Glow => Color::from_rgba(1.0, 1.0, 1.0, 0.12),
+        _ => c.accent.scale_alpha(0.35),
+    }
+}
+
+/// Fila de una lista de canciones; la que suena, resaltada.
+pub fn song_row(playing: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
+    move |_, status| {
+        let c = colors();
+        let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
+        let (background, border) = match c.look {
+            Look::Brutal => (
+                if hovered { c.hover } else { c.surface },
+                border::rounded(0).width(c.border_width).color(if playing {
+                    c.accent
+                } else {
+                    c.border
+                }),
+            ),
+            Look::Glass => (
+                Color::from_rgba(
+                    1.0,
+                    1.0,
+                    1.0,
+                    if playing {
+                        0.16
+                    } else if hovered {
+                        0.11
+                    } else {
+                        0.06
+                    },
+                ),
+                border::rounded(8).width(1).color(if playing {
+                    Color::from_rgba(1.0, 1.0, 1.0, 0.30)
+                } else {
+                    Color::TRANSPARENT
+                }),
+            ),
+            Look::Glow => (
+                if playing {
+                    c.raised
+                } else if hovered {
+                    c.hover
+                } else {
+                    Color::TRANSPARENT
+                },
+                border::rounded(radius()).width(1).color(if playing {
+                    tint_border()
+                } else {
+                    Color::TRANSPARENT
+                }),
+            ),
+            Look::Flat => (
+                if playing {
+                    c.raised
+                } else if hovered {
+                    c.hover
+                } else {
+                    row_color()
+                },
+                border::rounded(4),
+            ),
+        };
         button::Style {
-            background: match (selected, brutal) {
-                (true, true) => Some(c.accent.into()),
-                (true, false) => Some(c.raised.into()),
-                _ => hovered.then(|| c.hover.into()),
-            },
-            text_color: match (selected, brutal) {
-                (true, true) => c.on_accent,
-                (true, false) => c.accent,
-                _ => c.text,
-            },
-            border: if brutal && selected {
-                border::rounded(0).width(c.border_width).color(c.accent)
-            } else {
-                border::rounded(radius())
-            },
+            background: Some(background.into()),
+            text_color: c.text,
+            border,
             ..button::Style::default()
         }
+    }
+}
+
+/// Fondo de las filas en los temas lisos: apenas distinto del fondo, y la
+/// separación entre filas hace de línea divisoria.
+fn row_color() -> Color {
+    let c = colors();
+    mix(c.background, c.surface, 0.8)
+}
+
+/// Separación entre filas de canciones.
+pub fn row_gap() -> u32 {
+    match colors().look {
+        Look::Brutal => 6,
+        Look::Glass => 4,
+        Look::Glow => 2,
+        Look::Flat => 1,
+    }
+}
+
+/// Separación entre los botones de navegación.
+pub fn nav_gap() -> u32 {
+    if colors().look == Look::Brutal {
+        8
+    } else {
+        2
+    }
+}
+
+/// Color del ícono dentro del botón de play.
+pub fn play_icon() -> Color {
+    let c = colors();
+    match c.look {
+        Look::Flat => c.accent,
+        Look::Glass => color!(0x1A1D2E),
+        Look::Brutal => Color::BLACK,
+        Look::Glow => Color::WHITE,
+    }
+}
+
+/// Degradado del acento (Brillo y Vidrio): de un tono más frío al acento.
+fn accent_gradient(alpha: f32) -> iced::Background {
+    let c = colors();
+    let from = match c.look {
+        Look::Glass => color!(0x7FB2FF),
+        _ => color!(0x5B8CFF),
+    };
+    let to = match c.look {
+        Look::Glass => color!(0xC08CFF),
+        _ => c.accent,
+    };
+    iced::Gradient::Linear(
+        iced::gradient::Linear::new(std::f32::consts::FRAC_PI_2)
+            .add_stop(0.0, from.scale_alpha(alpha))
+            .add_stop(1.0, to.scale_alpha(alpha)),
+    )
+    .into()
+}
+
+/// Botón redondo de play en las tarjetas de playlist.
+pub fn tile_play(_: &Theme, status: button::Status) -> button::Style {
+    let c = colors();
+    let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
+    let k = if hovered { 0.85 } else { 1.0 };
+    let (background, border) = match c.look {
+        Look::Brutal => (
+            c.accent.scale_alpha(k).into(),
+            border::rounded(999).width(2).color(Color::BLACK),
+        ),
+        Look::Glass | Look::Glow => (
+            Color::from_rgba(1.0, 1.0, 1.0, if hovered { 0.32 } else { 0.22 }).into(),
+            border::rounded(999)
+                .width(1)
+                .color(Color::from_rgba(1.0, 1.0, 1.0, 0.35)),
+        ),
+        Look::Flat => (c.accent.scale_alpha(k).into(), border::rounded(999)),
+    };
+    button::Style {
+        background: Some(background),
+        border,
+        ..button::Style::default()
+    }
+}
+
+/// Color del ícono del play de las tarjetas.
+pub fn tile_play_icon() -> Color {
+    let c = colors();
+    match c.look {
+        Look::Brutal => Color::BLACK,
+        Look::Glass | Look::Glow => Color::WHITE,
+        Look::Flat => c.on_accent,
+    }
+}
+
+/// Etiqueta con la cantidad de canciones (Brutal: recuadro amarillo).
+pub fn badge(_: &Theme) -> container::Style {
+    container::Style {
+        background: Some(colors().warning.into()),
+        text_color: Some(Color::BLACK),
+        ..container::Style::default()
+    }
+}
+
+/// Logo y engranaje del tema Brutal: en caja con sombra plana.
+pub fn brand_button(_: &Theme, status: button::Status) -> button::Style {
+    let c = colors();
+    let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
+    button::Style {
+        background: Some(if hovered { c.hover } else { c.surface }.into()),
+        text_color: c.text,
+        border: border::rounded(0).width(2).color(c.text_secondary),
+        shadow: hard_shadow(),
+        ..button::Style::default()
+    }
+}
+
+/// Botón sin fondo ni borde.
+pub fn plain_button(_: &Theme, _: button::Status) -> button::Style {
+    button::Style {
+        text_color: colors().text,
+        ..button::Style::default()
+    }
+}
+
+/// Línea divisoria de `color`.
+pub fn rule(color: Color) -> impl Fn(&Theme) -> container::Style {
+    move |_| container::Style {
+        background: Some(color.into()),
+        ..container::Style::default()
+    }
+}
+
+/// Barra lateral.
+pub fn sidebar(_: &Theme) -> container::Style {
+    let c = colors();
+    container::Style {
+        background: Some(
+            match c.look {
+                Look::Glass => Color::from_rgba(1.0, 1.0, 1.0, 0.08),
+                Look::Glow => Color::from_rgba(0.0, 0.0, 0.0, 0.25),
+                _ => c.surface,
+            }
+            .into(),
+        ),
+        ..container::Style::default()
+    }
+}
+
+/// Barra de reproducción.
+pub fn player_bar(_: &Theme) -> container::Style {
+    let c = colors();
+    match c.look {
+        Look::Glass => container::Style {
+            background: Some(Color::from_rgba(1.0, 1.0, 1.0, 0.10).into()),
+            border: border::rounded(14)
+                .width(1)
+                .color(Color::from_rgba(1.0, 1.0, 1.0, 0.22)),
+            ..container::Style::default()
+        },
+        Look::Glow => container::Style {
+            background: Some(Color::from_rgba(0.0, 0.0, 0.0, 0.30).into()),
+            ..container::Style::default()
+        },
+        _ => container::Style {
+            background: Some(c.surface.into()),
+            ..container::Style::default()
+        },
+    }
+}
+
+/// Panel principal del tema Vidrio (barra lateral más contenido).
+pub fn glass_panel(_: &Theme) -> container::Style {
+    container::Style {
+        background: Some(Color::from_rgba(1.0, 1.0, 1.0, 0.04).into()),
+        border: border::rounded(14)
+            .width(1)
+            .color(Color::from_rgba(1.0, 1.0, 1.0, 0.20)),
+        ..container::Style::default()
+    }
+}
+
+/// Línea que separa barra lateral, contenido y barra de reproducción.
+pub fn divider() -> Option<(Color, f32)> {
+    let c = colors();
+    match c.look {
+        Look::Brutal => Some((c.accent, 3.0)),
+        Look::Flat | Look::Glow => Some((c.border, 1.0)),
+        Look::Glass => None,
+    }
+}
+
+/// Botones cuadrados de la derecha de la barra (Brutal: en caja).
+pub fn side_button(theme: &Theme, status: button::Status) -> button::Style {
+    let c = colors();
+    if c.look != Look::Brutal {
+        return icon_button(theme, status);
+    }
+    let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
+    button::Style {
+        background: Some(if hovered { c.hover } else { c.background }.into()),
+        border: border::rounded(0).width(2).color(c.text),
+        ..button::Style::default()
+    }
+}
+
+/// Botón "+" de las filas (Brutal: cuadrado blanco).
+pub fn add_button(theme: &Theme, status: button::Status) -> button::Style {
+    let c = colors();
+    if c.look != Look::Brutal {
+        return icon_button(theme, status);
+    }
+    let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
+    button::Style {
+        background: Some(if hovered { c.accent } else { Color::WHITE }.into()),
+        border: border::rounded(0).width(1).color(Color::BLACK),
+        ..button::Style::default()
+    }
+}
+
+/// Color del "+" de las filas.
+pub fn add_icon() -> Color {
+    let c = colors();
+    if c.look == Look::Brutal {
+        Color::BLACK
+    } else {
+        c.text_secondary
     }
 }
 
@@ -641,19 +993,28 @@ pub fn icon_button(_: &Theme, status: button::Status) -> button::Style {
 /// Botón principal redondo (play/pausa).
 pub fn play_button(_: &Theme, status: button::Status) -> button::Style {
     let c = colors();
-    // Brutal y Brillo: el botón principal va con el acento.
-    let base = match c.look {
-        Look::Brutal | Look::Glow => c.accent,
-        Look::Flat | Look::Glass => c.text,
-    };
-    let bg = match status {
-        button::Status::Hovered | button::Status::Pressed => base.scale_alpha(0.85),
-        _ => base,
+    let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
+    let k = if hovered { 0.85 } else { 1.0 };
+    let (background, border): (iced::Background, iced::Border) = match c.look {
+        // Por defecto: acento suave con borde del acento.
+        Look::Flat => (
+            c.accent
+                .scale_alpha(if hovered { 0.30 } else { 0.20 })
+                .into(),
+            border::rounded(999).width(1.5).color(c.accent),
+        ),
+        Look::Glass => (Color::WHITE.scale_alpha(k).into(), border::rounded(999)),
+        Look::Glow => (accent_gradient(k), border::rounded(999)),
+        // Sin sombra: en un botón redondo la sombra plana dejaba restos al
+        // redibujar.
+        Look::Brutal => (
+            c.accent.scale_alpha(k).into(),
+            border::rounded(999).width(2).color(Color::BLACK),
+        ),
     };
     button::Style {
-        background: Some(bg.into()),
-        border: border::rounded(999),
-        shadow: hard_shadow(),
+        background: Some(background),
+        border,
         ..button::Style::default()
     }
 }
@@ -726,17 +1087,51 @@ pub fn drag_row(
 pub fn tile(_: &Theme, status: button::Status) -> button::Style {
     let c = colors();
     let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
-    let brutal = c.look == Look::Brutal;
-    button::Style {
-        background: Some(if hovered { c.hover } else { c.surface }.into()),
-        text_color: c.text,
-        border: if brutal {
-            border::rounded(0).width(c.border_width).color(c.accent)
-        } else {
+    let (background, border): (iced::Background, iced::Border) = match c.look {
+        Look::Brutal => (
+            if hovered { c.hover } else { c.surface }.into(),
+            border::rounded(0).width(c.border_width).color(c.accent),
+        ),
+        Look::Glass => (
+            Color::from_rgba(1.0, 1.0, 1.0, if hovered { 0.18 } else { 0.12 }).into(),
             border::rounded(radius())
-                .width(if c.look == Look::Glass { 1.0 } else { 0.0 })
-                .color(c.border)
-        },
+                .width(1)
+                .color(Color::from_rgba(1.0, 1.0, 1.0, 0.28)),
+        ),
+        // Brillo: degradado de azul petróleo a violeta.
+        Look::Glow => (
+            iced::Gradient::Linear(
+                iced::gradient::Linear::new(std::f32::consts::FRAC_PI_2)
+                    .add_stop(
+                        0.0,
+                        color!(0x163447).scale_alpha(if hovered { 1.0 } else { 0.9 }),
+                    )
+                    .add_stop(
+                        1.0,
+                        color!(0x2B2560).scale_alpha(if hovered { 1.0 } else { 0.9 }),
+                    ),
+            )
+            .into(),
+            border::rounded(radius())
+                .width(1)
+                .color(Color::from_rgba(1.0, 1.0, 1.0, 0.14)),
+        ),
+        Look::Flat => (
+            if hovered {
+                c.accent.scale_alpha(0.16)
+            } else {
+                c.accent.scale_alpha(0.09)
+            }
+            .into(),
+            border::rounded(radius())
+                .width(1)
+                .color(c.accent.scale_alpha(0.32)),
+        ),
+    };
+    button::Style {
+        background: Some(background),
+        text_color: c.text,
+        border,
         shadow: hard_shadow(),
         ..button::Style::default()
     }

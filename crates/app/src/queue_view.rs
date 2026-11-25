@@ -118,7 +118,7 @@ impl Surco {
             .map(|t| t.duration_ms)
             .sum();
 
-        let mut list = Column::new().spacing(2);
+        let mut list = Column::new().spacing(theme::row_gap());
         for (p, &i) in order.iter().enumerate().skip(pos) {
             let Some(t) = a.tracks.get(i) else { continue };
             if p == pos + 1 {
@@ -194,7 +194,7 @@ impl Surco {
             _ => Space::new().into(),
         };
         let lead: Element<'_, Message> = if current {
-            icons::glyph(Kind::Volume, theme::colors().accent, 16.0)
+            Space::new().width(16).into()
         } else {
             icons::glyph(Kind::Grip, theme::colors().text_secondary, 16.0)
         };
@@ -244,6 +244,7 @@ impl Surco {
             .width(Length::Fill)
             .clip(true),
             status,
+            icons::waves_if(current),
             text(format_duration(t.duration_ms))
                 .size(theme::SIZE_S)
                 .style(theme::secondary_text),
