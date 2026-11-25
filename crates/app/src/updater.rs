@@ -24,6 +24,10 @@ pub enum Update {
     Installing(String),
     /// macOS: se abrió el `.dmg`.
     Opened,
+    /// Linux sin pkexec: se abrió una terminal con el comando.
+    Terminal(String),
+    /// Linux sin pkexec ni terminal: hay que correr el comando a mano.
+    Manual(String),
     Failed(String),
 }
 
@@ -34,6 +38,8 @@ pub enum UpdateMsg {
     Dismiss,
     Installed(Result<Installed, String>),
     OpenPage,
+    /// Copiar el comando de instalación (Linux sin pkexec).
+    CopyCommand,
 }
 
 /// Consulta, al rato de abrir, si hay una versión nueva.
@@ -105,6 +111,17 @@ impl Surco {
                 return iced::exit();
             }
             UpdateMsg::Installed(Ok(Installed::Opened)) => self.update = Update::Opened,
+            UpdateMsg::Installed(Ok(Installed::Terminal { command })) => {
+                self.update = Update::Terminal(command)
+            }
+            UpdateMsg::Installed(Ok(Installed::Manual { command })) => {
+                self.update = Update::Manual(command)
+            }
+            UpdateMsg::CopyCommand => {
+                if let Update::Terminal(c) | Update::Manual(c) = &self.update {
+                    return iced::clipboard::write(c.clone());
+                }
+            }
             UpdateMsg::Installed(Err(e)) => {
                 tracing::warn!(error = %e, "no se pudo actualizar");
                 self.update = Update::Failed(e);
@@ -166,6 +183,46 @@ impl Surco {
                     .into()
                 ),
                 action(tr!("Listo", "Done"), UpdateMsg::Dismiss, false),
+            ]
+            .spacing(8)
+            .into(),
+            Update::Terminal(_) => column![
+                small(
+                    tr!(
+                        "Se abrió una terminal: escribí tu contraseña ahí. Cuando termine, cerrá y abrí Surco.",
+                        "A terminal opened: type your password there. When it's done, close and reopen Surco."
+                    )
+                    .into()
+                ),
+                row![
+                    action(tr!("Copiar comando", "Copy command"), UpdateMsg::CopyCommand, false),
+                    action(tr!("Listo", "Done"), UpdateMsg::Dismiss, false),
+                ]
+                .spacing(6),
+            ]
+            .spacing(8)
+            .into(),
+            Update::Manual(command) => column![
+                small(
+                    tr!(
+                        "Para instalarla, corré esto en una terminal:",
+                        "To install it, run this in a terminal:"
+                    )
+                    .into()
+                ),
+                container(
+                    text(command.as_str())
+                        .size(theme::SIZE_S - 1)
+                        .font(iced::Font::MONOSPACE)
+                )
+                .padding(6)
+                .width(Length::Fill)
+                .style(theme::cover_placeholder),
+                row![
+                    action(tr!("Copiar", "Copy"), UpdateMsg::CopyCommand, true),
+                    action(tr!("Cerrar", "Close"), UpdateMsg::Dismiss, false),
+                ]
+                .spacing(6),
             ]
             .spacing(8)
             .into(),

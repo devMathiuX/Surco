@@ -69,6 +69,11 @@ pub enum Installed {
     Restart { relaunch: Option<PathBuf> },
     /// Se abrió el instalador del sistema (macOS): el usuario sigue ahí.
     Opened,
+    /// Linux sin pkexec: se abrió una terminal con `command`; el usuario
+    /// escribe su contraseña ahí y después reinicia Surco.
+    Terminal { command: String },
+    /// Linux sin pkexec ni terminal: el usuario tiene que correr `command`.
+    Manual { command: String },
 }
 
 /// Compara versiones `x.y.z` (sin la `v`). Lo que no es número cuenta como 0.
@@ -227,6 +232,21 @@ pub async fn install(
             })
         }
         Install::Deb => {
+            if find_in_path("pkexec").is_none() {
+                // Sin pkexec: el paquete queda en Descargas y se instala con
+                // sudo desde una terminal (o a mano).
+                let dest = downloads_dir().join(&asset.name);
+                tokio::fs::write(&dest, &data).await?;
+                let command = format!(
+                    "sudo apt-get install -y --allow-downgrades {}",
+                    shell_quote(&dest.to_string_lossy())
+                );
+                return Ok(if open_terminal(&command) {
+                    Installed::Terminal { command }
+                } else {
+                    Installed::Manual { command }
+                });
+            }
             tokio::fs::write(&tmp, &data).await?;
             // pkexec pide la contraseña con una ventana del sistema.
             let status = tokio::process::Command::new("pkexec")
@@ -246,16 +266,69 @@ pub async fn install(
             })
         }
         Install::MacOs => {
-            let dest = std::env::var_os("HOME")
-                .map(|h| PathBuf::from(h).join("Downloads"))
-                .filter(|d| d.is_dir())
-                .unwrap_or_else(std::env::temp_dir)
-                .join(&asset.name);
+            let dest = downloads_dir().join(&asset.name);
             tokio::fs::write(&dest, &data).await?;
             Command::new("open").arg(&dest).spawn()?;
             Ok(Installed::Opened)
         }
     }
+}
+
+/// Carpeta de descargas del usuario (o la temporal si no hay).
+fn downloads_dir() -> PathBuf {
+    std::env::var_os("HOME")
+        .map(|h| PathBuf::from(h).join("Downloads"))
+        .filter(|d| d.is_dir())
+        .unwrap_or_else(std::env::temp_dir)
+}
+
+/// Busca un programa en el `PATH`.
+fn find_in_path(name: &str) -> Option<PathBuf> {
+    std::env::split_paths(&std::env::var_os("PATH")?)
+        .map(|d| d.join(name))
+        .find(|p| p.is_file())
+}
+
+/// Pone `s` entre comillas simples para la shell.
+fn shell_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', r"'\''"))
+}
+
+/// Terminales conocidas y cómo se les pasa el comando a correr.
+const TERMINALS: &[(&str, &[&str])] = &[
+    ("x-terminal-emulator", &["-e"]),
+    ("gnome-terminal", &["--"]),
+    ("konsole", &["-e"]),
+    ("xfce4-terminal", &["-x"]),
+    ("mate-terminal", &["-x"]),
+    ("tilix", &["-e"]),
+    ("lxterminal", &["-e"]),
+    ("kitty", &[]),
+    ("alacritty", &["-e"]),
+    ("foot", &[]),
+    ("xterm", &["-e"]),
+];
+
+/// Abre una terminal que corre `command` y espera un Enter antes de
+/// cerrarse, para que se lea el resultado. `false` si no hay ninguna.
+fn open_terminal(command: &str) -> bool {
+    let script = format!(
+        "echo 'Surco: instalando la versión nueva (te va a pedir tu contraseña)'; {command}; \
+         echo; echo 'Listo. Cerrá Surco y abrilo de nuevo. Enter para cerrar.'; read _"
+    );
+    for (name, flag) in TERMINALS {
+        let Some(path) = find_in_path(name) else {
+            continue;
+        };
+        let spawned = Command::new(path)
+            .args(*flag)
+            .args(["sh", "-c", &script])
+            .spawn();
+        if spawned.is_ok() {
+            return true;
+        }
+    }
+    false
 }
 
 /// Lanza el instalador de Windows en silencio cuando Surco ya se cerró, y
@@ -367,6 +440,12 @@ fn untar_gz(data: &[u8], name: &str) -> Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn quotes_paths_for_the_shell() {
+        assert_eq!(shell_quote("/home/a b/x.deb"), "'/home/a b/x.deb'");
+        assert_eq!(shell_quote("it's"), r"'it'\''s'");
+    }
 
     #[test]
     fn compares_versions() {

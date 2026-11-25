@@ -188,7 +188,7 @@ El botón de ondas de la barra de abajo arma la playlist "Radio" con unas 25 can
 
 ### Actualizaciones
 
-Al abrir Surco, si hay internet, se fija si salió una versión nueva. Si hay, aparece un aviso abajo a la izquierda con **Instalar**: baja la versión que corresponde a cómo lo instalaste (instalador o portable en Windows, AppImage, `.deb` o portable en Linux) y Surco se reinicia solo. Con el `.deb`, el sistema pide tu contraseña. En macOS se abre el `.dmg` para que arrastres la app a Aplicaciones.
+Al abrir Surco, si hay internet, se fija si salió una versión nueva. Si hay, aparece un aviso abajo a la izquierda con **Instalar**: baja la versión que corresponde a cómo lo instalaste (instalador o portable en Windows, AppImage, `.deb` o portable en Linux) y Surco se reinicia solo. Con el `.deb`, el sistema pide tu contraseña; si tu sistema no tiene `pkexec`, se abre una terminal para que la escribas ahí (y si tampoco hay terminal, Surco te muestra el comando para copiarlo). En macOS se abre el `.dmg` para que arrastres la app a Aplicaciones.
 
 ### Bandeja de Windows
 
