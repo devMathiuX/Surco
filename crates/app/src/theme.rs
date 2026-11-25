@@ -1,4 +1,5 @@
-//! Temas y estilos de Surco. Un solo acento, sin sombras, bordes de 6 px.
+//! Temas y estilos de Surco. Un solo acento; cada tema elige su forma
+//! ([`Look`]): plano, vidrio, neo-brutalista o brillo.
 //!
 //! El tema activo vive en un índice global ([`set`] / [`colors`]): los estilos
 //! son funciones `fn(&Theme, Status)` que iced llama al dibujar, y así todas
@@ -15,11 +16,31 @@ pub const SIZE_M: u32 = 15;
 pub const SIZE_L: u32 = 20;
 pub const RADIUS: f32 = 6.0;
 
+/// Forma de un tema, más allá de los colores.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Look {
+    /// Colores lisos (los temas de siempre).
+    Flat,
+    /// Fondo de degradado con paneles translúcidos.
+    Glass,
+    /// Bordes duros, sin redondeo, sombras planas.
+    Brutal,
+    /// Oscuro minimalista con un brillo de color detrás.
+    Glow,
+}
+
 /// Colores de un tema.
 #[derive(Debug, Clone, Copy)]
 pub struct Colors {
     /// Clave que se guarda en los ajustes.
     pub id: &'static str,
+    pub look: Look,
+    /// Redondeo de botones, campos y tarjetas.
+    pub radius: f32,
+    /// Ancho de los bordes.
+    pub border_width: f32,
+    /// Fondo de diálogos y menús flotantes (opaco, aun en temas translúcidos).
+    pub panel: Color,
     pub background: Color,
     /// Barra lateral y barra de reproducción.
     pub surface: Color,
@@ -40,10 +61,14 @@ pub struct Colors {
     pub warning: Color,
 }
 
-pub const THEMES: [Colors; 5] = [
+pub const THEMES: [Colors; 8] = [
     Colors {
         id: "dark",
+        look: Look::Flat,
+        radius: 6.0,
+        border_width: 1.0,
         background: color!(0x111111),
+        panel: color!(0x111111),
         surface: color!(0x1A1A1A),
         raised: color!(0x242424),
         hover: color!(0x262626),
@@ -59,7 +84,11 @@ pub const THEMES: [Colors; 5] = [
     },
     Colors {
         id: "green",
+        look: Look::Flat,
+        radius: 6.0,
+        border_width: 1.0,
         background: color!(0x121212),
+        panel: color!(0x121212),
         surface: color!(0x000000),
         raised: color!(0x282828),
         hover: color!(0x1F1F1F),
@@ -75,7 +104,11 @@ pub const THEMES: [Colors; 5] = [
     },
     Colors {
         id: "pink",
+        look: Look::Flat,
+        radius: 6.0,
+        border_width: 1.0,
         background: color!(0x170F14),
+        panel: color!(0x170F14),
         surface: color!(0x21151C),
         raised: color!(0x31202A),
         hover: color!(0x2A1B24),
@@ -91,7 +124,11 @@ pub const THEMES: [Colors; 5] = [
     },
     Colors {
         id: "light",
+        look: Look::Flat,
+        radius: 6.0,
+        border_width: 1.0,
         background: color!(0xFAFAFA),
+        panel: color!(0xFAFAFA),
         surface: color!(0xF0F0F0),
         raised: color!(0xE2E2E2),
         hover: color!(0xE8E8E8),
@@ -107,7 +144,11 @@ pub const THEMES: [Colors; 5] = [
     },
     Colors {
         id: "light-pink",
+        look: Look::Flat,
+        radius: 6.0,
+        border_width: 1.0,
         background: color!(0xFFF7FA),
+        panel: color!(0xFFF7FA),
         surface: color!(0xFCECF3),
         raised: color!(0xF6D7E5),
         hover: color!(0xF9E1EC),
@@ -120,6 +161,66 @@ pub const THEMES: [Colors; 5] = [
         on_accent: color!(0xFFFFFF),
         danger: color!(0xC9303E),
         warning: color!(0xA86A00),
+    },
+    Colors {
+        id: "glass",
+        look: Look::Glass,
+        radius: 12.0,
+        border_width: 1.0,
+        background: color!(0x111827),
+        panel: Color::from_rgba(0.09, 0.10, 0.17, 0.97),
+        surface: Color::from_rgba(1.0, 1.0, 1.0, 0.07),
+        raised: Color::from_rgba(1.0, 1.0, 1.0, 0.15),
+        hover: Color::from_rgba(1.0, 1.0, 1.0, 0.10),
+        border: Color::from_rgba(1.0, 1.0, 1.0, 0.16),
+        rail: Color::from_rgba(1.0, 1.0, 1.0, 0.22),
+        text: color!(0xF4F6FB),
+        text_secondary: Color::from_rgba(0.90, 0.93, 1.0, 0.66),
+        accent: color!(0x9DB2FF),
+        accent_hover: color!(0xB7C6FF),
+        on_accent: color!(0x0E1020),
+        danger: color!(0xFF8A8A),
+        warning: color!(0xF5C26B),
+    },
+    Colors {
+        id: "brutal",
+        look: Look::Brutal,
+        radius: 0.0,
+        border_width: 2.0,
+        background: color!(0x101010),
+        panel: color!(0x151515),
+        surface: color!(0x151515),
+        raised: color!(0x1E1E1E),
+        hover: color!(0x242424),
+        border: color!(0x3A3A3A),
+        rail: color!(0x3A3A3A),
+        text: color!(0xFFFFFF),
+        text_secondary: color!(0xA3A3A3),
+        accent: color!(0xB4F233),
+        accent_hover: color!(0xC8FF55),
+        on_accent: color!(0x000000),
+        danger: color!(0xFF5C5C),
+        warning: color!(0xFFD400),
+    },
+    Colors {
+        id: "glow",
+        look: Look::Glow,
+        radius: 10.0,
+        border_width: 1.0,
+        background: color!(0x09090F),
+        panel: color!(0x13131C),
+        surface: Color::from_rgba(1.0, 1.0, 1.0, 0.03),
+        raised: Color::from_rgba(1.0, 1.0, 1.0, 0.08),
+        hover: Color::from_rgba(1.0, 1.0, 1.0, 0.05),
+        border: Color::from_rgba(1.0, 1.0, 1.0, 0.08),
+        rail: Color::from_rgba(1.0, 1.0, 1.0, 0.14),
+        text: color!(0xECECF4),
+        text_secondary: color!(0x8B8BA3),
+        accent: color!(0x8B7CF6),
+        accent_hover: color!(0xA497FF),
+        on_accent: color!(0x0B0B12),
+        danger: color!(0xFF7A8A),
+        warning: color!(0xF5C26B),
     },
 ];
 
@@ -175,6 +276,9 @@ pub fn name_of(index: usize) -> &'static str {
         Some("pink") => tr!("Rosa", "Pink"),
         Some("light") => tr!("Claro", "Light"),
         Some("light-pink") => tr!("Claro rosa", "Light pink"),
+        Some("glass") => tr!("Vidrio", "Glass"),
+        Some("brutal") => tr!("Brutal", "Brutal"),
+        Some("glow") => tr!("Brillo", "Glow"),
         Some(other) => other,
         None => tr!("Personalizado", "Custom"),
     }
@@ -199,7 +303,11 @@ pub fn derive(background: Color, accent: Color) -> Colors {
     let base = if dark { THEMES[0] } else { THEMES[3] };
     Colors {
         id: CUSTOM_ID,
+        look: Look::Flat,
+        radius: RADIUS,
+        border_width: 1.0,
         background,
+        panel: background,
         surface: mix(background, toward, 0.04),
         raised: mix(background, toward, 0.10),
         hover: mix(background, toward, 0.07),
@@ -252,6 +360,25 @@ fn luminance(c: Color) -> f32 {
     0.2126 * lin(c.r) + 0.7152 * lin(c.g) + 0.0722 * lin(c.b)
 }
 
+/// Redondeo del tema activo.
+pub fn radius() -> f32 {
+    colors().radius
+}
+
+/// Sombra plana (sin difuminar) de los temas neo-brutalistas. Opaca: al
+/// redibujar solo una parte no se acumula (ver [`dialog`]).
+fn hard_shadow() -> iced::Shadow {
+    if colors().look == Look::Brutal {
+        iced::Shadow {
+            color: Color::BLACK,
+            offset: iced::Vector::new(3.0, 3.0),
+            blur_radius: 0.0,
+        }
+    } else {
+        iced::Shadow::default()
+    }
+}
+
 /// `Theme` de iced para los widgets que no tienen estilo propio.
 pub fn iced_theme() -> Theme {
     let c = colors();
@@ -281,7 +408,10 @@ pub fn card(_: &Theme) -> container::Style {
     let c = colors();
     container::Style {
         background: Some(c.surface.into()),
-        border: border::rounded(RADIUS).width(1).color(c.border),
+        border: border::rounded(radius())
+            .width(colors().border_width)
+            .color(c.border),
+        shadow: hard_shadow(),
         ..container::Style::default()
     }
 }
@@ -319,9 +449,11 @@ pub fn queue_row(current: bool, target: bool, lifted: bool) -> impl Fn(&Theme) -
         container::Style {
             background,
             border: if target {
-                border::rounded(RADIUS).width(2).color(c.accent)
+                border::rounded(radius())
+                    .width(colors().border_width.max(2.0))
+                    .color(c.accent)
             } else {
-                border::rounded(RADIUS)
+                border::rounded(radius())
             },
             ..container::Style::default()
         }
@@ -339,8 +471,8 @@ pub fn input(_: &Theme, status: text_input::Status) -> text_input::Style {
     let focused = matches!(status, text_input::Status::Focused { .. });
     text_input::Style {
         background: c.surface.into(),
-        border: border::rounded(RADIUS)
-            .width(1)
+        border: border::rounded(radius())
+            .width(colors().border_width)
             .color(if focused { c.accent } else { c.border }),
         icon: c.text_secondary,
         placeholder: c.text_secondary,
@@ -352,7 +484,9 @@ pub fn input(_: &Theme, status: text_input::Status) -> text_input::Style {
 /// Campo con un valor que no se puede usar (borde rojo).
 pub fn input_error(theme: &Theme, status: text_input::Status) -> text_input::Style {
     text_input::Style {
-        border: border::rounded(RADIUS).width(1).color(colors().danger),
+        border: border::rounded(radius())
+            .width(colors().border_width)
+            .color(colors().danger),
         ..input(theme, status)
     }
 }
@@ -367,7 +501,8 @@ pub fn primary_button(_: &Theme, status: button::Status) -> button::Style {
     button::Style {
         background: Some(bg.into()),
         text_color: c.on_accent,
-        border: border::rounded(RADIUS),
+        border: border::rounded(radius()),
+        shadow: hard_shadow(),
         ..button::Style::default()
     }
 }
@@ -388,7 +523,7 @@ pub fn danger_button(_: &Theme, status: button::Status) -> button::Style {
             .into(),
         ),
         text_color: Color::WHITE,
-        border: border::rounded(RADIUS),
+        border: border::rounded(radius()),
         ..button::Style::default()
     }
 }
@@ -407,7 +542,9 @@ pub fn ghost_button(_: &Theme, status: button::Status) -> button::Style {
     button::Style {
         background: hovered.then(|| c.hover.into()),
         text_color: c.accent,
-        border: border::rounded(RADIUS).width(1).color(c.accent),
+        border: border::rounded(radius())
+            .width(colors().border_width)
+            .color(c.accent),
         ..button::Style::default()
     }
 }
@@ -469,14 +606,23 @@ pub fn list_button(selected: bool) -> impl Fn(&Theme, button::Status) -> button:
     move |_, status| {
         let c = colors();
         let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
+        let brutal = c.look == Look::Brutal;
         button::Style {
-            background: if selected {
-                Some(c.raised.into())
-            } else {
-                hovered.then(|| c.hover.into())
+            background: match (selected, brutal) {
+                (true, true) => Some(c.accent.into()),
+                (true, false) => Some(c.raised.into()),
+                _ => hovered.then(|| c.hover.into()),
             },
-            text_color: if selected { c.accent } else { c.text },
-            border: border::rounded(RADIUS),
+            text_color: match (selected, brutal) {
+                (true, true) => c.on_accent,
+                (true, false) => c.accent,
+                _ => c.text,
+            },
+            border: if brutal && selected {
+                border::rounded(0).width(c.border_width).color(c.accent)
+            } else {
+                border::rounded(radius())
+            },
             ..button::Style::default()
         }
     }
@@ -495,13 +641,19 @@ pub fn icon_button(_: &Theme, status: button::Status) -> button::Style {
 /// Botón principal redondo (play/pausa).
 pub fn play_button(_: &Theme, status: button::Status) -> button::Style {
     let c = colors();
+    // Brutal y Brillo: el botón principal va con el acento.
+    let base = match c.look {
+        Look::Brutal | Look::Glow => c.accent,
+        Look::Flat | Look::Glass => c.text,
+    };
     let bg = match status {
-        button::Status::Hovered | button::Status::Pressed => c.text.scale_alpha(0.85),
-        _ => c.text,
+        button::Status::Hovered | button::Status::Pressed => base.scale_alpha(0.85),
+        _ => base,
     };
     button::Style {
         background: Some(bg.into()),
         border: border::rounded(999),
+        shadow: hard_shadow(),
         ..button::Style::default()
     }
 }
@@ -510,7 +662,7 @@ pub fn play_button(_: &Theme, status: button::Status) -> button::Style {
 pub fn cover_placeholder(_: &Theme) -> container::Style {
     container::Style {
         background: Some(colors().raised.into()),
-        border: border::rounded(RADIUS),
+        border: border::rounded(radius()),
         ..container::Style::default()
     }
 }
@@ -522,7 +674,7 @@ fn mix(a: Color, b: Color, t: f32) -> Color {
         r: a.r + (b.r - a.r) * t,
         g: a.g + (b.g - a.g) * t,
         b: a.b + (b.b - a.b) * t,
-        a: 1.0,
+        a: a.a + (b.a - a.a) * t,
     }
 }
 
@@ -559,9 +711,11 @@ pub fn drag_row(
             background,
             text_color: Some(if selected { c.accent } else { c.text }),
             border: if target {
-                border::rounded(RADIUS).width(2).color(c.accent)
+                border::rounded(radius())
+                    .width(colors().border_width.max(2.0))
+                    .color(c.accent)
             } else {
-                border::rounded(RADIUS)
+                border::rounded(radius())
             },
             ..container::Style::default()
         }
@@ -572,10 +726,18 @@ pub fn drag_row(
 pub fn tile(_: &Theme, status: button::Status) -> button::Style {
     let c = colors();
     let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
+    let brutal = c.look == Look::Brutal;
     button::Style {
         background: Some(if hovered { c.hover } else { c.surface }.into()),
         text_color: c.text,
-        border: border::rounded(RADIUS),
+        border: if brutal {
+            border::rounded(0).width(c.border_width).color(c.accent)
+        } else {
+            border::rounded(radius())
+                .width(if c.look == Look::Glass { 1.0 } else { 0.0 })
+                .color(c.border)
+        },
+        shadow: hard_shadow(),
         ..button::Style::default()
     }
 }
@@ -584,11 +746,13 @@ pub fn tile(_: &Theme, status: button::Status) -> button::Style {
 pub fn dialog(_: &Theme) -> container::Style {
     let c = colors();
     container::Style {
-        background: Some(c.background.into()),
+        background: Some(c.panel.into()),
         // Sin sombra: con tiny-skia, al redibujar solo la zona que cambió
         // (pasar el mouse por las opciones) la sombra difusa se acumulaba y
         // oscurecía el diálogo entero.
-        border: border::rounded(RADIUS + 2.0).width(1).color(c.border),
+        border: border::rounded(radius() + 2.0)
+            .width(colors().border_width)
+            .color(c.border),
         ..container::Style::default()
     }
 }
@@ -597,7 +761,9 @@ pub fn dialog(_: &Theme) -> container::Style {
 pub fn swatch(color: Color) -> impl Fn(&Theme) -> container::Style {
     move |_| container::Style {
         background: Some(color.into()),
-        border: border::rounded(999).width(1).color(colors().border),
+        border: border::rounded(999)
+            .width(colors().border_width)
+            .color(colors().border),
         ..container::Style::default()
     }
 }

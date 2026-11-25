@@ -18,6 +18,7 @@ use crate::{skeleton, theme, DragList, Message, Screen, Surco, FILTER_INPUT, IMP
 impl Surco {
     pub(crate) fn view(&self) -> Element<'_, Message> {
         let main: Element<'_, Message> = match self.screen {
+            Screen::Welcome => return self.with_backdrop(self.view_welcome()),
             Screen::Settings => self.view_settings(),
             Screen::Queue => self.view_queue(),
             Screen::Search => self.view_search(),
@@ -46,6 +47,7 @@ impl Surco {
             self.view_player_bar()
         ]
         .into();
+        let app = self.with_backdrop(app);
         let layer = if let Some(i) = self.confirm_remove {
             Some(self.view_confirm_remove(i))
         } else if let Some(card) = self
@@ -68,6 +70,22 @@ impl Surco {
             None => app,
         };
         crate::pointer::Pointer::new(app, Message::Pointer).into()
+    }
+
+    /// Temas Vidrio y Brillo: fondo dibujado por código detrás de todo.
+    fn with_backdrop<'a>(&self, app: Element<'a, Message>) -> Element<'a, Message> {
+        match crate::backdrop::current() {
+            Some(h) => stack![
+                image(h)
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .content_fit(iced::ContentFit::Fill)
+                    .filter_method(image::FilterMethod::Linear),
+                app
+            ]
+            .into(),
+            None => app,
+        }
     }
 
     pub(crate) fn view_sidebar(&self) -> Element<'_, Message> {
@@ -122,10 +140,10 @@ impl Surco {
                 row![
                     icons::icon(
                         kind,
-                        if on {
-                            theme::colors().accent
-                        } else {
-                            theme::colors().text_secondary
+                        match (on, theme::colors().look) {
+                            (true, theme::Look::Brutal) => theme::colors().on_accent,
+                            (true, _) => theme::colors().accent,
+                            _ => theme::colors().text_secondary,
                         },
                         16.0
                     ),
@@ -658,56 +676,12 @@ impl Surco {
             ]
             .spacing(2)
         };
-        let sw = |c, size: u32| {
-            container(Space::new())
-                .width(size)
-                .height(size)
-                .style(theme::swatch(c))
-        };
 
-        let languages = row(Lang::ALL.iter().map(|&l| {
-            button(text(l.name()).size(theme::SIZE_S))
-                .on_press(Message::Setting(Change::Language(l)))
-                .padding([6, 10])
-                .style(theme::choice_button(self.settings.language == l))
-                .into()
-        }))
-        .spacing(8);
-
-        // Temas: botón con dos muestras de color (fondo y acento). El último es
-        // el personalizado, con los colores que eligió el usuario.
-        let (custom_bg, custom_accent) = self.settings.custom;
-        let swatches = theme::THEMES
-            .iter()
-            .map(|t| (t.background, t.accent))
-            .chain([(custom_bg, custom_accent)]);
-        let themes = row(swatches.enumerate().map(|(i, (bg, accent))| {
-            button(
-                row![
-                    sw(bg, 14),
-                    sw(accent, 14),
-                    text(theme::name_of(i)).size(theme::SIZE_S)
-                ]
-                .spacing(6)
-                .align_y(Alignment::Center),
-            )
-            .on_press(Message::Setting(Change::Theme(i)))
-            .padding([6, 10])
-            .style(theme::choice_button(self.settings.theme == i))
-            .into()
-        }))
-        .spacing(8)
-        .wrap();
+        let languages = self.languages_row();
+        let themes = self.themes_row();
         let custom = (self.settings.theme == theme::CUSTOM).then(|| self.view_custom_theme());
 
-        let precache = row(Precache::ALL.iter().map(|&p| {
-            button(text(p.label()).size(theme::SIZE_S))
-                .on_press(Message::Setting(Change::Precache(p)))
-                .padding([6, 10])
-                .style(theme::choice_button(self.settings.precache == p))
-                .into()
-        }))
-        .spacing(8);
+        let precache = self.precache_row();
         let usage = self
             .provider
             .as_ref()
@@ -786,34 +760,7 @@ impl Surco {
                 .style(theme::switch)
         };
 
-        let scale = row![
-            button(text("−").size(theme::SIZE_M))
-                .on_press_maybe(
-                    (self.settings.ui_scale > crate::settings::SCALE_MIN)
-                        .then_some(Message::Setting(Change::Scale(-1)))
-                )
-                .padding([2, 12])
-                .style(theme::ghost_button),
-            text(format!("{} %", self.settings.ui_scale))
-                .size(theme::SIZE_S)
-                .width(56)
-                .align_x(iced::alignment::Horizontal::Center),
-            button(text("+").size(theme::SIZE_M))
-                .on_press_maybe(
-                    (self.settings.ui_scale < crate::settings::SCALE_MAX)
-                        .then_some(Message::Setting(Change::Scale(1)))
-                )
-                .padding([2, 12])
-                .style(theme::ghost_button),
-            button(text(tr!("Normal", "Reset")).size(theme::SIZE_S))
-                .on_press_maybe(
-                    (self.settings.ui_scale != 100).then_some(Message::Setting(Change::Scale(0)))
-                )
-                .padding([4, 10])
-                .style(theme::ghost_button),
-        ]
-        .spacing(8)
-        .align_y(Alignment::Center);
+        let scale = self.scale_row();
 
         let body = column![
             text(tr!("Ajustes", "Settings")).size(theme::SIZE_L),
@@ -906,6 +853,99 @@ impl Surco {
         .max_width(760)
         .padding(iced::Padding::ZERO.right(16));
         scrollable(body).height(Length::Fill).into()
+    }
+
+    /// Botones de idioma (ajustes y bienvenida).
+    pub(crate) fn languages_row(&self) -> Element<'_, Message> {
+        row(Lang::ALL.iter().map(|&l| {
+            button(text(l.name()).size(theme::SIZE_S))
+                .on_press(Message::Setting(Change::Language(l)))
+                .padding([6, 10])
+                .style(theme::choice_button(self.settings.language == l))
+                .into()
+        }))
+        .spacing(8)
+        .into()
+    }
+
+    /// Botones de tema con sus dos muestras (ajustes y bienvenida).
+    pub(crate) fn themes_row(&self) -> Element<'_, Message> {
+        let sw = |c, size: u32| {
+            container(Space::new())
+                .width(size)
+                .height(size)
+                .style(theme::swatch(c))
+        };
+        // El último es el personalizado, con los colores que eligió el usuario.
+        let (custom_bg, custom_accent) = self.settings.custom;
+        let swatches = theme::THEMES
+            .iter()
+            .map(|t| (t.background, t.accent))
+            .chain([(custom_bg, custom_accent)]);
+        row(swatches.enumerate().map(|(i, (bg, accent))| {
+            button(
+                row![
+                    sw(bg, 14),
+                    sw(accent, 14),
+                    text(theme::name_of(i)).size(theme::SIZE_S)
+                ]
+                .spacing(6)
+                .align_y(Alignment::Center),
+            )
+            .on_press(Message::Setting(Change::Theme(i)))
+            .padding([6, 10])
+            .style(theme::choice_button(self.settings.theme == i))
+            .into()
+        }))
+        .spacing(8)
+        .wrap()
+        .into()
+    }
+
+    /// Opciones de precarga (ajustes y bienvenida).
+    pub(crate) fn precache_row(&self) -> Element<'_, Message> {
+        row(Precache::ALL.iter().map(|&p| {
+            button(text(p.label()).size(theme::SIZE_S))
+                .on_press(Message::Setting(Change::Precache(p)))
+                .padding([6, 10])
+                .style(theme::choice_button(self.settings.precache == p))
+                .into()
+        }))
+        .spacing(8)
+        .into()
+    }
+
+    /// − 100 % + del tamaño de la interfaz (ajustes y bienvenida).
+    pub(crate) fn scale_row(&self) -> Element<'_, Message> {
+        row![
+            button(text("−").size(theme::SIZE_M))
+                .on_press_maybe(
+                    (self.settings.ui_scale > crate::settings::SCALE_MIN)
+                        .then_some(Message::Setting(Change::Scale(-1)))
+                )
+                .padding([2, 12])
+                .style(theme::ghost_button),
+            text(format!("{} %", self.settings.ui_scale))
+                .size(theme::SIZE_S)
+                .width(56)
+                .align_x(iced::alignment::Horizontal::Center),
+            button(text("+").size(theme::SIZE_M))
+                .on_press_maybe(
+                    (self.settings.ui_scale < crate::settings::SCALE_MAX)
+                        .then_some(Message::Setting(Change::Scale(1)))
+                )
+                .padding([2, 12])
+                .style(theme::ghost_button),
+            button(text(tr!("Normal", "Reset")).size(theme::SIZE_S))
+                .on_press_maybe(
+                    (self.settings.ui_scale != 100).then_some(Message::Setting(Change::Scale(0)))
+                )
+                .padding([4, 10])
+                .style(theme::ghost_button),
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center)
+        .into()
     }
 
     /// Tema personalizado: el fondo y el acento, con un campo `#RRGGBB` y
