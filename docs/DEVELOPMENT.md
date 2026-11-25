@@ -6,7 +6,7 @@ Detalles técnicos de Surco: cómo compilarlo, cómo está armado y qué se midi
 
 - **CI** (`.github/workflows/ci.yml`): en cada PR y push a `main` corre en Linux `cargo fmt`, `clippy`, los tests y el build release.
 - **Release** (`.github/workflows/release.yml`): compila y empaqueta en Linux, Windows y macOS. Corre solo con un tag `v*` (y entonces publica un Release de GitHub con todos los archivos y sube el `.deb` al repositorio APT) o a mano desde la pestaña Actions ("Run workflow"), que deja los paquetes como artefactos del run.
-- Para publicar una versión: subir `version` en `[workspace.package]` de `Cargo.toml`, y después `git tag v0.6.3 && git push origin v0.6.0`.
+- Para publicar una versión: subir `version` en `[workspace.package]` de `Cargo.toml`, y después `git tag v0.6.4 && git push origin v0.6.0`.
 
 | Archivo | Sale de |
 |---|---|
@@ -232,6 +232,11 @@ El engranaje de arriba a la izquierda abre los ajustes. Todo se guarda en la bib
   - **yt-dlp en carpeta:** se baja `yt-dlp_linux.zip` / `yt-dlp_win.zip` / `yt-dlp_macos.zip` (no se descomprime a un temporal en cada arranque: ~0,5 s menos por llamada) a `<datos>/yt-dlp-onedir/<fecha>/`. Al abrir, si el yt-dlp es el de Surco y no hay versión en carpeta o tiene más de 7 días, se baja una nueva en segundo plano (`yt-dlp -U` no actualiza esta variante). Las carpetas viejas se borran al abrir (en Windows no se puede borrar un yt-dlp que está corriendo).
   - **Retomar la última canción** (`crates/app/src/resume.rs`): la cola (`resume_queue`, JSON) y la posición (`resume_position`, cada 5 s) quedan en los ajustes. Toda canción que se termina de bajar en streaming se guarda en la caché de audio (`HttpStream::on_complete`), y la última queda fijada (`AudioCache::keep`) para que no se borre al cerrar. Al abrir se carga en pausa con `Command::LoadAt`.
   - **Sugerencias** mientras se escribe (`suggestqueries.google.com`, `ds=yt`, 120 ms después de la última tecla) y las últimas 20 búsquedas en memoria. El prebuffer bajó de 2 s a 1 s.
+- **0.6.4:**
+  - **Pedido directo con el cliente `VISIONOS`** (no `ANDROID_VR`: desde agosto de 2026 YouTube contesta 403 a todos sus formatos; ver los comentarios de `yt_dlp/extractor/youtube/_base.py`). Es el mismo cliente que yt-dlp usa sin runtime de JavaScript. Si YouTube rechaza la URL directa, el reintento prueba el cliente rápido de yt-dlp antes que el normal (`Provider::rejected`).
+  - **yt-dlp nightly en carpeta** (`yt-dlp/yt-dlp-nightly-builds`, como Nuclear): trae los arreglos para YouTube días antes. Al abrir se compara la versión instalada (`.tag` en su carpeta) con la última, que se saca de adónde redirige `releases/latest/download/<asset>` (sin la API de GitHub); si cambió, se baja en segundo plano. **deno** bajado por Surco se actualiza igual (`refresh_deno`), como mucho una vez por día.
+  - **Diálogo de herramientas** (`crates/app/src/tools.rs`): al abrir, si falta yt-dlp o un runtime de JavaScript, un diálogo ofrece bajar los dos a la vez; se cierra solo cuando terminan.
+  - **Tiempos en el log:** `URL del audio …` dice de dónde salió la URL, `audio abierto` trae `url_ms` y `first_chunk_ms`, y `reproduciendo` trae `ms` (desde que se pidió la canción hasta que suena). El log ahora incluye la info de `surco_player` y `surco_provider`.
 - **Radio (canciones parecidas):** el botón de ondas de la barra de abajo arma una playlist "Radio" con ~25 canciones parecidas a la que suena, sacadas del Mix de YouTube (sin buscar una por una), y sigue sin cortar la actual. Con "Al terminar, seguir con canciones parecidas" (prendido por defecto), cuando se termina la cola, o un video suelto, arranca sola una radio a partir de la última canción. Hay una sola playlist de radio: una nueva reemplaza a la anterior.
 
 ## Buscador, cola y playlists de YouTube

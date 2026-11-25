@@ -50,8 +50,16 @@ const ONEDIR_BINARY: &str = "yt-dlp_linux";
 /// yt-dlp que se está ejecutando, así que las viejas se borran al arrancar.
 pub const ONEDIR_DIR: &str = "yt-dlp-onedir";
 
-/// Cada cuánto se baja de nuevo la versión en carpeta (no se actualiza sola
-/// con `yt-dlp -U`), para seguir los cambios de YouTube.
+/// La versión en carpeta sale de las compilaciones diarias (nightly): traen
+/// los arreglos para YouTube días antes que las versiones estables. Es lo
+/// que recomienda yt-dlp para YouTube (y lo que usa Nuclear).
+const NIGHTLY_RELEASES: &str = "https://github.com/yt-dlp/yt-dlp-nightly-builds/releases";
+
+/// Archivo con la versión (tag) dentro de cada carpeta de yt-dlp.
+const TAG_FILE: &str = ".tag";
+
+/// Si no se puede saber cuál es la última versión (sin red, GitHub caído),
+/// se baja de nuevo la versión en carpeta cuando tiene más que esto.
 pub const ONEDIR_MAX_AGE: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 
 /// Formato pedido: m4a/AAC primero (symphonia lo decodifica nativo).
@@ -143,12 +151,29 @@ impl YtDlp {
         if !self.is_managed(data_dir) {
             return Ok(None);
         }
-        if let Some((_, age)) = newest_onedir(data_dir) {
-            if age < ONEDIR_MAX_AGE {
+        let latest = latest_tag(NIGHTLY_RELEASES, ONEDIR_ASSET).await;
+        if let Err(e) = &latest {
+            tracing::debug!(error = %e, "no se pudo ver la última versión de yt-dlp");
+        }
+        let latest = latest.ok();
+        if let Some((bin, age)) = newest_onedir(data_dir) {
+            let installed = bin
+                .parent()
+                .and_then(|d| std::fs::read_to_string(d.join(TAG_FILE)).ok());
+            let up_to_date = match (&latest, installed) {
+                (Some(latest), Some(installed)) => installed.trim() == latest,
+                // Sin saber la última: se renueva por antigüedad.
+                (None, _) => age < ONEDIR_MAX_AGE,
+                // Bajada por una versión vieja de Surco (sin tag).
+                (Some(_), None) => false,
+            };
+            if up_to_date {
                 return Ok(None);
             }
         }
-        Self::download_onedir(client, data_dir).await.map(Some)
+        Self::download_onedir_tag(client, data_dir, latest.as_deref())
+            .await
+            .map(Some)
     }
 
     /// Borra las versiones en carpeta viejas (todas menos la más nueva).
@@ -174,7 +199,19 @@ impl YtDlp {
     }
 
     async fn download_onedir(client: &reqwest::Client, data_dir: &Path) -> Result<Self> {
-        let url = format!("{RELEASES_URL}{ONEDIR_ASSET}");
+        let tag = latest_tag(NIGHTLY_RELEASES, ONEDIR_ASSET).await.ok();
+        Self::download_onedir_tag(client, data_dir, tag.as_deref()).await
+    }
+
+    async fn download_onedir_tag(
+        client: &reqwest::Client,
+        data_dir: &Path,
+        tag: Option<&str>,
+    ) -> Result<Self> {
+        let url = match tag {
+            Some(t) => format!("{NIGHTLY_RELEASES}/download/{t}/{ONEDIR_ASSET}"),
+            None => format!("{NIGHTLY_RELEASES}/latest/download/{ONEDIR_ASSET}"),
+        };
         tracing::info!(%url, "descargando yt-dlp en carpeta");
         let zip = client
             .get(&url)
@@ -205,6 +242,9 @@ impl YtDlp {
             return Err(Error::Parse(format!("el zip no trae {ONEDIR_BINARY}")));
         }
         make_executable(&binary).await?;
+        if let Some(t) = tag {
+            tokio::fs::write(tmp.join(TAG_FILE), t).await?;
+        }
         tokio::fs::rename(&tmp, &dest).await?;
         let path = dest.join(ONEDIR_BINARY);
         tracing::info!(path = %path.display(), size = zip_len, "yt-dlp en carpeta descargado");
@@ -497,6 +537,40 @@ impl YtDlp {
     }
 }
 
+/// Última versión publicada en `releases` (una página de releases de
+/// GitHub), sin usar la API (que limita los pedidos):
+/// `releases/latest/download/<asset>` redirige a
+/// `releases/download/<versión>/<asset>`. (No se baja nada: solo se mira
+/// adónde redirige.)
+pub(crate) async fn latest_tag(releases: &str, asset: &str) -> Result<String> {
+    static CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+    let client = CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .timeout(Duration::from_secs(10))
+            .build()
+            .unwrap_or_default()
+    });
+    let resp = client
+        .head(format!("{releases}/latest/download/{asset}"))
+        .send()
+        .await?;
+    let location = resp
+        .headers()
+        .get(reqwest::header::LOCATION)
+        .and_then(|l| l.to_str().ok())
+        .ok_or_else(|| Error::Status(resp.status().as_u16()))?;
+    tag_from_location(location)
+        .map(str::to_owned)
+        .ok_or_else(|| Error::Parse(format!("redirección inesperada: {location}")))
+}
+
+fn tag_from_location(location: &str) -> Option<&str> {
+    let (_, rest) = location.rsplit_once("/releases/download/")?;
+    let tag = rest.split('/').next()?;
+    (!tag.is_empty() && tag != "latest").then_some(tag)
+}
+
 /// El yt-dlp en carpeta más nuevo de `data_dir` y su antigüedad.
 fn newest_onedir(data_dir: &Path) -> Option<(PathBuf, Duration)> {
     let now = std::time::SystemTime::now()
@@ -764,6 +838,31 @@ pub(crate) async fn make_executable(_: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reads_tag_from_redirect() {
+        assert_eq!(
+            tag_from_location(
+                "https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/download/2026.11.24.232653/yt-dlp_linux.zip"
+            ),
+            Some("2026.11.24.232653")
+        );
+        assert_eq!(
+            tag_from_location(
+                "https://github.com/denoland/deno/releases/download/v2.5.6/deno-x86_64-unknown-linux-gnu.zip"
+            ),
+            Some("v2.5.6")
+        );
+        assert_eq!(tag_from_location("https://github.com/login"), None);
+    }
+
+    /// `cargo test -p surco-provider real_latest_tag -- --ignored`.
+    #[tokio::test]
+    #[ignore = "usa la red"]
+    async fn real_latest_tag() {
+        let t = latest_tag(NIGHTLY_RELEASES, ONEDIR_ASSET).await.unwrap();
+        assert!(t.starts_with("20"), "{t}");
+    }
 
     /// Baja el yt-dlp en carpeta de verdad y lo ejecuta:
     /// `cargo test -p surco-provider real_onedir -- --ignored`.

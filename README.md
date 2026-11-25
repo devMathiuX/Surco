@@ -117,10 +117,9 @@ Hace falta una distro de 2022 o más nueva (por ejemplo Ubuntu 22.04 o Debian 12
 
 ### 3. Instalar yt-dlp y deno
 
-Surco usa dos programas gratuitos para sacar el audio de YouTube:
+Surco usa dos programas gratuitos para sacar el audio de YouTube: **yt-dlp** y **deno**. No tenés que instalar nada a mano: si falta alguno, al abrir Surco aparece un aviso con el botón **Descargar**, que los baja de sus páginas oficiales a la carpeta de Surco. Después Surco los mantiene actualizados solo, cada vez que lo abrís.
 
-- **yt-dlp**: si no lo tenés, Surco te muestra el botón **Descargar yt-dlp** al abrir y lo baja solo. No hace falta hacer nada más.
-- **deno**: yt-dlp lo necesita para que YouTube no bloquee la reproducción. Instalalo una sola vez:
+Si preferís instalar deno por tu cuenta:
 
 | Sistema | Cómo instalar deno |
 |---|---|
@@ -128,7 +127,7 @@ Surco usa dos programas gratuitos para sacar el audio de YouTube:
 | macOS | Con [Homebrew](https://brew.sh): `brew install deno`. Sin Homebrew, en la Terminal: `curl -fsSL https://deno.land/install.sh \| sh` |
 | Linux | En una terminal: `curl -fsSL https://deno.land/install.sh \| sh` |
 
-Si Surco no encuentra deno, en el Inicio aparece el botón **Instalar deno**, que lo baja solo. Si preferís instalarlo a mano, después cerrá y volvé a abrir Surco. Si ya tenés `node` o `bun` instalados, Surco los usa y deno no hace falta.
+Después cerrá y volvé a abrir Surco. Si ya tenés `node` o `bun` instalados, Surco los usa y deno no hace falta.
 
 ## Cómo se usa
 
