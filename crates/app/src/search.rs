@@ -584,7 +584,11 @@ impl Surco {
         .padding([4, 8])
         .width(Length::Fill)
         .style(theme::list_button(playing));
-        iced::widget::mouse_area(row).on_right_press(menu).into()
+        with_hover(
+            iced::widget::mouse_area(row).on_right_press(menu),
+            &track,
+            video,
+        )
     }
 
     fn view_results<'a>(&'a self, q: &'a str, r: &'a Results) -> Element<'a, Message> {
@@ -720,8 +724,26 @@ pub fn with_menu<'a>(
     track: &Track,
     from: Option<(usize, usize)>,
 ) -> Element<'a, Message> {
-    iced::widget::mouse_area(row)
-        .on_right_press(song_menu(track, from))
+    with_hover(
+        iced::widget::mouse_area(row).on_right_press(song_menu(track, from)),
+        track,
+        None,
+    )
+}
+
+/// Avisa cuando el mouse entra o sale de la fila, para pedir la URL del
+/// audio antes del clic (ver `warm`).
+fn with_hover<'a>(
+    area: iced::widget::MouseArea<'a, Message>,
+    track: &Track,
+    video: Option<&str>,
+) -> Element<'a, Message> {
+    let hover = crate::warm::Hover {
+        track: track.clone(),
+        video: video.map(str::to_owned),
+    };
+    area.on_enter(Message::HoverTrack(Some(Box::new(hover))))
+        .on_exit(Message::HoverTrack(None))
         .into()
 }
 

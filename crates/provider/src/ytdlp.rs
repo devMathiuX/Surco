@@ -120,10 +120,25 @@ impl YtDlp {
 
     /// Obtiene la URL directa del audio de un video (ID o URL de YouTube).
     pub async fn stream_info(&self, video: &str) -> Result<StreamInfo> {
-        let js = js_runtime_args(search_path().as_deref());
+        self.stream_info_with(video, None, RESOLVE_TIMEOUT).await
+    }
+
+    /// Como [`stream_info`](Self::stream_info), pero pidiéndole a YouTube con
+    /// otro cliente (`player_client` de yt-dlp) y con un tiempo máximo propio.
+    pub async fn stream_info_with(
+        &self,
+        video: &str,
+        client: Option<&str>,
+        timeout: Duration,
+    ) -> Result<StreamInfo> {
+        let mut args = js_runtime_args(search_path().as_deref());
+        if let Some(c) = client {
+            args.push("--extractor-args".into());
+            args.push(format!("youtube:player_client={c}"));
+        }
         let out = self
             .run(
-                js.iter().map(String::as_str).chain([
+                args.iter().map(String::as_str).chain([
                     "--no-playlist",
                     "--no-warnings",
                     // La URL queda atada a la IP: la descarga también va por
@@ -144,7 +159,7 @@ impl YtDlp {
                     "--",
                     video,
                 ]),
-                RESOLVE_TIMEOUT,
+                timeout,
             )
             .await?;
         parse_stream_info(&out)
