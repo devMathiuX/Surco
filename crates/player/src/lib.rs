@@ -24,6 +24,10 @@ use tokio::sync::watch;
 
 use decode::{AudioSpec, DecodeEvent, DecodeFailure, RingSource, Shared};
 
+/// Cuántas veces se vuelve a pedir la URL a yt-dlp cuando YouTube la rechaza
+/// (403) antes de dar la canción por perdida.
+const EXPIRED_RETRIES: u32 = 2;
+
 /// Errores de este crate.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -463,7 +467,7 @@ impl Engine {
     /// La URL venció (403) a mitad de canción: re-resolver y seguir desde donde estaba.
     fn retry_expired(&mut self) {
         let Some(cur) = &self.current else { return };
-        if cur.retries >= 1 {
+        if cur.retries >= EXPIRED_RETRIES {
             self.fail("la URL del stream venció y no se pudo renovar".into());
             return;
         }
@@ -861,7 +865,7 @@ async fn open_source(
                 }
             }
             let mut refresh = refresh;
-            for attempt in 0..2 {
+            for attempt in 0..=EXPIRED_RETRIES {
                 let info = provider
                     .stream_info(&video, refresh)
                     .await
@@ -872,7 +876,13 @@ async fn open_source(
                         info.ext
                     ));
                 }
-                match HttpStream::open(client.clone(), info.url.clone()).await {
+                match HttpStream::open_with(
+                    client.clone(),
+                    info.url.clone(),
+                    info.user_agent.clone(),
+                )
+                .await
+                {
                     Ok(stream) => {
                         return Ok(Opened {
                             source: Box::new(StreamSource(stream)),
@@ -881,9 +891,11 @@ async fn open_source(
                             duration: info.duration,
                         })
                     }
-                    Err(surco_provider::Error::Expired) if attempt == 0 => {
+                    Err(surco_provider::Error::Expired) if attempt < EXPIRED_RETRIES => {
+                        tracing::info!(attempt, "URL rechazada al abrir, re-resolviendo");
                         provider.invalidate(&video);
                         refresh = true;
+                        tokio::time::sleep(Duration::from_millis(800)).await;
                     }
                     Err(e) => return Err(e.to_string()),
                 }

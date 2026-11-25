@@ -15,6 +15,10 @@ use crate::{Message, Surco, RUNTIME};
 /// Canciones que se bajan con "las próximas".
 pub const NEXT_COUNT: usize = 5;
 
+/// Pausa de la precarga cuando YouTube rechaza una descarga (403): seguir
+/// bajando en ese momento solo hace que también rechace lo que suena.
+const BACKOFF: std::time::Duration = std::time::Duration::from_secs(120);
+
 #[derive(Debug, Default)]
 pub struct PrecacheState {
     /// Canción (clave) que se está bajando.
@@ -26,6 +30,8 @@ pub struct PrecacheState {
     /// Progreso para mostrar: listas / pedidas.
     pub ready: usize,
     pub target: usize,
+    /// En pausa por un rechazo de YouTube (ver [`BACKOFF`]).
+    paused: bool,
 }
 
 impl PrecacheState {
@@ -47,7 +53,7 @@ impl Surco {
 
     /// Si cambió la cola o los ajustes, arranca la próxima descarga.
     pub(crate) fn pump_precache(&mut self) -> Task<Message> {
-        if !std::mem::take(&mut self.precache_dirty) {
+        if self.precache.paused || !std::mem::take(&mut self.precache_dirty) {
             return Task::none();
         }
         let n = self.lookahead();
@@ -137,12 +143,25 @@ impl Surco {
                     return self.queue_cover(&video);
                 }
             }
+            // YouTube rechazó la descarga: no es culpa de esta canción, así
+            // que se reintenta después de una pausa.
+            Err(e) if is_rejection(&e) => {
+                tracing::warn!(%key, error = %e, secs = BACKOFF.as_secs(), "YouTube rechazó la precarga; en pausa");
+                self.precache.paused = true;
+                return Task::perform(tokio::time::sleep(BACKOFF), |_| Message::PrecacheResume);
+            }
             Err(e) => {
                 tracing::warn!(%key, error = %e, "no se pudo precargar");
                 self.precache.failed.insert(key);
             }
         }
         Task::none()
+    }
+
+    /// Termina la pausa de la precarga.
+    pub(crate) fn resume_precache(&mut self) {
+        self.precache.paused = false;
+        self.precache_dirty = true;
     }
 
     /// Vacía la caché de audio (botón de ajustes).
@@ -155,4 +174,10 @@ impl Surco {
         self.precache_dirty = true;
         self.refresh_downloads();
     }
+}
+
+/// Si el error es un rechazo de YouTube a la descarga (403) y no un problema
+/// de la canción.
+fn is_rejection(error: &str) -> bool {
+    error.contains("HTTP 403") || error.contains("venció")
 }

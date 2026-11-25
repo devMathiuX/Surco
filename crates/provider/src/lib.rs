@@ -13,7 +13,7 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 pub use audio_cache::{is_video_id, AudioCache, CacheUsage, DEFAULT_LIMIT as AUDIO_CACHE_LIMIT};
-pub use http_stream::{download_all, HttpStream, StreamProgress};
+pub use http_stream::{download_all, download_all_with, HttpStream, StreamProgress};
 pub use reqwest::Client as HttpClient;
 pub use ytdlp::{Listing, SearchResult, StreamInfo, YtDlp, AUDIO_FORMAT, BINARY_NAME};
 
@@ -101,7 +101,9 @@ impl Provider {
             if !info.is_supported() {
                 return Err(Error::Parse(format!("formato {} no soportado", info.ext)));
             }
-            match http_stream::download_all(client, &info.url).await {
+            match http_stream::download_all_with(client, &info.url, info.user_agent.as_deref())
+                .await
+            {
                 Ok(data) => {
                     let path = cache.put(video, &data)?;
                     tracing::info!(video, bytes = data.len(), "audio precargado");
@@ -173,6 +175,7 @@ mod tests {
             ext: "m4a".into(),
             title: None,
             duration: None,
+            user_agent: None,
         }
     }
 

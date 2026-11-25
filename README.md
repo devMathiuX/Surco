@@ -195,7 +195,7 @@ El engranaje de arriba a la izquierda abre los ajustes:
 - **Idioma:** español o inglés. De entrada, español si tu computadora está en español, e inglés si no.
 - **Tema** de colores. Con **Personalizado** elegís el fondo y el acento: tocá una muestra o escribí el color (`#1E2A3A`). Los demás colores salen solos de esos dos.
 - **Portadas en la lista** de canciones.
-- **Precargar canciones:** baja de antemano las próximas 5 canciones, o toda la playlist, para que no haya que esperar ni dependan de la conexión. Usa hasta 2 GB de disco y es temporal: se borra cada vez que abrís Surco. **Vaciar** la borra en el momento. Lo único que queda guardado de una vez para otra son las playlists descargadas con la flechita, hasta que borres sus descargas, quites la playlist o saques la canción de ella.
+- **Precargar canciones:** baja de antemano las próximas 5 canciones, o toda la playlist, para que no haya que esperar ni dependan de la conexión. Usa hasta 2 GB de disco y dura lo que dura la sesión: se borra al cerrar Surco. **Vaciar** la borra en el momento. Lo único que queda guardado de una vez para otra son las playlists descargadas con la flechita, hasta que borres sus descargas, quites la playlist o saques la canción de ella.
 - **Spotify:** claves propias de la Web API, opcionales (ver abajo).
 
 ### Atajos de teclado
