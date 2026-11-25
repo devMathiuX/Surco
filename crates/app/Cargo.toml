@@ -42,6 +42,7 @@ name = "surco"
 path = "src/main.rs"
 
 [dependencies]
+sys-locale = "0.3"
 surco-core.workspace = true
 surco-spotify.workspace = true
 surco-resolver.workspace = true

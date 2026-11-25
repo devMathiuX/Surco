@@ -17,8 +17,8 @@ const COVER: f32 = 56.0;
 const VOLUME_WIDTH: f32 = 100.0;
 /// Botones de ícono de la derecha (radio, cola, volumen) con su separación.
 const ICON_SLOT: f32 = 40.0;
-/// Lo que ocupa "Cambiar video" con su separación.
-const CHANGE_SLOT: f32 = 125.0;
+/// Lo que ocupa el botón de cambiar el video con su separación.
+const CHANGE_SLOT: f32 = ICON_SLOT;
 /// Alto del desplegable de volumen.
 const POPUP_HEIGHT: f32 = 130.0;
 /// Espera antes de cerrar el desplegable al salir con el mouse (para poder
@@ -77,14 +77,29 @@ impl Surco {
 
         // Título y artista.
         let (title, subtitle) = match (now, &s.state) {
-            (Some(t), _) if resolving => (t.title.clone(), "buscando en YouTube…".to_owned()),
-            (Some(t), PlayerState::Loading) => (t.title.clone(), "cargando…".to_owned()),
+            (Some(t), _) if resolving => (
+                t.title.clone(),
+                tr!("buscando en YouTube…", "searching YouTube…").to_owned(),
+            ),
+            (Some(t), PlayerState::Loading) => {
+                (t.title.clone(), tr!("cargando…", "loading…").to_owned())
+            }
             (Some(t), _) => (t.title.clone(), t.artists.join(", ")),
-            (None, PlayerState::Loading) => ("Cargando…".to_owned(), String::new()),
-            (None, PlayerState::Idle) => ("Nada sonando".to_owned(), String::new()),
-            (None, PlayerState::Error(_)) => ("No se pudo reproducir".to_owned(), String::new()),
+            (None, PlayerState::Loading) => {
+                (tr!("Cargando…", "Loading…").to_owned(), String::new())
+            }
+            (None, PlayerState::Idle) => (
+                tr!("Nada sonando", "Nothing playing").to_owned(),
+                String::new(),
+            ),
+            (None, PlayerState::Error(_)) => (
+                tr!("No se pudo reproducir", "Couldn't play").to_owned(),
+                String::new(),
+            ),
             (None, _) => (
-                s.title.clone().unwrap_or_else(|| "Sin título".to_owned()),
+                s.title
+                    .clone()
+                    .unwrap_or_else(|| tr!("Sin título", "Untitled").to_owned()),
                 String::new(),
             ),
         };
@@ -218,13 +233,23 @@ impl Surco {
         // Derecha: cambiar el video (si el match no es el correcto) y volumen.
         let change: Element<'_, Message> = match (at, now.and_then(|t| self.resolution(t))) {
             // Las de la radio no tienen otros candidatos.
-            (Some(at), Some(TrackRes::Done(m))) if !m.candidates.is_empty() => {
-                button(text("Cambiar video").size(theme::SIZE_S))
+            (Some(at), Some(TrackRes::Done(m))) if !m.candidates.is_empty() => tooltip(
+                button(icons::icon(Kind::SwapVideo, theme::colors().text, 20.0))
                     .on_press(Message::OpenChooser(Some(at)))
-                    .padding([4, 10])
-                    .style(theme::ghost_button)
-                    .into()
-            }
+                    .padding(5)
+                    .style(theme::icon_button),
+                container(
+                    text(tr!(
+                        "Cambiar el video (si no es la canción correcta)",
+                        "Change the video (if it's not the right song)"
+                    ))
+                    .size(theme::SIZE_S),
+                )
+                .padding(6)
+                .style(theme::card),
+                tooltip::Position::Top,
+            )
+            .into(),
             _ => Space::new().into(),
         };
         let can_radio = matches!(s.source, Some(Source::YouTube(_)));
@@ -244,9 +269,12 @@ impl Surco {
                 .style(theme::icon_button),
             container(
                 text(if self.radio_loading {
-                    "Armando la radio…"
+                    tr!("Armando la radio…", "Building the radio…")
                 } else {
-                    "Radio: canciones parecidas a esta"
+                    tr!(
+                        "Radio: canciones parecidas a esta",
+                        "Radio: songs similar to this one"
+                    )
                 })
                 .size(theme::SIZE_S),
             )

@@ -3,8 +3,13 @@
 //! Sirve para "precargar": las próximas canciones se bajan antes de que
 //! suenen, así no hay que esperar ni depende de la red en ese momento. Se
 //! borran las menos usadas cuando se pasa del tope de tamaño.
+//!
+//! Los videos "fijados" (los de las playlists descargadas) no cuentan para el
+//! tope y nunca se borran solos.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
 
 use crate::{Error, Result};
@@ -16,6 +21,8 @@ pub const DEFAULT_LIMIT: u64 = 2 * 1024 * 1024 * 1024;
 pub struct AudioCache {
     dir: PathBuf,
     limit: u64,
+    /// Videos que no se borran solos (compartido entre las copias).
+    pinned: Arc<Mutex<HashSet<String>>>,
 }
 
 /// Uso actual de la caché.
@@ -37,7 +44,26 @@ impl AudioCache {
         Self {
             dir: dir.into(),
             limit,
+            pinned: Arc::default(),
         }
+    }
+
+    /// Cambia los videos fijados (los de las playlists descargadas).
+    pub fn set_pinned(&self, videos: HashSet<String>) {
+        if let Ok(mut p) = self.pinned.lock() {
+            *p = videos;
+        }
+    }
+
+    pub fn is_pinned(&self, video: &str) -> bool {
+        self.pinned.lock().is_ok_and(|p| p.contains(video))
+    }
+
+    /// Si el archivo es de un video fijado.
+    fn pinned_path(&self, path: &Path) -> bool {
+        path.file_stem()
+            .and_then(|s| s.to_str())
+            .is_some_and(|v| self.is_pinned(v))
     }
 
     pub fn dir(&self) -> &Path {
@@ -110,6 +136,7 @@ impl AudioCache {
     /// Borra las menos usadas hasta quedar debajo del tope (nunca `keep`).
     fn evict(&self, keep: Option<&Path>) {
         let mut entries = self.entries();
+        entries.retain(|(path, _, _)| !self.pinned_path(path));
         let mut total: u64 = entries.iter().map(|(_, len, _)| len).sum();
         if total <= self.limit {
             return;
@@ -146,10 +173,12 @@ impl AudioCache {
         }
     }
 
-    /// Borra todo el audio guardado.
+    /// Borra todo el audio guardado menos el fijado.
     pub fn clear(&self) {
         for (path, _, _) in self.entries() {
-            let _ = std::fs::remove_file(path);
+            if !self.pinned_path(&path) {
+                let _ = std::fs::remove_file(path);
+            }
         }
     }
 }
@@ -164,6 +193,26 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("surco-audio-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         dir
+    }
+
+    #[test]
+    fn pinned_are_never_evicted_nor_cleared() {
+        let dir = temp_dir("pinned");
+        let c = AudioCache::new(&dir, 15);
+        c.set_pinned(["aaaaaaaaaaa".to_owned()].into());
+        c.put("aaaaaaaaaaa", b"0123456789").unwrap();
+        std::thread::sleep(Duration::from_millis(20));
+        c.put("bbbbbbbbbbb", b"0123456789").unwrap();
+        std::thread::sleep(Duration::from_millis(20));
+        c.put("ccccccccccc", b"0123456789").unwrap();
+        // El fijado no cuenta para el tope: se va el más viejo de los otros.
+        assert!(c.contains("aaaaaaaaaaa"));
+        assert!(!c.contains("bbbbbbbbbbb"));
+        assert!(c.contains("ccccccccccc"));
+        c.clear();
+        assert!(c.contains("aaaaaaaaaaa"));
+        assert!(!c.contains("ccccccccccc"));
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

@@ -46,7 +46,11 @@ impl Surco {
             if !autostart {
                 self.notice = Some(Notice {
                     error: false,
-                    text: "Poné una canción para armar una radio con parecidas.".into(),
+                    text: tr!(
+                        "Poné una canción para armar una radio con parecidas.",
+                        "Play a song to build a radio of similar ones."
+                    )
+                    .into(),
                 });
             }
             return Task::none();
@@ -81,7 +85,10 @@ impl Surco {
             Err(e) => {
                 self.notice = Some(Notice {
                     error: true,
-                    text: format!("No se pudo armar la radio: {e}"),
+                    text: trf!(
+                        "No se pudo armar la radio: {e}",
+                        "Couldn't build the radio: {e}"
+                    ),
                 });
                 return if waited {
                     self.back_from_panel()
@@ -117,7 +124,11 @@ impl Surco {
         if tracks.is_empty() {
             self.notice = Some(Notice {
                 error: true,
-                text: "YouTube no devolvió canciones parecidas.".into(),
+                text: tr!(
+                    "YouTube no devolvió canciones parecidas.",
+                    "YouTube returned no similar songs."
+                )
+                .into(),
             });
             return if waited {
                 self.back_from_panel()

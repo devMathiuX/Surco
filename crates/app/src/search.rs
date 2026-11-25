@@ -214,7 +214,11 @@ impl Surco {
                     Ok((
                         Preview {
                             title: name.clone(),
-                            subtitle: "Canciones más escuchadas en YouTube".into(),
+                            subtitle: tr!(
+                                "Canciones más escuchadas en YouTube",
+                                "Most played songs on YouTube"
+                            )
+                            .into(),
                             url: None,
                             tracks,
                         },
@@ -240,8 +244,9 @@ impl Surco {
                     Ok((
                         Preview {
                             title,
-                            subtitle: format!(
+                            subtitle: trf!(
                                 "Playlist de YouTube{}",
+                                "YouTube playlist{}",
                                 p.channel.map(|c| format!(" · {c}")).unwrap_or_default()
                             ),
                             url: Some(p.url),
@@ -274,7 +279,7 @@ impl Surco {
                     Err(e) => {
                         self.notice = Some(Notice {
                             error: true,
-                            text: format!("No se pudo abrir: {e}"),
+                            text: trf!("No se pudo abrir: {e}", "Couldn't open it: {e}"),
                         })
                     }
                 }
@@ -304,7 +309,11 @@ impl Surco {
                         if songs.is_empty() {
                             self.notice = Some(Notice {
                                 error: true,
-                                text: "Esa playlist de YouTube no tiene videos disponibles.".into(),
+                                text: tr!(
+                                    "Esa playlist de YouTube no tiene videos disponibles.",
+                                    "That YouTube playlist has no available videos."
+                                )
+                                .into(),
                             });
                             return Task::none();
                         }
@@ -317,7 +326,10 @@ impl Surco {
                     Err(e) => {
                         self.notice = Some(Notice {
                             error: true,
-                            text: format!("No se pudo importar la playlist de YouTube: {e}"),
+                            text: trf!(
+                                "No se pudo importar la playlist de YouTube: {e}",
+                                "Couldn't import the YouTube playlist: {e}"
+                            ),
                         })
                     }
                 }
@@ -351,7 +363,11 @@ impl Surco {
         let (Some(provider), Some(rt)) = (self.provider.clone(), RUNTIME.get()) else {
             self.notice = Some(Notice {
                 error: true,
-                text: "Falta yt-dlp para buscar en YouTube.".into(),
+                text: tr!(
+                    "Falta yt-dlp para buscar en YouTube.",
+                    "yt-dlp is missing, so YouTube can't be searched."
+                )
+                .into(),
             });
             return Task::none();
         };
@@ -416,7 +432,11 @@ impl Surco {
         let (Some(provider), Some(rt)) = (self.provider.clone(), RUNTIME.get()) else {
             self.notice = Some(Notice {
                 error: true,
-                text: "Falta yt-dlp para importar playlists de YouTube.".into(),
+                text: tr!(
+                    "Falta yt-dlp para importar playlists de YouTube.",
+                    "yt-dlp is missing, so YouTube playlists can't be imported."
+                )
+                .into(),
             });
             return Task::none();
         };
@@ -471,13 +491,19 @@ impl Surco {
     pub(crate) fn view_search(&self) -> Element<'_, Message> {
         let input = row![
             icons::icon(Kind::Search, theme::colors().text_secondary, 18.0),
-            text_input("Buscá canciones, artistas o playlists", &self.search.query)
-                .id(Id::new(SEARCH_INPUT))
-                .on_input(|q| Message::Search(SearchMsg::Input(q)))
-                .on_submit(Message::Search(SearchMsg::Submit))
-                .padding(10)
-                .size(theme::SIZE_M)
-                .style(theme::input),
+            text_input(
+                tr!(
+                    "Buscá canciones, artistas o playlists",
+                    "Search songs, artists or playlists"
+                ),
+                &self.search.query
+            )
+            .id(Id::new(SEARCH_INPUT))
+            .on_input(|q| Message::Search(SearchMsg::Input(q)))
+            .on_submit(Message::Search(SearchMsg::Submit))
+            .padding(10)
+            .size(theme::SIZE_M)
+            .style(theme::input),
         ]
         .spacing(10)
         .align_y(Alignment::Center);
@@ -501,7 +527,7 @@ impl Surco {
         } else if let Some((q, r)) = &self.search.results {
             self.view_results(q, r)
         } else {
-            text("Escribí y los resultados aparecen solos. Lo que escuches desde acá no se corta: cuando se termina, siguen canciones parecidas.")
+            text(tr!("Escribí y los resultados aparecen solos. Lo que escuches desde acá no se corta: cuando se termina, siguen canciones parecidas.", "Type and results show up on their own. What you play from here doesn't stop: when it ends, similar songs follow."))
                 .size(theme::SIZE_S)
                 .style(theme::secondary_text)
                 .into()
@@ -565,8 +591,8 @@ impl Surco {
         let mut col = Column::new().spacing(22);
         if r.songs.is_empty() && r.artists.is_empty() && r.playlists.is_empty() {
             let msg = match r.errors.first() {
-                Some(e) => format!("No se pudo buscar: {e}"),
-                None => format!("Nada para «{q}»."),
+                Some(e) => trf!("No se pudo buscar: {e}", "Search failed: {e}"),
+                None => trf!("Nada para «{q}».", "Nothing for “{q}”."),
             };
             return text(msg)
                 .size(theme::SIZE_S)
@@ -583,7 +609,7 @@ impl Surco {
             }))
             .spacing(8)
             .wrap();
-            col = col.push(column![section("Artistas"), chips].spacing(10));
+            col = col.push(column![section(tr!("Artistas", "Artists")), chips].spacing(10));
         }
         if !r.songs.is_empty() {
             let list = Column::with_children(r.songs.iter().enumerate().map(|(i, s)| {
@@ -594,7 +620,7 @@ impl Surco {
                 )
             }))
             .spacing(2);
-            col = col.push(column![section("Canciones"), list].spacing(10));
+            col = col.push(column![section(tr!("Canciones", "Songs")), list].spacing(10));
         }
         if !r.playlists.is_empty() {
             let list = Column::with_children(r.playlists.iter().enumerate().map(|(i, p)| {
@@ -625,11 +651,11 @@ impl Surco {
 
     fn view_preview<'a>(&'a self, p: &'a Preview) -> Element<'a, Message> {
         let mut actions = row![
-            button(text("← Resultados").size(theme::SIZE_S))
+            button(text(tr!("← Resultados", "← Results")).size(theme::SIZE_S))
                 .on_press(Message::Search(SearchMsg::ClosePreview))
                 .padding([6, 10])
                 .style(theme::ghost_button),
-            button(text("Reproducir").size(theme::SIZE_S))
+            button(text(tr!("Reproducir", "Play")).size(theme::SIZE_S))
                 .on_press_maybe(
                     (!p.tracks.is_empty()).then_some(Message::Search(SearchMsg::PlayPreview(0)))
                 )
@@ -639,10 +665,12 @@ impl Surco {
         .spacing(8);
         if p.url.is_some() {
             actions = actions.push(
-                button(text("Guardar en la biblioteca").size(theme::SIZE_S))
-                    .on_press(Message::Search(SearchMsg::SavePreview))
-                    .padding([6, 10])
-                    .style(theme::ghost_button),
+                button(
+                    text(tr!("Guardar en la biblioteca", "Save to library")).size(theme::SIZE_S),
+                )
+                .on_press(Message::Search(SearchMsg::SavePreview))
+                .padding([6, 10])
+                .style(theme::ghost_button),
             );
         }
         let list = Column::with_children(p.tracks.iter().enumerate().map(|(i, t)| {
@@ -656,9 +684,14 @@ impl Surco {
         column![
             column![
                 text(&p.title).size(theme::SIZE_L),
-                text(format!("{} · {} canciones", p.subtitle, p.tracks.len()))
-                    .size(theme::SIZE_S)
-                    .style(theme::secondary_text),
+                text(trf!(
+                    "{} · {} canciones",
+                    "{} · {} songs",
+                    p.subtitle,
+                    p.tracks.len()
+                ))
+                .size(theme::SIZE_S)
+                .style(theme::secondary_text),
             ]
             .spacing(4),
             actions,
@@ -704,7 +737,7 @@ pub fn add_button<'a>(track: &Track, from: Option<(usize, usize)>) -> Element<'a
         .on_press(song_menu(track, from))
         .padding(6)
         .style(theme::icon_button),
-        container(text("Agregar a…").size(theme::SIZE_S))
+        container(text(tr!("Agregar a…", "Add to…")).size(theme::SIZE_S))
             .padding(6)
             .style(theme::card),
         iced::widget::tooltip::Position::Left,

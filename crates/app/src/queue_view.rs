@@ -38,9 +38,15 @@ impl Surco {
         self.notice = Some(Notice {
             error: false,
             text: if next {
-                format!("«{title}» suena después de la actual.")
+                trf!(
+                    "«{title}» suena después de la actual.",
+                    "“{title}” plays after the current one."
+                )
             } else {
-                format!("«{title}» agregada a la cola.")
+                trf!(
+                    "«{title}» agregada a la cola.",
+                    "“{title}” added to the queue."
+                )
             },
         });
         self.update_preload();
@@ -94,8 +100,8 @@ impl Surco {
     pub(crate) fn view_queue(&self) -> Element<'_, Message> {
         let Some(a) = &self.active else {
             return column![
-                text("Cola").size(theme::SIZE_L),
-                text("No hay nada sonando. Elegí una canción de una playlist o del buscador; con el + de cada canción la agregás a la cola.")
+                text(tr!("Cola", "Queue")).size(theme::SIZE_L),
+                text(tr!("No hay nada sonando. Elegí una canción de una playlist o del buscador; con el + de cada canción la agregás a la cola.", "Nothing is playing. Pick a song from a playlist or from search; the + on each song adds it to the queue."))
                     .size(theme::SIZE_S)
                     .style(theme::secondary_text),
             ]
@@ -118,7 +124,7 @@ impl Surco {
             if p == pos + 1 {
                 list = list.push(
                     container(
-                        text("A continuación")
+                        text(tr!("A continuación", "Up next"))
                             .size(theme::SIZE_S)
                             .style(theme::secondary_text),
                     )
@@ -132,25 +138,38 @@ impl Surco {
         } else if a.endless {
             list = list.push(
                 container(
-                    text("Cuando se acerque el final se agregan canciones parecidas.")
-                        .size(theme::SIZE_S)
-                        .style(theme::secondary_text),
+                    text(tr!(
+                        "Cuando se acerque el final se agregan canciones parecidas.",
+                        "Similar songs get added as the end gets close."
+                    ))
+                    .size(theme::SIZE_S)
+                    .style(theme::secondary_text),
                 )
                 .padding([10, 8]),
             );
         }
 
-        let mut info = format!("{upcoming} por sonar · {}", format_duration(total_ms));
+        let mut info = trf!(
+            "{upcoming} por sonar · {}",
+            "{upcoming} up next · {}",
+            format_duration(total_ms)
+        );
         if played > 0 {
-            info.push_str(&format!(" · {played} ya sonaron"));
+            info.push_str(&trf!(
+                " · {played} ya sonaron",
+                " · {played} already played"
+            ));
         }
         column![
             column![
-                text("Cola").size(theme::SIZE_L),
+                text(tr!("Cola", "Queue")).size(theme::SIZE_L),
                 text(info).size(theme::SIZE_S).style(theme::secondary_text),
-                text("Arrastrá una canción para cambiarle el lugar. Clic para escucharla.")
-                    .size(theme::SIZE_S)
-                    .style(theme::secondary_text),
+                text(tr!(
+                    "Arrastrá una canción para cambiarle el lugar. Clic para escucharla.",
+                    "Drag a song to move it. Click to play it."
+                ))
+                .size(theme::SIZE_S)
+                .style(theme::secondary_text),
             ]
             .spacing(4),
             scrollable(list.padding(iced::Padding::ZERO.right(16))).height(Length::Fill),
@@ -164,11 +183,11 @@ impl Surco {
         let target = drag.is_some_and(|d| d.to == pos && d.from != pos);
         let lifted = drag.is_some_and(|d| d.from == pos);
         let status: Element<'_, Message> = match self.resolution(t) {
-            Some(TrackRes::Resolving) => text("buscando…")
+            Some(TrackRes::Resolving) => text(tr!("buscando…", "searching…"))
                 .size(theme::SIZE_S)
                 .style(theme::secondary_text)
                 .into(),
-            Some(TrackRes::Failed(_)) => text("sin match")
+            Some(TrackRes::Failed(_)) => text(tr!("sin match", "no match"))
                 .size(theme::SIZE_S)
                 .style(theme::error_text)
                 .into(),

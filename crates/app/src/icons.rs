@@ -37,6 +37,10 @@ pub enum Kind {
     Muted,
     /// Editar (lápiz).
     Edit,
+    /// Descargar (flecha hacia abajo con una raya).
+    Download,
+    /// Cambiar el video (pantalla con flechas de cambio alrededor).
+    SwapVideo,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -161,6 +165,61 @@ impl<Message> canvas::Program<Message> for Icon {
                 );
                 frame.stroke(&Path::line(p(15.0, 9.5), p(20.0, 14.5)), line(1.8));
                 frame.stroke(&Path::line(p(20.0, 9.5), p(15.0, 14.5)), line(1.8));
+            }
+            Kind::Download => {
+                frame.stroke(
+                    &Path::new(|b| {
+                        b.move_to(p(12.0, 4.0));
+                        b.line_to(p(12.0, 15.5));
+                        b.move_to(p(7.0, 10.5));
+                        b.line_to(p(12.0, 15.5));
+                        b.line_to(p(17.0, 10.5));
+                        b.move_to(p(6.0, 19.5));
+                        b.line_to(p(18.0, 19.5));
+                    }),
+                    line(2.0),
+                );
+            }
+            Kind::SwapVideo => {
+                // Pantalla con un triángulo de play.
+                frame.stroke(
+                    &Path::rounded_rectangle(
+                        p(7.0, 8.0),
+                        iced::Size::new(10.0 * s, 8.0 * s),
+                        (1.5 * s).into(),
+                    ),
+                    line(1.6),
+                );
+                frame.fill(
+                    &poly(&[(10.8, 10.2), (14.2, 12.0), (10.8, 13.8)]),
+                    self.color,
+                );
+                // Flechas de cambio: arco arriba hacia la derecha y abajo hacia la izquierda.
+                frame.stroke(
+                    &Path::new(|b| {
+                        b.arc(path::Arc {
+                            center: p(12.0, 12.0),
+                            radius: 9.0 * s,
+                            start_angle: iced::Radians(-2.6),
+                            end_angle: iced::Radians(-0.55),
+                        });
+                    }),
+                    line(1.6),
+                );
+                frame.stroke(
+                    &Path::new(|b| {
+                        b.arc(path::Arc {
+                            center: p(12.0, 12.0),
+                            radius: 9.0 * s,
+                            start_angle: iced::Radians(0.55),
+                            end_angle: iced::Radians(2.6),
+                        });
+                    }),
+                    line(1.6),
+                );
+                // Puntas.
+                frame.fill(&poly(&[(17.3, 4.0), (20.6, 7.8), (16.0, 8.4)]), self.color);
+                frame.fill(&poly(&[(6.7, 20.0), (3.4, 16.2), (8.0, 15.6)]), self.color);
             }
             Kind::Edit => {
                 // Lápiz en diagonal: cuerpo, punta y una raya abajo.
