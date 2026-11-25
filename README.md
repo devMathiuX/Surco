@@ -201,6 +201,7 @@ En Windows, la X esconde la ventana y Surco sigue sonando en la bandeja (la flec
 El engranaje de arriba a la izquierda abre los ajustes:
 
 - **Idioma:** español o inglés. De entrada, español si tu computadora está en español, e inglés si no.
+- **Tamaño de la interfaz:** de 70 % a 160 %, para agrandar o achicar todo.
 - **Tema** de colores. Con **Personalizado** elegís el fondo y el acento: tocá una muestra o escribí el color (`#1E2A3A`). Los demás colores salen solos de esos dos.
 - **Portadas en la lista** de canciones.
 - **Precargar canciones:** baja de antemano las próximas 5 canciones, o toda la playlist, para que no haya que esperar ni dependan de la conexión. Usa hasta 2 GB de disco y dura lo que dura la sesión: se borra al cerrar Surco. **Vaciar** la borra en el momento. Lo único que queda guardado de una vez para otra son las playlists descargadas con la flechita, hasta que borres sus descargas, quites la playlist o saques la canción de ella.
@@ -215,6 +216,7 @@ El engranaje de arriba a la izquierda abre los ajustes:
 | Ctrl+← / Ctrl+→ | Canción anterior / siguiente |
 | Ctrl+L | Importar una playlist (pegar un link) |
 | Ctrl+F | Ir al buscador de la playlist abierta |
+| Ctrl++ / Ctrl+− / Ctrl+0 | Agrandar / achicar / tamaño normal de la interfaz |
 | Esc | Borrar la búsqueda en la playlist y cerrar el selector de video o los menús |
 
 Un clic en el parlante de la barra de abajo silencia; otro clic vuelve al volumen de antes. Si la ventana es angosta, la barra de volumen aparece al pasar el mouse por el parlante.

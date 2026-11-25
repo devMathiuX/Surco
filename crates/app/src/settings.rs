@@ -14,6 +14,12 @@ const LANGUAGE: &str = "language";
 const COVERS_IN_LIST: &str = "covers_in_list";
 const PRECACHE: &str = "precache";
 const AUTOPLAY: &str = "autoplay";
+const UI_SCALE: &str = "ui_scale";
+
+/// Tamaño de la interfaz, en %: de a 10, entre estos límites.
+pub const SCALE_MIN: u32 = 70;
+pub const SCALE_MAX: u32 = 160;
+pub const SCALE_STEP: u32 = 10;
 
 /// Cuánto se baja de antemano a disco.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -66,6 +72,8 @@ pub struct Settings {
     pub precache: Precache,
     /// Al terminar la cola, seguir con canciones parecidas.
     pub autoplay: bool,
+    /// Tamaño de la interfaz, en % (100 = normal).
+    pub ui_scale: u32,
 }
 
 impl Default for Settings {
@@ -77,6 +85,7 @@ impl Default for Settings {
             covers_in_list: true,
             precache: Precache::Off,
             autoplay: true,
+            ui_scale: 100,
         }
     }
 }
@@ -91,6 +100,8 @@ pub enum Change {
     CoversInList(bool),
     Precache(Precache),
     Autoplay(bool),
+    /// Agrandar (+1) o achicar (-1) la interfaz un paso; 0 la vuelve al 100 %.
+    Scale(i32),
 }
 
 impl Surco {
@@ -122,6 +133,9 @@ impl Surco {
         }
         if let Some(v) = get(AUTOPLAY) {
             s.autoplay = v == "1";
+        }
+        if let Some(v) = get(UI_SCALE).and_then(|v| v.parse::<u32>().ok()) {
+            s.ui_scale = v.clamp(SCALE_MIN, SCALE_MAX);
         }
         let offline = get(crate::offline::OFFLINE);
         self.load_offline(offline);
@@ -188,13 +202,36 @@ impl Surco {
                 self.save_setting(AUTOPLAY, flag(on));
                 Task::none()
             }
+            Change::Scale(dir) => {
+                self.settings.ui_scale = scaled(self.settings.ui_scale, dir);
+                self.save_setting(UI_SCALE, &self.settings.ui_scale.to_string());
+                Task::none()
+            }
         }
+    }
+}
+
+/// Un paso más grande (`dir` > 0), más chico (< 0) o el normal (0).
+pub fn scaled(current: u32, dir: i32) -> u32 {
+    match dir.signum() {
+        0 => 100,
+        1 => (current + SCALE_STEP).min(SCALE_MAX),
+        _ => current.saturating_sub(SCALE_STEP).max(SCALE_MIN),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn scale_steps_stay_in_range() {
+        assert_eq!(scaled(100, 1), 110);
+        assert_eq!(scaled(100, -1), 90);
+        assert_eq!(scaled(SCALE_MAX, 1), SCALE_MAX);
+        assert_eq!(scaled(SCALE_MIN, -1), SCALE_MIN);
+        assert_eq!(scaled(130, 0), 100);
+    }
 
     #[test]
     fn precache_keys_round_trip() {
