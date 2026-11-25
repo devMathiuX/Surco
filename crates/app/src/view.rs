@@ -109,20 +109,42 @@ impl Surco {
         crate::pointer::Pointer::new(app, Message::Pointer).into()
     }
 
-    /// Temas Vidrio y Brillo: fondo dibujado por código detrás de todo.
+    /// Temas Vidrio y Brillo: fondo dibujado por código detrás de todo, en
+    /// cuadritos para que al redibujar una parte no se repinte el fondo
+    /// entero (ver [`crate::backdrop`]).
     fn with_backdrop<'a>(&self, app: Element<'a, Message>) -> Element<'a, Message> {
-        match crate::backdrop::current() {
-            Some(h) => stack![
-                image(h)
-                    .width(Length::Fill)
-                    .height(Length::Fill)
-                    .content_fit(iced::ContentFit::Fill)
-                    .filter_method(image::FilterMethod::Linear),
-                app
-            ]
-            .into(),
-            None => app,
+        if !crate::backdrop::active() {
+            return app;
         }
+        let back = iced::widget::responsive(|size| {
+            let Some(t) = crate::backdrop::tiles(size.width, size.height) else {
+                return Space::new().into();
+            };
+            let tile = crate::backdrop::TILE as f32;
+            let mut handles = t.handles.into_iter();
+            let rows = (0..t.rows).map(|_| {
+                iced::widget::Row::with_children((0..t.cols).filter_map(|_| {
+                    let h = handles.next()?;
+                    Some(
+                        // Sin escalar: la última fila puede quedar más baja
+                        // que el cuadrito y se recorta.
+                        image(h)
+                            .width(tile)
+                            .height(tile)
+                            .content_fit(iced::ContentFit::None)
+                            .filter_method(image::FilterMethod::Nearest)
+                            .into(),
+                    )
+                }))
+                .into()
+            });
+            container(Column::with_children(rows))
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .clip(true)
+                .into()
+        });
+        stack![back, app].into()
     }
 
     pub(crate) fn view_sidebar(&self) -> Element<'_, Message> {
