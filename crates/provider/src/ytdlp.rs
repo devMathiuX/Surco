@@ -31,6 +31,8 @@ const RELEASES_URL: &str = "https://github.com/yt-dlp/yt-dlp/releases/latest/dow
 pub const AUDIO_FORMAT: &str = "bestaudio[ext=m4a]/bestaudio";
 
 const RESOLVE_TIMEOUT: Duration = Duration::from_secs(45);
+/// Bajar una canción entera con yt-dlp (plan B ante un 403).
+const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(180);
 /// Una playlist larga tarda: yt-dlp pide las páginas de a 100.
 const PLAYLIST_TIMEOUT: Duration = Duration::from_secs(120);
 const UPDATE_TIMEOUT: Duration = Duration::from_secs(120);
@@ -146,6 +148,51 @@ impl YtDlp {
             )
             .await?;
         parse_stream_info(&out)
+    }
+
+    /// Baja el audio de `video` con el propio yt-dlp a `dir` y devuelve el
+    /// archivo. Es el plan B cuando YouTube rechaza (403) la URL al bajarla
+    /// nosotros: yt-dlp sabe pedirla con todo lo que el cliente necesita.
+    pub async fn download_audio(&self, video: &str, dir: &Path) -> Result<PathBuf> {
+        if !crate::is_video_id(video) {
+            return Err(Error::Parse(format!("ID de video inválido: {video}")));
+        }
+        tokio::fs::create_dir_all(dir).await?;
+        let template = dir.join(format!("{video}.ytdlp.%(ext)s"));
+        let js = js_runtime_args(search_path().as_deref());
+        let out = self
+            .run(
+                js.iter().map(String::as_str).chain([
+                    "--no-playlist",
+                    "--no-warnings",
+                    "--force-ipv4",
+                    "--no-part",
+                    "--force-overwrites",
+                    "-f",
+                    "bestaudio[ext=m4a]",
+                    "-o",
+                    &template.to_string_lossy(),
+                    "--print",
+                    "after_move:filepath",
+                    "--",
+                    video,
+                ]),
+                DOWNLOAD_TIMEOUT,
+            )
+            .await?;
+        let path = out
+            .lines()
+            .map(str::trim)
+            .rfind(|l| !l.is_empty())
+            .map(PathBuf::from)
+            .ok_or_else(|| Error::Parse("yt-dlp no dijo dónde dejó el audio".into()))?;
+        if !path.is_file() {
+            return Err(Error::Parse(format!(
+                "yt-dlp no dejó el audio en {}",
+                path.display()
+            )));
+        }
+        Ok(path)
     }
 
     /// Busca en YouTube (`ytsearch{n}:{query}`) sin resolver cada video
@@ -423,28 +470,42 @@ fn user_agent_of(headers: &str) -> Option<String> {
     (!ua.is_empty()).then(|| ua.to_owned())
 }
 
+/// Runtime de JavaScript que va a usar yt-dlp (`deno`, `node`, `bun` o
+/// `quickjs`), o `None` si no hay ninguno: sin él YouTube suele rechazar el
+/// audio con 403.
+pub fn js_runtime() -> Option<&'static str> {
+    js_runtime_in(search_path().as_deref())
+}
+
+fn js_runtime_in(path_var: Option<&OsStr>) -> Option<&'static str> {
+    JS_RUNTIMES
+        .iter()
+        .find(|(bin, _)| {
+            let exe = if cfg!(windows) {
+                format!("{bin}.exe")
+            } else {
+                (*bin).to_owned()
+            };
+            find_in_path(&exe, path_var).is_some()
+        })
+        .map(|(_, name)| *name)
+}
+
+const JS_RUNTIMES: [(&str, &str); 4] = [
+    ("deno", "deno"),
+    ("node", "node"),
+    ("bun", "bun"),
+    ("qjs", "quickjs"),
+];
+
 /// Desde fines de 2025, yt-dlp necesita un runtime de JavaScript externo para
 /// resolver los desafíos de YouTube. Por defecto solo prueba `deno`; si no está
 /// pero hay otro soportado en el `PATH`, se lo indicamos con `--js-runtimes`.
 fn js_runtime_args(path_var: Option<&OsStr>) -> Vec<String> {
-    const RUNTIMES: [(&str, &str); 4] = [
-        ("deno", "deno"),
-        ("node", "node"),
-        ("bun", "bun"),
-        ("qjs", "quickjs"),
-    ];
-    let found = RUNTIMES.iter().find(|(bin, _)| {
-        let exe = if cfg!(windows) {
-            format!("{bin}.exe")
-        } else {
-            (*bin).to_owned()
-        };
-        find_in_path(&exe, path_var).is_some()
-    });
-    match found {
+    match js_runtime_in(path_var) {
         // deno es el default de yt-dlp: no hace falta pasar nada.
-        None | Some(("deno", _)) => Vec::new(),
-        Some((_, name)) => vec!["--js-runtimes".to_owned(), (*name).to_owned()],
+        None | Some("deno") => Vec::new(),
+        Some(name) => vec!["--js-runtimes".to_owned(), name.to_owned()],
     }
 }
 

@@ -412,6 +412,32 @@ enum Message {
 }
 
 impl Surco {
+    /// yt-dlp necesita un runtime de JavaScript (deno) para que YouTube no
+    /// rechace el audio. Si no hay ninguno, avisa cómo instalarlo.
+    fn check_js_runtime(&mut self) {
+        if !matches!(self.ytdlp, YtDlpState::Found(_)) {
+            return;
+        }
+        match surco_provider::js_runtime() {
+            Some(rt) => tracing::info!(runtime = rt, "runtime de JavaScript para yt-dlp"),
+            None => {
+                tracing::warn!("no hay deno, node ni bun: YouTube puede rechazar el audio (403)");
+                let install = if cfg!(windows) {
+                    "irm https://deno.land/install.ps1 | iex"
+                } else {
+                    "curl -fsSL https://deno.land/install.sh | sh"
+                };
+                self.notice = Some(Notice {
+                    error: true,
+                    text: trf!(
+                        "Falta deno: sin él YouTube puede rechazar las canciones. Instalalo ({install}) y volvé a abrir Surco.",
+                        "deno is missing: without it YouTube may reject songs. Install it ({install}) and reopen Surco."
+                    ),
+                });
+            }
+        }
+    }
+
     fn new() -> (Self, Task<Message>) {
         let ytdlp = YtDlp::locate(data_dir().as_deref());
         let resolver = ytdlp.clone().map(|y| Arc::new(Resolver::new(Arc::new(y))));
@@ -497,6 +523,7 @@ impl Surco {
         state.load_spotify_keys();
         state.refresh_downloads();
         state.drop_temporary_audio();
+        state.check_js_runtime();
         let covers = state.queue_list_covers();
         let home = state.refresh_home();
         // Los controles del sistema necesitan la ventana (HWND en Windows).
@@ -564,6 +591,7 @@ impl Surco {
                 self.provider = Some(Arc::clone(&provider));
                 self.send(Command::SetProvider(provider));
                 self.ytdlp = YtDlpState::Found(path);
+                self.check_js_runtime();
                 return self.resolve_in_background();
             }
             Message::YtDlpDownloaded(Err(e)) => self.ytdlp = YtDlpState::Failed(e),

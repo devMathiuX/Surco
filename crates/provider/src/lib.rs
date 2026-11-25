@@ -28,7 +28,7 @@ pub fn stream_client() -> HttpClient {
 
 pub use http_stream::{download_all, download_all_with, HttpStream, StreamProgress};
 pub use reqwest::Client as HttpClient;
-pub use ytdlp::{Listing, SearchResult, StreamInfo, YtDlp, AUDIO_FORMAT, BINARY_NAME};
+pub use ytdlp::{js_runtime, Listing, SearchResult, StreamInfo, YtDlp, AUDIO_FORMAT, BINARY_NAME};
 
 /// Errores de este crate.
 #[derive(Debug, thiserror::Error)]
@@ -126,10 +126,26 @@ impl Provider {
                     self.invalidate(video);
                     refresh = true;
                 }
+                Err(Error::Expired) => break,
                 Err(e) => return Err(e),
             }
         }
-        Err(Error::Expired)
+        self.download_with_ytdlp(video).await
+    }
+
+    /// Plan B ante un 403: que yt-dlp baje el audio y guardarlo en la caché.
+    pub async fn download_with_ytdlp(&self, video: &str) -> Result<PathBuf> {
+        let cache = self
+            .audio
+            .as_ref()
+            .ok_or_else(|| Error::Parse("no hay caché de audio".into()))?;
+        tracing::info!(video, "YouTube rechazó la URL; la baja yt-dlp");
+        let tmp = self.ytdlp.download_audio(video, cache.dir()).await?;
+        let data = tokio::fs::read(&tmp).await;
+        let _ = tokio::fs::remove_file(&tmp).await;
+        let path = cache.put(video, &data?)?;
+        tracing::info!(video, "audio bajado por yt-dlp");
+        Ok(path)
     }
 
     pub fn ytdlp(&self) -> &YtDlp {
