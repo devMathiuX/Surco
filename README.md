@@ -153,15 +153,17 @@ Escribí en el buscador del **Inicio** o entrá a **Buscar** en la barra lateral
 - Clic en una **canción** para escucharla. Surco sigue con canciones parecidas, así que la música no se corta.
 - Clic en un **artista** para ver sus canciones más escuchadas.
 - Clic en una **playlist** para verla, escucharla o **Guardar en la biblioteca**.
-- El **+** al lado de cada canción la agrega a la cola o a una de tus playlists.
+- El **+** al lado de cada canción (o un clic derecho sobre ella) la agrega a la cola o a una de tus playlists.
 
 ### Tus playlists
 
 - **Crear una:** el **+** al lado de "Tu biblioteca", en la barra lateral, o "+ Nueva playlist" en el menú del **+** de cualquier canción.
-- **Agregar canciones:** el **+** de una canción (en el buscador, en otra playlist o en el inicio) y elegí la playlist.
+- **Agregar canciones:** el **+** de una canción, o clic derecho sobre ella (en el buscador, en otra playlist o en el inicio), y elegí la playlist.
 - **Quitar una canción:** el **+** de la canción dentro de la playlist, y **Quitar de…**.
-- **Cambiar el nombre:** **Renombrar**, arriba de la playlist. También sirve para guardar una radio: con nombre deja de reemplazarse por la próxima.
+- **Cambiar el nombre:** el lápiz al lado del nombre, o clic derecho sobre la playlist en la barra lateral > **Renombrar**. También sirve para guardar una radio: con nombre deja de reemplazarse por la próxima.
 - **Cambiar el orden:** arrastrá la playlist en la barra lateral.
+- **Más opciones:** clic derecho sobre una playlist en la barra lateral para renombrarla, borrar sus descargas o quitarla.
+- **Buscar dentro de una playlist:** el buscador de arriba de la lista (Ctrl+F te lleva ahí).
 - **Recomendadas:** al final de cada playlist hay canciones parecidas. **Agregar** la suma a la playlist, un clic la escucha, y **Otras** trae más.
 
 ### La cola de reproducción
@@ -199,8 +201,10 @@ El engranaje de arriba a la izquierda abre los ajustes:
 | ← / → | Retroceder / adelantar 5 segundos |
 | Ctrl+← / Ctrl+→ | Canción anterior / siguiente |
 | Ctrl+L | Importar una playlist (pegar un link) |
-| Ctrl+F | Buscar dentro de la playlist abierta |
-| Esc | Cerrar la búsqueda, el selector de video o el menú de una canción |
+| Ctrl+F | Ir al buscador de la playlist abierta |
+| Esc | Borrar la búsqueda en la playlist y cerrar el selector de video o los menús |
+
+Un clic en el parlante de la barra de abajo silencia; otro clic vuelve al volumen de antes. Si la ventana es angosta, la barra de volumen aparece al pasar el mouse por el parlante.
 
 En macOS, usá **Cmd** en lugar de Ctrl. Las teclas multimedia del teclado también funcionan, y Surco aparece en los controles de música del sistema (el panel de medios de Windows, "Está sonando" en macOS y el widget de música en Linux).
 

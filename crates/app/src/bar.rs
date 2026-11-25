@@ -1,7 +1,10 @@
 //! Barra inferior fija: portada, título, controles, progreso y volumen.
 
-use iced::widget::{button, column, container, image, row, slider, text, tooltip, Space};
-use iced::{Alignment, Element, Length};
+use iced::widget::{
+    button, column, container, image, mouse_area, responsive, row, slider, text, tooltip,
+    vertical_slider, Space,
+};
+use iced::{Alignment, Element, Length, Task};
 use surco_core::{format_duration, PlayerState, RepeatMode};
 use surco_player::Source;
 
@@ -10,6 +13,42 @@ use crate::playback::TrackRes;
 use crate::{theme, Message, Surco};
 
 const COVER: f32 = 56.0;
+/// Ancho de la barra de volumen horizontal.
+const VOLUME_WIDTH: f32 = 100.0;
+/// Botones de ícono de la derecha (radio, cola, volumen) con su separación.
+const ICON_SLOT: f32 = 40.0;
+/// Lo que ocupa "Cambiar video" con su separación.
+const CHANGE_SLOT: f32 = 125.0;
+/// Alto del desplegable de volumen.
+const POPUP_HEIGHT: f32 = 130.0;
+/// Espera antes de cerrar el desplegable al salir con el mouse (para poder
+/// ir del ícono al desplegable sin que se cierre).
+const POPUP_GRACE: std::time::Duration = std::time::Duration::from_millis(350);
+/// Volumen al desmutear si no había uno anterior.
+const DEFAULT_VOLUME: f32 = 0.7;
+
+/// Mouse sobre el control de volumen compacto.
+#[derive(Debug, Clone, Copy)]
+pub enum VolumeMsg {
+    /// Clic en el ícono: mutear o volver al volumen de antes.
+    ToggleMute,
+    /// Entró o salió del ícono (modo compacto).
+    IconHover(bool),
+    /// Entró o salió del desplegable.
+    PopupHover(bool),
+    /// Pasó la espera: cerrar si el mouse no está en ninguno.
+    Check,
+}
+
+/// Estado del control de volumen.
+#[derive(Debug, Default)]
+pub struct VolumeUi {
+    /// Volumen antes de mutear.
+    pub before_mute: Option<f32>,
+    pub open: bool,
+    icon_hover: bool,
+    popup_hover: bool,
+}
 
 impl Surco {
     pub(crate) fn view_player_bar(&self) -> Element<'_, Message> {
@@ -123,6 +162,59 @@ impl Surco {
             .align_x(Alignment::Center)
             .width(Length::FillPortion(2));
 
+        let has_change = matches!(
+            (at, now.and_then(|t| self.resolution(t))),
+            (Some(_), Some(TrackRes::Done(m))) if !m.candidates.is_empty()
+        );
+        // Si la barra de volumen no entra, queda solo el ícono y la barra se
+        // abre hacia arriba al pasar el mouse.
+        let right = responsive(move |size| {
+            let needed =
+                3.0 * ICON_SLOT + VOLUME_WIDTH + if has_change { CHANGE_SLOT } else { 0.0 };
+            let compact = size.width < needed;
+            let mut r = row![Space::new().width(Length::Fill)]
+                .spacing(10)
+                .align_y(Alignment::Center);
+            for e in self.right_buttons() {
+                r = r.push(e);
+            }
+            r = r.push(self.volume_icon(compact));
+            if !compact {
+                r = r.push(
+                    slider(0.0..=1.0, self.status.volume, Message::Volume)
+                        .step(0.01_f32)
+                        .width(VOLUME_WIDTH)
+                        .style(theme::seek_slider),
+                );
+            }
+            container(r).center_y(Length::Fill).into()
+        })
+        .width(Length::Fill)
+        .height(COVER);
+
+        let left = row![cover, info]
+            .spacing(12)
+            .align_y(Alignment::Center)
+            .width(Length::Fill);
+
+        container(
+            row![left, center, right]
+                .spacing(24)
+                .align_y(Alignment::Center),
+        )
+        .padding([10, 16])
+        .width(Length::Fill)
+        .style(theme::surface)
+        .into()
+    }
+}
+
+impl Surco {
+    /// Botones de la derecha antes del volumen: cambiar el video, radio y cola.
+    fn right_buttons(&self) -> [Element<'_, Message>; 3] {
+        let s = &self.status;
+        let at = self.now_in_playlist();
+        let now = self.now_track();
         // Derecha: cambiar el video (si el match no es el correcto) y volumen.
         let change: Element<'_, Message> = match (at, now.and_then(|t| self.resolution(t))) {
             // Las de la radio no tienen otros candidatos.
@@ -135,10 +227,6 @@ impl Surco {
             }
             _ => Space::new().into(),
         };
-        let volume = slider(0.0..=1.0, s.volume, Message::Volume)
-            .step(0.01_f32)
-            .width(100)
-            .style(theme::seek_slider);
         let can_radio = matches!(s.source, Some(Source::YouTube(_)));
         let radio_icon = icons::icon(
             Kind::Radio,
@@ -172,31 +260,106 @@ impl Surco {
             self.screen == crate::Screen::Queue,
             Message::ToggleQueue,
         );
-        let right = row![
-            Space::new().width(Length::Fill),
-            change,
-            radio,
-            queue,
-            icons::icon(Kind::Volume, theme::colors().text_secondary, 18.0),
-            volume,
-        ]
-        .spacing(10)
-        .align_y(Alignment::Center)
-        .width(Length::Fill);
+        [change, radio.into(), queue]
+    }
 
-        let left = row![cover, info]
-            .spacing(12)
-            .align_y(Alignment::Center)
-            .width(Length::Fill);
+    /// Ícono de volumen: clic mutea. En modo compacto, pasar el mouse abre
+    /// la barra hacia arriba.
+    fn volume_icon(&self, compact: bool) -> Element<'_, Message> {
+        let muted = self.status.volume <= 0.001;
+        let icon = icons::icon(
+            if muted { Kind::Muted } else { Kind::Volume },
+            theme::colors().text_secondary,
+            18.0,
+        );
+        let button = button(icon)
+            .on_press(Message::VolumeUi(VolumeMsg::ToggleMute))
+            .padding(6)
+            .style(theme::icon_button);
+        if compact {
+            mouse_area(button)
+                .on_enter(Message::VolumeUi(VolumeMsg::IconHover(true)))
+                .on_exit(Message::VolumeUi(VolumeMsg::IconHover(false)))
+                .into()
+        } else {
+            button.into()
+        }
+    }
 
-        container(
-            row![left, center, right]
-                .spacing(24)
-                .align_y(Alignment::Center),
+    /// Desplegable con la barra de volumen vertical, sobre el ícono.
+    pub(crate) fn view_volume_popup(&self) -> Option<Element<'_, Message>> {
+        if !self.volume_ui.open {
+            return None;
+        }
+        let slider = vertical_slider(0.0..=1.0, self.status.volume, Message::Volume)
+            .step(0.01_f32)
+            .height(POPUP_HEIGHT - 44.0)
+            .style(theme::seek_slider);
+        let card = container(
+            column![
+                slider,
+                text(format!("{:.0}", self.status.volume * 100.0))
+                    .size(theme::SIZE_S)
+                    .style(theme::secondary_text),
+            ]
+            .spacing(8)
+            .align_x(Alignment::Center),
         )
-        .padding([10, 16])
-        .width(Length::Fill)
-        .style(theme::surface)
-        .into()
+        .padding([12, 8])
+        .width(44)
+        .height(POPUP_HEIGHT)
+        .style(theme::dialog);
+        let card = mouse_area(card)
+            .on_enter(Message::VolumeUi(VolumeMsg::PopupHover(true)))
+            .on_exit(Message::VolumeUi(VolumeMsg::PopupHover(false)));
+        // Abajo a la derecha, justo arriba del ícono (el último de la barra).
+        Some(
+            container(card)
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .align_right(Length::Fill)
+                .align_bottom(Length::Fill)
+                .padding(iced::Padding::ZERO.right(9).bottom(70))
+                .into(),
+        )
+    }
+
+    pub(crate) fn on_volume_ui(&mut self, msg: VolumeMsg) -> Task<Message> {
+        let ui = &mut self.volume_ui;
+        match msg {
+            VolumeMsg::ToggleMute => {
+                let v = if self.status.volume > 0.001 {
+                    ui.before_mute = Some(self.status.volume);
+                    0.0
+                } else {
+                    ui.before_mute
+                        .take()
+                        .filter(|v| *v > 0.001)
+                        .unwrap_or(DEFAULT_VOLUME)
+                };
+                return Task::done(Message::Volume(v));
+            }
+            VolumeMsg::IconHover(true) => {
+                ui.icon_hover = true;
+                ui.open = true;
+            }
+            VolumeMsg::PopupHover(true) => ui.popup_hover = true,
+            VolumeMsg::IconHover(false) | VolumeMsg::PopupHover(false) => {
+                if matches!(msg, VolumeMsg::IconHover(_)) {
+                    ui.icon_hover = false;
+                } else {
+                    ui.popup_hover = false;
+                }
+                return Task::perform(tokio::time::sleep(POPUP_GRACE), |_| {
+                    Message::VolumeUi(VolumeMsg::Check)
+                });
+            }
+            VolumeMsg::Check => {
+                if !ui.icon_hover && !ui.popup_hover {
+                    ui.open = false;
+                }
+            }
+        }
+        Task::none()
     }
 }

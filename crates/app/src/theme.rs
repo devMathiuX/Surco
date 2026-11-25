@@ -452,12 +452,10 @@ pub fn dialog(_: &Theme) -> container::Style {
     let c = colors();
     container::Style {
         background: Some(c.background.into()),
+        // Sin sombra: con tiny-skia, al redibujar solo la zona que cambió
+        // (pasar el mouse por las opciones) la sombra difusa se acumulaba y
+        // oscurecía el diálogo entero.
         border: border::rounded(RADIUS + 2.0).width(1).color(c.border),
-        shadow: iced::Shadow {
-            color: Color::BLACK.scale_alpha(0.4),
-            offset: iced::Vector::new(0.0, 6.0),
-            blur_radius: 24.0,
-        },
         ..container::Style::default()
     }
 }

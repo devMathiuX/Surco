@@ -293,7 +293,7 @@ impl Surco {
         } else {
             String::new()
         };
-        button(
+        let row = button(
             row![
                 cover,
                 column![
@@ -319,8 +319,8 @@ impl Surco {
         .on_press(Message::PlayRecent(i))
         .padding([4, 8])
         .width(Length::Fill)
-        .style(theme::list_button(playing))
-        .into()
+        .style(theme::list_button(playing));
+        crate::search::with_menu(row, t, None)
     }
 
     /// Aviso si falta yt-dlp (con el botón para bajarlo) o si el audio no arrancó.

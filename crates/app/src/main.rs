@@ -63,6 +63,7 @@ fn main() -> anyhow::Result<()> {
     iced::application(Surco::new, Surco::update, Surco::view)
         .title("Surco")
         .theme(Surco::theme)
+        .style(Surco::style)
         .subscription(Surco::subscription)
         .window(window::Settings {
             size: Size::new(1000.0, 640.0),
@@ -229,6 +230,12 @@ struct Surco {
     home: home::HomeState,
     /// Menú abierto de una canción (agregar a la cola o a una playlist).
     song_menu: Option<playlists::SongMenu>,
+    /// Playlist de la barra lateral con el menú de clic derecho abierto.
+    playlist_menu: Option<usize>,
+    /// Cambia con cada cambio de pantalla (ver `Surco::style`).
+    repaint: u8,
+    /// Mutear y desplegable del volumen.
+    volume_ui: bar::VolumeUi,
     /// Playlist que se está renombrando y el nombre escrito.
     renaming: Option<(usize, String)>,
     /// Recomendadas por playlist (ID).
@@ -343,6 +350,11 @@ enum Message {
     /// Abrir (o cerrar) el menú de una canción.
     SongMenu(Option<Box<playlists::SongMenu>>),
     SongMenuPick(playlists::AddTarget),
+    /// Menú de clic derecho de una playlist de la barra lateral.
+    PlaylistMenu(Option<usize>),
+    VolumeUi(bar::VolumeMsg),
+    /// Abrir una playlist y empezar a renombrarla.
+    RenameFromMenu(usize),
     RecsLoaded(String, Result<Vec<surco_provider::SearchResult>, String>),
     RecsRefresh(usize),
     RecAdd(usize, usize),
@@ -424,6 +436,9 @@ impl Surco {
             search: search::SearchState::default(),
             home: home::HomeState::default(),
             song_menu: None,
+            playlist_menu: None,
+            repaint: 0,
+            volume_ui: bar::VolumeUi::default(),
             renaming: None,
             recs: HashMap::new(),
             downloads: playlists::Downloads::new(),
@@ -455,7 +470,11 @@ impl Surco {
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
+        let before = self.page();
         let task = self.handle(message);
+        if self.page() != before {
+            self.repaint = self.repaint.wrapping_add(1);
+        }
         let precache = self.pump_precache();
         let endless = self.extend_endless();
         let background = self.pump_background();
@@ -531,7 +550,10 @@ impl Surco {
                 self.open_playlist(i);
                 return self.on_playlist_opened();
             }
-            Message::RemovePlaylist(i) => self.remove_playlist(i),
+            Message::RemovePlaylist(i) => {
+                self.playlist_menu = None;
+                self.remove_playlist(i);
+            }
             Message::FocusImport | Message::OpenImport => {
                 self.screen = Screen::Import;
                 return operation::focus(Id::new(IMPORT_INPUT));
@@ -599,12 +621,28 @@ impl Surco {
             }
             Message::RenameCommit => self.commit_rename(),
             Message::SongMenu(menu) => self.song_menu = menu.map(|m| *m),
+            Message::VolumeUi(msg) => return self.on_volume_ui(msg),
+            Message::PlaylistMenu(menu) => {
+                self.playlist_menu = menu;
+                if menu.is_some() {
+                    self.refresh_downloads();
+                }
+            }
+            Message::RenameFromMenu(i) => {
+                self.playlist_menu = None;
+                self.open_playlist(i);
+                let opened = self.on_playlist_opened();
+                return Task::batch([opened, self.start_rename(i)]);
+            }
             Message::SongMenuPick(target) => return self.song_menu_pick(target),
             Message::RecsLoaded(id, result) => return self.on_recs(id, result),
             Message::RecsRefresh(p) => return self.load_recs(p, true),
             Message::RecAdd(p, i) => self.add_rec(p, i),
             Message::RecPlay(p, i) => return self.play_rec(p, i),
-            Message::DeleteDownloads(p) => self.delete_downloads(p),
+            Message::DeleteDownloads(p) => {
+                self.playlist_menu = None;
+                self.delete_downloads(p);
+            }
             Message::Tick => self.pulse = self.pulse.wrapping_add(1),
             Message::ListScrolled(offset, height) => {
                 let before = view::visible_rows(self.list_view, usize::MAX);
@@ -628,6 +666,7 @@ impl Surco {
                 self.choosing = None;
                 self.renaming = None;
                 self.song_menu = None;
+                self.playlist_menu = None;
             }
             Message::WindowHandle(hwnd) => {
                 if self.media.is_none() && std::env::var_os("SURCO_NO_MEDIA_KEYS").is_none() {
@@ -841,6 +880,32 @@ impl Surco {
 
     fn theme(&self) -> Theme {
         self.theme.clone()
+    }
+
+    /// Qué pantalla (y playlist, y si hay un diálogo) se ve: al cambiar, se
+    /// redibuja todo.
+    fn page(&self) -> (Screen, Option<usize>, bool) {
+        let dialog = self.song_menu.is_some() || self.playlist_menu.is_some();
+        (self.screen, self.selected, dialog)
+    }
+
+    /// Fondo de la ventana. Cambia de forma invisible (1/255 en el azul) cada
+    /// vez que cambia la pantalla: el renderer por CPU de iced 0.14 redibuja
+    /// solo lo que cree que cambió y a veces deja texto viejo mezclado con el
+    /// nuevo (por ejemplo, de Buscar a Importar). Con otro fondo redibuja la
+    /// ventana entera.
+    fn style(&self, theme: &Theme) -> iced::theme::Style {
+        use iced::theme::Base;
+        let mut style = theme.base();
+        if self.repaint % 2 == 1 {
+            let b = style.background_color.b;
+            style.background_color.b = if b > 0.5 {
+                b - 1.0 / 255.0
+            } else {
+                b + 1.0 / 255.0
+            };
+        }
+        style
     }
 }
 

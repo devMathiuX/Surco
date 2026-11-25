@@ -347,6 +347,7 @@ Medido en la Fase 2 (Linux, Xvfb, reproduciendo un m4a de 3 min por HTTP): **~23
 - **Linux ARM / Windows ARM:** por ahora solo hay paquetes x86_64 (en macOS el binario es universal).
 - **Opus/WebM:** si YouTube solo ofrece el audio en WebM/Opus, por ahora se muestra un error. El fallback (crate `opus` o ffmpeg) queda pendiente; casi todos los videos tienen m4a.
 - En un MP4 fragmentado sin duración en el contenedor (URLs directas) la barra usa la duración de Spotify; con YouTube la duración la da yt-dlp.
+- **Repintado de tiny-skia:** el renderer por CPU de iced 0.14 redibuja solo lo que cree que cambió y a veces deja texto viejo al cambiar de pantalla, y las sombras difusas se acumulaban en los diálogos. Surco cambia el fondo de la ventana en 1/255 en cada cambio de pantalla o diálogo (`Surco::style`), lo que fuerza un redibujo entero, y los diálogos no tienen sombra.
 - La lista de una playlist solo arma las filas que se ven (alto fijo de 50 px por fila), y las portadas de fondo se buscan para las que se ven y las 30 siguientes. Con 1837 canciones: ~50 MB de RAM (sin esto eran 113 MB).
 - **YouTube y redes "marcadas":** desde IPs de datacenter, VPN o redes con mucho tráfico, YouTube puede pedir "confirmar que no sos un bot" y yt-dlp falla. La app lo muestra como un error claro (no crashea). En una conexión hogareña normal no pasa.
 - **Resolver:** si la grabación exacta no está entre los 5-10 primeros resultados de YouTube (por ejemplo, una versión en vivo poco conocida), puede elegir un cover parecido. Para eso está el selector manual.

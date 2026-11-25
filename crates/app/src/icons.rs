@@ -33,6 +33,10 @@ pub enum Kind {
     Home,
     /// Importar (flecha hacia una bandeja).
     Import,
+    /// Volumen apagado (parlante con una cruz).
+    Muted,
+    /// Editar (lápiz).
+    Edit,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -142,6 +146,37 @@ impl<Message> canvas::Program<Message> for Icon {
                         line(1.5),
                     );
                 }
+            }
+            Kind::Muted => {
+                frame.fill(
+                    &poly(&[
+                        (4.0, 9.5),
+                        (8.0, 9.5),
+                        (12.5, 5.5),
+                        (12.5, 18.5),
+                        (8.0, 14.5),
+                        (4.0, 14.5),
+                    ]),
+                    self.color,
+                );
+                frame.stroke(&Path::line(p(15.0, 9.5), p(20.0, 14.5)), line(1.8));
+                frame.stroke(&Path::line(p(20.0, 9.5), p(15.0, 14.5)), line(1.8));
+            }
+            Kind::Edit => {
+                // Lápiz en diagonal: cuerpo, punta y una raya abajo.
+                frame.stroke(
+                    &Path::new(|b| {
+                        b.move_to(p(15.5, 4.5));
+                        b.line_to(p(19.5, 8.5));
+                        b.line_to(p(9.0, 19.0));
+                        b.line_to(p(4.5, 19.5));
+                        b.line_to(p(5.0, 15.0));
+                        b.close();
+                        b.move_to(p(13.0, 7.0));
+                        b.line_to(p(17.0, 11.0));
+                    }),
+                    line(1.7),
+                );
             }
             Kind::Volume => {
                 frame.fill(

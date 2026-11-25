@@ -45,8 +45,14 @@ impl Surco {
             self.view_player_bar()
         ]
         .into();
-        match &self.song_menu {
-            Some(menu) => stack![app, self.view_song_menu(menu)].into(),
+        if let Some(menu) = &self.song_menu {
+            return stack![app, self.view_song_menu(menu)].into();
+        }
+        if let Some(i) = self.playlist_menu {
+            return stack![app, self.view_playlist_menu(i)].into();
+        }
+        match self.view_volume_popup() {
+            Some(popup) => stack![app, popup].into(),
             None => app,
         }
     }
@@ -86,6 +92,7 @@ impl Surco {
                 // Soltar encima de una fila (el evento global puede no estar
                 // suscripto todavía si el clic fue muy rápido).
                 .on_release(Message::DragEnd)
+                .on_right_press(Message::PlaylistMenu(Some(i)))
                 .on_enter(Message::SidebarHover(Some(i)))
                 .on_exit(Message::SidebarHover(None))
                 .on_move(move |_| Message::DragOver(DragList::Sidebar, i))
@@ -324,7 +331,28 @@ impl Surco {
             .spacing(8)
             .align_y(Alignment::Center)
             .into(),
-            _ => text(&p.name).size(theme::SIZE_L).into(),
+            _ => row![
+                text(&p.name)
+                    .size(theme::SIZE_L)
+                    .wrapping(text::Wrapping::None),
+                tooltip(
+                    button(icons::icon(
+                        Kind::Edit,
+                        theme::colors().text_secondary,
+                        16.0
+                    ))
+                    .on_press(Message::StartRename(index))
+                    .padding(6)
+                    .style(theme::icon_button),
+                    container(text("Renombrar").size(theme::SIZE_S))
+                        .padding(6)
+                        .style(theme::card),
+                    tooltip::Position::Bottom,
+                ),
+            ]
+            .spacing(6)
+            .align_y(Alignment::Center)
+            .into(),
         };
         let small = |label: String, msg: Message| {
             button(text(label).size(theme::SIZE_S))
@@ -333,9 +361,6 @@ impl Surco {
                 .style(theme::ghost_button)
         };
         let mut actions = row![].spacing(8);
-        if self.renaming.as_ref().is_none_or(|(r, _)| *r != index) {
-            actions = actions.push(small("Renombrar".into(), Message::StartRename(index)));
-        }
         if let Some((files, bytes)) = self.downloads.get(&p.id) {
             actions = actions.push(small(
                 format!(
@@ -429,7 +454,7 @@ impl Surco {
             } else {
                 Space::new().width(0).into()
             };
-            button(
+            let row = button(
                 row![
                     number,
                     cover,
@@ -458,8 +483,8 @@ impl Surco {
             .padding([6, 8])
             .width(Length::Fill)
             .height(ROW_HEIGHT)
-            .style(theme::list_button(playing))
-            .into()
+            .style(theme::list_button(playing));
+            crate::search::with_menu(row, t, Some((index, i)))
         }));
         let rows = column![
             Space::new().height(above),
@@ -470,24 +495,32 @@ impl Surco {
         .padding(iced::Padding::ZERO.right(16).bottom(16));
 
         let mut col = column![header].spacing(20);
-        if let Some(q) = &self.filter {
-            col = col.push(
-                row![
-                    icons::icon(Kind::Search, theme::colors().text_secondary, 18.0),
-                    text_input("Buscar en la playlist", q)
-                        .id(Id::new(FILTER_INPUT))
-                        .on_input(Message::FilterChanged)
-                        .padding(8)
-                        .size(theme::SIZE_S)
-                        .style(theme::input),
-                    button(text("Cerrar").size(theme::SIZE_S))
-                        .on_press(Message::CloseFilter)
-                        .padding([4, 10])
-                        .style(theme::ghost_button),
-                ]
-                .spacing(8)
-                .align_y(Alignment::Center),
-            );
+        // Buscador dentro de la playlist, siempre a mano (Ctrl+F lo enfoca).
+        if !p.tracks.is_empty() {
+            let mut search = row![
+                icons::icon(Kind::Search, theme::colors().text_secondary, 18.0),
+                text_input("Buscar en la playlist", query)
+                    .id(Id::new(FILTER_INPUT))
+                    .on_input(Message::FilterChanged)
+                    .padding(8)
+                    .size(theme::SIZE_S)
+                    .style(theme::input),
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center);
+            if !query.is_empty() {
+                search = search.push(
+                    button(icons::icon(
+                        Kind::Close,
+                        theme::colors().text_secondary,
+                        14.0,
+                    ))
+                    .on_press(Message::CloseFilter)
+                    .padding(8)
+                    .style(theme::icon_button),
+                );
+            }
+            col = col.push(search);
         }
         if !query.trim().is_empty() && !p.tracks.iter().any(|t| matches_filter(t, query)) {
             col = col.push(
@@ -498,9 +531,24 @@ impl Surco {
         }
         if p.tracks.is_empty() {
             col = col.push(
-                text("Está vacía. Buscá canciones y agregalas con el + de cada una, o sumá de las recomendadas.")
-                    .size(theme::SIZE_S)
-                    .style(theme::secondary_text),
+                column![
+                    text("Está vacía. Buscá canciones y agregalas con el + de cada una (o con clic derecho), o sumá de las recomendadas.")
+                        .size(theme::SIZE_S)
+                        .style(theme::secondary_text),
+                    // Por si en realidad querían pegar el link de una playlist.
+                    row![
+                        text("¿Querías traer una playlist de Spotify o YouTube?")
+                            .size(theme::SIZE_S)
+                            .style(theme::secondary_text),
+                        button(text("Importar una playlist").size(theme::SIZE_S))
+                            .on_press(Message::OpenImport)
+                            .padding([4, 10])
+                            .style(theme::ghost_button),
+                    ]
+                    .spacing(10)
+                    .align_y(Alignment::Center),
+                ]
+                .spacing(10),
             );
         }
         if let Some(chooser) = self.view_chooser(index) {

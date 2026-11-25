@@ -614,6 +614,63 @@ impl Surco {
     }
 
     /// Diálogo del menú de una canción, sobre toda la ventana.
+    /// Menú de clic derecho de una playlist de la barra lateral.
+    pub(crate) fn view_playlist_menu(&self, index: usize) -> Element<'_, Message> {
+        let Some((p, _)) = self.playlists.get(index) else {
+            return Space::new().into();
+        };
+        let option = |label: String, msg: Message, danger: bool| {
+            button(text(label).size(theme::SIZE_S).style(if danger {
+                theme::error_text
+            } else {
+                theme::plain_text
+            }))
+            .on_press(msg)
+            .width(Length::Fill)
+            .padding([8, 10])
+            .style(theme::list_button(false))
+        };
+        let mut options = column![option(
+            "Renombrar".into(),
+            Message::RenameFromMenu(index),
+            false
+        )]
+        .spacing(2);
+        if let Some((files, bytes)) = self.downloads.get(&p.id) {
+            options = options.push(option(
+                format!(
+                    "Borrar descargas ({}, {})",
+                    crate::view::songs(*files),
+                    crate::view::format_bytes(*bytes)
+                ),
+                Message::DeleteDownloads(index),
+                false,
+            ));
+        }
+        options = options.push(option(
+            "Quitar playlist".into(),
+            Message::RemovePlaylist(index),
+            true,
+        ));
+        let card = container(
+            column![
+                container(
+                    text(&p.name)
+                        .size(theme::SIZE_M)
+                        .wrapping(text::Wrapping::None)
+                )
+                .padding([0, 10])
+                .clip(true),
+                options,
+            ]
+            .spacing(10),
+        )
+        .padding(14)
+        .width(300)
+        .style(theme::dialog);
+        dialog_backdrop(card, Message::PlaylistMenu(None))
+    }
+
     pub(crate) fn view_song_menu<'a>(&'a self, menu: &'a SongMenu) -> Element<'a, Message> {
         let option = |label: String, target: AddTarget, danger: bool| {
             button(text(label).size(theme::SIZE_S).style(if danger {
@@ -627,10 +684,12 @@ impl Surco {
             .style(theme::list_button(false))
         };
         let mut playlists = Column::new().spacing(2);
+        let mut others = 0;
         for (i, (p, _)) in self.playlists.iter().enumerate() {
             if menu.from.is_some_and(|(fp, _)| fp == i) {
                 continue;
             }
+            others += 1;
             playlists = playlists.push(option(p.name.clone(), AddTarget::Playlist(i), false));
         }
         let mut col = column![
@@ -655,7 +714,7 @@ impl Surco {
             .spacing(2),
         ]
         .spacing(10);
-        if !self.playlists.is_empty() {
+        if others > 0 {
             col = col.push(
                 container(
                     text("Tus playlists")
@@ -682,16 +741,24 @@ impl Surco {
             .width(340)
             .max_height(460)
             .style(theme::dialog);
-        // Clic afuera cierra.
-        let backdrop = mouse_area(
-            container(center(opaque(card)))
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .style(theme::backdrop),
-        )
-        .on_press(Message::SongMenu(None));
-        opaque(backdrop)
+        dialog_backdrop(card, Message::SongMenu(None))
     }
+}
+
+/// Diálogo centrado sobre un fondo oscuro; clic afuera (o derecho) cierra.
+fn dialog_backdrop<'a>(
+    card: impl Into<Element<'a, Message>>,
+    close: Message,
+) -> Element<'a, Message> {
+    let backdrop = mouse_area(
+        container(center(opaque(card)))
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .style(theme::backdrop),
+    )
+    .on_press(close.clone())
+    .on_right_press(close);
+    opaque(backdrop)
 }
 
 #[cfg(test)]
