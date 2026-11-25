@@ -45,6 +45,16 @@ struct State {
     failure: Option<Failure>,
     closed: bool,
     downloaded: u64,
+    /// Se llama una vez, con el archivo entero, cuando termina la descarga.
+    on_complete: Option<OnComplete>,
+}
+
+type OnComplete = Box<dyn FnOnce(&[u8]) + Send>;
+
+impl State {
+    fn complete(&self) -> bool {
+        self.have.iter().all(|h| *h)
+    }
 }
 
 struct Shared {
@@ -106,6 +116,7 @@ impl HttpStream {
                 failure: None,
                 closed: false,
                 downloaded: n as u64,
+                on_complete: None,
             }),
             cond: Condvar::new(),
         });
@@ -126,6 +137,21 @@ impl HttpStream {
 
     pub fn is_empty(&self) -> bool {
         self.len == 0
+    }
+
+    /// Llama a `f` con el archivo entero cuando termine de bajarse (en el
+    /// hilo de la descarga, o ya mismo si estaba completo). Si el stream se
+    /// cierra antes, no se llama.
+    pub fn on_complete(&self, f: impl FnOnce(&[u8]) + Send + 'static) {
+        let Ok(mut s) = self.shared.lock() else {
+            return;
+        };
+        if s.complete() {
+            // Con el lock tomado: el lector espera lo que tarde `f`.
+            f(&s.data);
+        } else {
+            s.on_complete = Some(Box::new(f));
+        }
     }
 
     pub fn progress(&self) -> StreamProgress {
@@ -205,6 +231,18 @@ impl Seek for HttpStream {
     }
 }
 
+/// Descarga completa: le pasa el archivo a `on_complete`, con el lock
+/// tomado (el lector espera lo que tarde; sin copiar el archivo).
+fn finish(shared: &Shared) {
+    let Ok(mut s) = shared.lock() else { return };
+    if s.closed || !s.complete() {
+        return;
+    }
+    if let Some(f) = s.on_complete.take() {
+        f(&s.data);
+    }
+}
+
 /// Tarea de descarga: baja los bloques que faltan, priorizando el que pida
 /// el lector.
 async fn download(
@@ -225,6 +263,8 @@ async fn download(
                 Some(c) => c,
                 None => {
                     tracing::debug!(len, "descarga completa");
+                    drop(state);
+                    finish(&shared);
                     return;
                 }
             }

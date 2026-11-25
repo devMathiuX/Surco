@@ -27,6 +27,33 @@ const RELEASE_ASSET: &str = "yt-dlp_linux";
 
 const RELEASES_URL: &str = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/";
 
+/// Versión "en carpeta" (onedir): el mismo yt-dlp, pero ya descomprimido.
+/// El binario de un solo archivo se descomprime entero a una carpeta
+/// temporal cada vez que arranca (~0,5 s más por búsqueda o canción).
+#[cfg(windows)]
+const ONEDIR_ASSET: &str = "yt-dlp_win.zip";
+#[cfg(target_os = "macos")]
+const ONEDIR_ASSET: &str = "yt-dlp_macos.zip";
+#[cfg(not(any(windows, target_os = "macos")))]
+const ONEDIR_ASSET: &str = "yt-dlp_linux.zip";
+
+/// Ejecutable dentro del zip en carpeta.
+#[cfg(windows)]
+const ONEDIR_BINARY: &str = "yt-dlp.exe";
+#[cfg(target_os = "macos")]
+const ONEDIR_BINARY: &str = "yt-dlp_macos";
+#[cfg(not(any(windows, target_os = "macos")))]
+const ONEDIR_BINARY: &str = "yt-dlp_linux";
+
+/// Carpeta (dentro de la de datos) con las versiones en carpeta. Cada
+/// descarga va a una subcarpeta nueva: en Windows no se puede borrar un
+/// yt-dlp que se está ejecutando, así que las viejas se borran al arrancar.
+pub const ONEDIR_DIR: &str = "yt-dlp-onedir";
+
+/// Cada cuánto se baja de nuevo la versión en carpeta (no se actualiza sola
+/// con `yt-dlp -U`), para seguir los cambios de YouTube.
+pub const ONEDIR_MAX_AGE: Duration = Duration::from_secs(7 * 24 * 60 * 60);
+
 /// Formato pedido: m4a/AAC primero (symphonia lo decodifica nativo).
 pub const AUDIO_FORMAT: &str = "bestaudio[ext=m4a]/bestaudio";
 
@@ -76,6 +103,9 @@ impl YtDlp {
     /// (más las carpetas de [`search_path`]).
     pub fn locate(data_dir: Option<&Path>) -> Option<Self> {
         if let Some(dir) = data_dir {
+            if let Some((path, _)) = newest_onedir(dir) {
+                return Some(Self::new(path));
+            }
             let candidate = dir.join(BINARY_NAME);
             if candidate.is_file() {
                 return Some(Self::new(candidate));
@@ -84,8 +114,105 @@ impl YtDlp {
         find_in_path(BINARY_NAME, search_path().as_deref()).map(Self::new)
     }
 
-    /// Descarga la última versión oficial a `data_dir` y la deja ejecutable.
+    /// Descarga la última versión oficial a `data_dir`: primero la versión en
+    /// carpeta, y si falla, la de un solo archivo.
     pub async fn download(client: &reqwest::Client, data_dir: &Path) -> Result<Self> {
+        match Self::download_onedir(client, data_dir).await {
+            Ok(y) => Ok(y),
+            Err(e) => {
+                tracing::warn!(error = %e, "no se pudo bajar yt-dlp en carpeta; se baja el de un archivo");
+                Self::download_onefile(client, data_dir).await
+            }
+        }
+    }
+
+    /// `true` si este yt-dlp es el de la carpeta de datos de Surco (y no
+    /// uno del sistema, que se actualiza por su cuenta).
+    pub fn is_managed(&self, data_dir: &Path) -> bool {
+        self.path.starts_with(data_dir)
+    }
+
+    /// Si Surco maneja yt-dlp y la versión en carpeta falta o tiene más de
+    /// [`ONEDIR_MAX_AGE`], baja una nueva. Devuelve el yt-dlp nuevo, o
+    /// `None` si no hacía falta.
+    pub async fn refresh_onedir(
+        &self,
+        client: &reqwest::Client,
+        data_dir: &Path,
+    ) -> Result<Option<Self>> {
+        if !self.is_managed(data_dir) {
+            return Ok(None);
+        }
+        if let Some((_, age)) = newest_onedir(data_dir) {
+            if age < ONEDIR_MAX_AGE {
+                return Ok(None);
+            }
+        }
+        Self::download_onedir(client, data_dir).await.map(Some)
+    }
+
+    /// Borra las versiones en carpeta viejas (todas menos la más nueva).
+    /// Las que están en uso (Windows) quedan para la próxima.
+    pub fn remove_old_onedirs(data_dir: &Path) {
+        let Some((newest, _)) = newest_onedir(data_dir) else {
+            return;
+        };
+        let Some(keep) = newest.parent() else {
+            return;
+        };
+        let Ok(dirs) = std::fs::read_dir(data_dir.join(ONEDIR_DIR)) else {
+            return;
+        };
+        for d in dirs.flatten() {
+            let path = d.path();
+            if path != keep && path.is_dir() {
+                if let Err(e) = std::fs::remove_dir_all(&path) {
+                    tracing::debug!(path = %path.display(), error = %e, "no se pudo borrar un yt-dlp viejo");
+                }
+            }
+        }
+    }
+
+    async fn download_onedir(client: &reqwest::Client, data_dir: &Path) -> Result<Self> {
+        let url = format!("{RELEASES_URL}{ONEDIR_ASSET}");
+        tracing::info!(%url, "descargando yt-dlp en carpeta");
+        let zip = client
+            .get(&url)
+            .send()
+            .await?
+            .error_for_status()?
+            .bytes()
+            .await?;
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let root = data_dir.join(ONEDIR_DIR);
+        let tmp = root.join(format!("{stamp}.part"));
+        let dest = root.join(stamp.to_string());
+        let (tmp2, zip_len) = (tmp.clone(), zip.len());
+        tokio::task::spawn_blocking(move || -> Result<()> {
+            let _ = std::fs::remove_dir_all(&tmp2);
+            std::fs::create_dir_all(&tmp2)?;
+            crate::deno::extract_all(&zip, &tmp2)?;
+            Ok(())
+        })
+        .await
+        .map_err(|e| Error::Parse(e.to_string()))??;
+        let binary = tmp.join(ONEDIR_BINARY);
+        if !binary.is_file() {
+            let _ = tokio::fs::remove_dir_all(&tmp).await;
+            return Err(Error::Parse(format!("el zip no trae {ONEDIR_BINARY}")));
+        }
+        make_executable(&binary).await?;
+        tokio::fs::rename(&tmp, &dest).await?;
+        let path = dest.join(ONEDIR_BINARY);
+        tracing::info!(path = %path.display(), size = zip_len, "yt-dlp en carpeta descargado");
+        Ok(Self::new(path))
+    }
+
+    /// Descarga el binario de un solo archivo a `data_dir` y lo deja ejecutable.
+    async fn download_onefile(client: &reqwest::Client, data_dir: &Path) -> Result<Self> {
         let url = format!("{RELEASES_URL}{RELEASE_ASSET}");
         tracing::info!(%url, "descargando yt-dlp");
         let bytes = client
@@ -212,7 +339,15 @@ impl YtDlp {
 
     /// Busca en YouTube (`ytsearch{n}:{query}`) sin resolver cada video
     /// (`--flat-playlist`): rápido y sin tocar los servidores de video.
+    ///
+    /// Primero prueba la búsqueda directa ([`crate::innertube`]), que no
+    /// arranca un proceso; yt-dlp queda de respaldo.
     pub async fn search(&self, query: &str, n: usize) -> Result<Vec<SearchResult>> {
+        if crate::innertube::search_enabled() {
+            if let Ok(found) = crate::innertube::search(query, n.clamp(1, 20)).await {
+                return Ok(found);
+            }
+        }
         let target = format!("ytsearch{}:{}", n.clamp(1, 20), query);
         let out = self
             .run(
@@ -231,11 +366,21 @@ impl YtDlp {
 
     /// Playlists de YouTube que coinciden con `query`.
     pub async fn search_playlists(&self, query: &str, n: usize) -> Result<Vec<Listing>> {
+        if crate::innertube::search_enabled() {
+            if let Ok(found) = crate::innertube::search_playlists(query, n.clamp(1, 20)).await {
+                return Ok(found);
+            }
+        }
         self.search_filtered(query, "EgIQAw%3D%3D", n).await
     }
 
     /// Canales (artistas) que coinciden con `query`.
     pub async fn search_channels(&self, query: &str, n: usize) -> Result<Vec<Listing>> {
+        if crate::innertube::search_enabled() {
+            if let Ok(found) = crate::innertube::search_channels(query, n.clamp(1, 20)).await {
+                return Ok(found);
+            }
+        }
         self.search_filtered(query, "EgIQAg%3D%3D", n).await
     }
 
@@ -350,6 +495,24 @@ impl YtDlp {
         }
         Ok(String::from_utf8_lossy(&output.stdout).into_owned())
     }
+}
+
+/// El yt-dlp en carpeta más nuevo de `data_dir` y su antigüedad.
+fn newest_onedir(data_dir: &Path) -> Option<(PathBuf, Duration)> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_secs();
+    std::fs::read_dir(data_dir.join(ONEDIR_DIR))
+        .ok()?
+        .flatten()
+        .filter_map(|d| {
+            let stamp: u64 = d.file_name().to_str()?.parse().ok()?;
+            let bin = d.path().join(ONEDIR_BINARY);
+            bin.is_file().then_some((stamp, bin))
+        })
+        .max_by_key(|(stamp, _)| *stamp)
+        .map(|(stamp, bin)| (bin, Duration::from_secs(now.saturating_sub(stamp))))
 }
 
 /// Un resultado de búsqueda.
@@ -601,6 +764,30 @@ pub(crate) async fn make_executable(_: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Baja el yt-dlp en carpeta de verdad y lo ejecuta:
+    /// `cargo test -p surco-provider real_onedir -- --ignored`.
+    #[tokio::test]
+    #[ignore = "usa la red"]
+    async fn real_onedir() {
+        let dir = std::env::temp_dir().join(format!("surco-onedir-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let y = YtDlp::download(&reqwest::Client::new(), &dir)
+            .await
+            .unwrap();
+        assert!(y.path().starts_with(dir.join(ONEDIR_DIR)));
+        assert!(!y.version().await.unwrap().is_empty());
+        assert_eq!(YtDlp::locate(Some(&dir)).unwrap().path(), y.path());
+        // Recién bajado: no hace falta otro.
+        assert!(y
+            .refresh_onedir(&reqwest::Client::new(), &dir)
+            .await
+            .unwrap()
+            .is_none());
+        YtDlp::remove_old_onedirs(&dir);
+        assert!(y.path().is_file());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn parses_playlist_and_listings() {

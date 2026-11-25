@@ -306,6 +306,7 @@ impl Surco {
     /// Nuevo estado del motor: pasos automáticos, fin de canción y errores.
     pub(crate) fn on_status(&mut self, status: Status) -> Task<Message> {
         let old = std::mem::replace(&mut self.status, status);
+        self.save_resume();
         if self.status.position.abs_diff(old.position) > Duration::from_secs(2) {
             if let Some(m) = &mut self.media {
                 m.force_refresh();

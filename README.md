@@ -150,12 +150,16 @@ La playlist queda guardada en la barra lateral y sus portadas van apareciendo so
 
 ![Buscador](docs/buscador.png)
 
-Escribí en el buscador del **Inicio** o entrá a **Buscar** en la barra lateral. Cuando dejás de escribir aparecen canciones, artistas y playlists:
+Escribí en el buscador del **Inicio** o entrá a **Buscar** en la barra lateral. Mientras escribís aparecen sugerencias (clic en una para buscarla) y, cuando dejás de escribir, canciones, artistas y playlists. Volver a algo que ya buscaste es instantáneo.
 
 - Clic en una **canción** para escucharla. Surco sigue con canciones parecidas, así que la música no se corta.
 - Clic en un **artista** para ver sus canciones más escuchadas.
 - Clic en una **playlist** para verla, escucharla o **Guardar en la biblioteca**.
 - El **+** al lado de cada canción (o un clic derecho sobre ella) la agrega a la cola o a una de tus playlists.
+
+### Retomar donde quedaste
+
+Al abrir Surco, la última canción que escuchaste queda cargada en pausa, en el punto donde la dejaste. Su audio queda guardado en tu compu, así que al darle a play suena al instante.
 
 ### Tus playlists
 

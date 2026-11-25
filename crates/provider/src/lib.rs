@@ -6,6 +6,7 @@ pub use surco_core as core;
 mod audio_cache;
 mod deno;
 mod http_stream;
+pub mod innertube;
 pub mod update;
 mod ytdlp;
 
@@ -80,6 +81,20 @@ const FAST_TIMEOUT: Duration = Duration::from_secs(15);
 /// Fallos del cliente rápido tras los cuales se deja de usar en la sesión.
 const FAST_MAX_FAILURES: u32 = 3;
 
+/// De dónde salió una URL de stream.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Source {
+    Direct,
+    Fast,
+    Normal,
+}
+
+/// Cliente para pedir la URL directo: por IPv4, como la descarga.
+fn direct_client() -> &'static HttpClient {
+    static CLIENT: std::sync::OnceLock<HttpClient> = std::sync::OnceLock::new();
+    CLIENT.get_or_init(stream_client)
+}
+
 /// Punto de entrada: yt-dlp + caché en memoria de URLs de stream.
 #[derive(Debug)]
 pub struct Provider {
@@ -91,6 +106,12 @@ pub struct Provider {
     fast_urls: Mutex<HashSet<String>>,
     /// Fallos del cliente rápido en esta sesión (ver [`FAST_MAX_FAILURES`]).
     fast_failures: AtomicU32,
+    /// Pedir la URL directo a YouTube, sin yt-dlp (ver [`innertube::player`]).
+    direct: bool,
+    /// Videos cuya URL en caché salió del pedido directo.
+    direct_urls: Mutex<HashSet<String>>,
+    /// Fallos del pedido directo en esta sesión.
+    direct_failures: AtomicU32,
 }
 
 impl Provider {
@@ -102,7 +123,17 @@ impl Provider {
             audio: None,
             fast_urls: Mutex::new(HashSet::new()),
             fast_failures: AtomicU32::new(0),
+            direct: false,
+            direct_urls: Mutex::new(HashSet::new()),
+            direct_failures: AtomicU32::new(0),
         }
+    }
+
+    /// Pide primero la URL del audio directo a YouTube (sin arrancar
+    /// yt-dlp); si falla, sigue con yt-dlp como siempre.
+    pub fn with_direct_player(mut self) -> Self {
+        self.direct = true;
+        self
     }
 
     /// Activa la caché de audio en disco (precarga).
@@ -183,6 +214,19 @@ impl Provider {
             }
         }
         // Después de un rechazo (`refresh`) va directo al cliente normal.
+        if !refresh && self.direct_enabled() {
+            match innertube::player(direct_client(), video).await {
+                Ok(info) => {
+                    tracing::debug!(video, "URL de stream pedida directo a YouTube");
+                    self.remember(video, &info, Source::Direct);
+                    return Ok(info);
+                }
+                Err(e) => {
+                    tracing::warn!(video, error = %e, "falló el pedido directo del audio; se usa yt-dlp");
+                    self.direct_failed();
+                }
+            }
+        }
         if !refresh && self.fast_enabled() {
             match self
                 .ytdlp
@@ -191,7 +235,7 @@ impl Provider {
             {
                 Ok(info) if info.is_supported() => {
                     tracing::debug!(video, "URL de stream con el cliente rápido");
-                    self.remember(video, &info, true);
+                    self.remember(video, &info, Source::Fast);
                     return Ok(info);
                 }
                 // Sin yt-dlp no tiene sentido reintentar.
@@ -207,20 +251,36 @@ impl Provider {
             }
         }
         let info = self.ytdlp.stream_info(video).await?;
-        self.remember(video, &info, false);
+        self.remember(video, &info, Source::Normal);
         Ok(info)
     }
 
-    fn remember(&self, video: &str, info: &StreamInfo, fast: bool) {
+    fn remember(&self, video: &str, info: &StreamInfo, source: Source) {
         if let Ok(mut cache) = self.cache.lock() {
             cache.insert(video.to_owned(), (info.clone(), Instant::now()));
         }
-        if let Ok(mut set) = self.fast_urls.lock() {
-            if fast {
-                set.insert(video.to_owned());
-            } else {
-                set.remove(video);
+        for (set, mine) in [
+            (&self.fast_urls, source == Source::Fast),
+            (&self.direct_urls, source == Source::Direct),
+        ] {
+            if let Ok(mut set) = set.lock() {
+                if mine {
+                    set.insert(video.to_owned());
+                } else {
+                    set.remove(video);
+                }
             }
+        }
+    }
+
+    fn direct_enabled(&self) -> bool {
+        self.direct && self.direct_failures.load(Ordering::Relaxed) < FAST_MAX_FAILURES
+    }
+
+    fn direct_failed(&self) {
+        let n = self.direct_failures.fetch_add(1, Ordering::Relaxed) + 1;
+        if n == FAST_MAX_FAILURES {
+            tracing::warn!("el pedido directo del audio falló varias veces; se deja de usar");
         }
     }
 
@@ -245,8 +305,10 @@ impl Provider {
         if let Ok(mut cache) = self.cache.lock() {
             cache.clear();
         }
-        if let Ok(mut set) = self.fast_urls.lock() {
-            set.clear();
+        for set in [&self.fast_urls, &self.direct_urls] {
+            if let Ok(mut set) = set.lock() {
+                set.clear();
+            }
         }
     }
 
@@ -258,6 +320,9 @@ impl Provider {
         // YouTube rechazó una URL del cliente rápido: cuenta como fallo.
         if self.fast_urls.lock().is_ok_and(|mut s| s.remove(video)) {
             self.fast_failed();
+        }
+        if self.direct_urls.lock().is_ok_and(|mut s| s.remove(video)) {
+            self.direct_failed();
         }
     }
 

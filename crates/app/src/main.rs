@@ -20,6 +20,7 @@ mod pointer;
 mod precache;
 mod queue_view;
 mod radio;
+mod resume;
 mod search;
 mod settings;
 mod skeleton;
@@ -161,7 +162,11 @@ fn audio_cache_dir() -> Option<PathBuf> {
 
 /// Provider (yt-dlp + caché de URLs) con la caché de audio en disco.
 fn make_provider(ytdlp: YtDlp) -> Arc<Provider> {
-    let p = Provider::new(ytdlp);
+    let mut p = Provider::new(ytdlp);
+    // `SURCO_NO_DIRECT=1` vuelve a pedir todo el audio por yt-dlp.
+    if std::env::var_os("SURCO_NO_DIRECT").is_none() {
+        p = p.with_direct_player();
+    }
     Arc::new(match audio_cache_dir() {
         Some(dir) => {
             let cache = AudioCache::new(dir, AUDIO_CACHE_LIMIT);
@@ -301,6 +306,7 @@ struct Surco {
     pulse: u32,
     /// URL pedida de antemano al pasar el mouse por una canción.
     warm: warm::Warm,
+    resume: resume::ResumeState,
     /// Versión nueva disponible (o instalándose).
     update: updater::Update,
     /// Ícono en la bandeja (Windows) y la ventana escondida ahí.
@@ -360,6 +366,8 @@ enum Message {
     Status(Status),
     DownloadYtDlp,
     YtDlpDownloaded(Result<PathBuf, String>),
+    /// Terminó la actualización en segundo plano de yt-dlp (en carpeta).
+    YtDlpRefreshed(Result<Option<PathBuf>, String>),
     DownloadDeno,
     DenoDownloaded(Result<PathBuf, String>),
     ImportInputChanged(String),
@@ -574,6 +582,7 @@ impl Surco {
             radio_waiting: false,
             pulse: 0,
             warm: warm::Warm::default(),
+            resume: resume::ResumeState::default(),
             update: updater::Update::default(),
             tray: tray::create(),
             hidden: None,
@@ -583,6 +592,7 @@ impl Surco {
         state.maybe_welcome();
         state.load_spotify_keys();
         state.refresh_downloads();
+        let resume = state.restore_resume();
         state.drop_temporary_audio();
         state.check_js_runtime();
         let covers = state.queue_list_covers();
@@ -594,7 +604,11 @@ impl Surco {
                 None => Task::done(None),
             })
             .map(Message::WindowHandle);
-        (state, Task::batch([handle, covers, home, updater::check()]))
+        let ytdlp = state.refresh_ytdlp();
+        (
+            state,
+            Task::batch([handle, covers, home, updater::check(), ytdlp, resume]),
+        )
     }
 
     fn send(&self, cmd: Command) {
@@ -656,6 +670,14 @@ impl Surco {
                 return self.resolve_in_background();
             }
             Message::YtDlpDownloaded(Err(e)) => self.ytdlp = YtDlpState::Failed(e),
+            Message::YtDlpRefreshed(Ok(Some(path))) => {
+                tracing::info!(path = %path.display(), "yt-dlp actualizado");
+                return self.update(Message::YtDlpDownloaded(Ok(path)));
+            }
+            Message::YtDlpRefreshed(Ok(None)) => {}
+            Message::YtDlpRefreshed(Err(e)) => {
+                tracing::warn!(error = %e, "no se pudo actualizar yt-dlp");
+            }
             Message::DownloadDeno => return self.download_deno(),
             Message::DenoDownloaded(Ok(path)) => {
                 tracing::info!(path = %path.display(), "deno listo");
@@ -877,6 +899,31 @@ impl Surco {
             }
         }
         Task::none()
+    }
+
+    /// Baja en segundo plano la versión en carpeta de yt-dlp si falta o es
+    /// vieja (solo si es el yt-dlp que maneja Surco).
+    fn refresh_ytdlp(&self) -> Task<Message> {
+        let (Some(dir), Some(rt)) = (data_dir(), RUNTIME.get()) else {
+            return Task::none();
+        };
+        let YtDlpState::Found(path) = &self.ytdlp else {
+            return Task::none();
+        };
+        YtDlp::remove_old_onedirs(&dir);
+        let ytdlp = YtDlp::new(path);
+        let client = self.http.clone();
+        let job = rt.spawn(async move {
+            ytdlp
+                .refresh_onedir(&client, &dir)
+                .await
+                .map(|y| y.map(|y| y.path().to_path_buf()))
+                .map_err(|e| e.to_string())
+        });
+        Task::perform(
+            async move { job.await.unwrap_or_else(|e| Err(e.to_string())) },
+            Message::YtDlpRefreshed,
+        )
     }
 
     fn download_ytdlp(&mut self) -> Task<Message> {

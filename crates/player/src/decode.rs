@@ -22,7 +22,7 @@ use symphonia::core::probe::Hint;
 use symphonia::core::units::Time;
 
 /// Audio acumulado antes de empezar a sonar.
-pub(crate) const PREBUFFER: Duration = Duration::from_secs(2);
+pub(crate) const PREBUFFER: Duration = Duration::from_secs(1);
 /// Máximo de audio decodificado por adelantado.
 const MAX_BUFFER: Duration = Duration::from_secs(5);
 /// Muestras que el callback de audio toma por vez del buffer compartido.

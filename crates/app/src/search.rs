@@ -26,7 +26,13 @@ const ARTIST_SONGS: usize = 20;
 /// Tope de canciones al importar una playlist de YouTube.
 const PLAYLIST_MAX: usize = 2000;
 /// Espera desde la última tecla antes de buscar solo.
-const TYPING_PAUSE: std::time::Duration = std::time::Duration::from_millis(450);
+const TYPING_PAUSE: std::time::Duration = std::time::Duration::from_millis(400);
+/// Espera desde la última tecla antes de pedir sugerencias.
+const SUGGEST_PAUSE: std::time::Duration = std::time::Duration::from_millis(120);
+/// Sugerencias que se muestran.
+const SUGGESTIONS: usize = 6;
+/// Búsquedas recientes que quedan en memoria (volver a una es instantáneo).
+const RECENT: usize = 20;
 /// Letras mínimas para buscar mientras se escribe.
 const MIN_QUERY: usize = 2;
 
@@ -59,6 +65,31 @@ pub struct SearchState {
     pub results: Option<(String, Results)>,
     pub opening: bool,
     pub preview: Option<Preview>,
+    /// Sugerencias de YouTube para lo que se escribió (texto, sugerencias).
+    pub suggestions: Option<(String, Vec<String>)>,
+    /// Búsquedas recientes, la más nueva al final.
+    pub recent: std::collections::VecDeque<(String, Results)>,
+}
+
+impl SearchState {
+    /// Resultados guardados de una búsqueda reciente.
+    fn cached(&self, q: &str) -> Option<&Results> {
+        let key = q.to_lowercase();
+        self.recent
+            .iter()
+            .rev()
+            .find(|(k, _)| *k == key)
+            .map(|(_, r)| r)
+    }
+
+    fn remember(&mut self, q: &str, r: &Results) {
+        let key = q.to_lowercase();
+        self.recent.retain(|(k, _)| *k != key);
+        self.recent.push_back((key, r.clone()));
+        while self.recent.len() > RECENT {
+            self.recent.pop_front();
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -67,6 +98,11 @@ pub enum SearchMsg {
     Input(String),
     /// Pasó un rato sin escribir (número de tecla).
     Paused(u64),
+    /// Pasó un ratito sin escribir: pedir sugerencias (número de tecla).
+    Suggest(u64),
+    Suggested(String, Vec<String>),
+    /// Se eligió una sugerencia.
+    Pick(String),
     Submit,
     Done(String, Results),
     /// Reproducir la canción `i` de los resultados (cola sin fin).
@@ -146,13 +182,67 @@ impl Surco {
                 let Some(rt) = RUNTIME.get() else {
                     return Task::none();
                 };
+                // Volver a algo ya buscado: los resultados aparecen ya.
+                let q = self.search.query.trim().to_owned();
+                if let Some(r) = self.search.cached(&q).cloned() {
+                    self.search.results = Some((q, r));
+                }
                 let wait = rt.spawn(tokio::time::sleep(TYPING_PAUSE));
+                let short = rt.spawn(tokio::time::sleep(SUGGEST_PAUSE));
+                return Task::batch([
+                    Task::perform(
+                        async move {
+                            let _ = short.await;
+                        },
+                        move |()| Message::Search(SearchMsg::Suggest(n)),
+                    ),
+                    Task::perform(
+                        async move {
+                            let _ = wait.await;
+                        },
+                        move |()| Message::Search(SearchMsg::Paused(n)),
+                    ),
+                ]);
+            }
+            SearchMsg::Suggest(n) => {
+                let q = self.search.query.trim().to_owned();
+                if n != self.search.typed || q.chars().count() < MIN_QUERY {
+                    return Task::none();
+                }
+                let Some(rt) = RUNTIME.get() else {
+                    return Task::none();
+                };
+                let lang = if crate::i18n::en() { "en" } else { "es" };
+                let query = q.clone();
+                let job =
+                    rt.spawn(
+                        async move { surco_provider::innertube::suggestions(&query, lang).await },
+                    );
                 return Task::perform(
                     async move {
-                        let _ = wait.await;
+                        match job.await {
+                            Ok(Ok(list)) => list,
+                            _ => Vec::new(),
+                        }
                     },
-                    move |()| Message::Search(SearchMsg::Paused(n)),
+                    move |list| Message::Search(SearchMsg::Suggested(q.clone(), list)),
                 );
+            }
+            SearchMsg::Suggested(q, list) => {
+                if q == self.search.query.trim() {
+                    let list = list
+                        .into_iter()
+                        .filter(|s| !s.eq_ignore_ascii_case(&q))
+                        .take(SUGGESTIONS)
+                        .collect();
+                    self.search.suggestions = Some((q, list));
+                }
+            }
+            SearchMsg::Pick(q) => {
+                self.search.query = q;
+                self.search.typed += 1;
+                self.search.suggestions = None;
+                return self.run_search();
             }
             SearchMsg::Paused(n) => {
                 let q = self.search.query.trim();
@@ -162,10 +252,16 @@ impl Surco {
                     return self.run_search();
                 }
             }
-            SearchMsg::Submit => return self.run_search(),
+            SearchMsg::Submit => {
+                self.search.suggestions = None;
+                return self.run_search();
+            }
             SearchMsg::Done(q, results) => {
                 if self.search.searching.as_deref() == Some(q.as_str()) {
                     self.search.searching = None;
+                }
+                if results.errors.is_empty() {
+                    self.search.remember(&q, &results);
                 }
                 if q == self.search.query.trim() {
                     let covers: Vec<String> = results.songs.iter().map(|r| r.id.clone()).collect();
@@ -371,8 +467,13 @@ impl Surco {
             });
             return Task::none();
         };
-        self.search.searching = Some(q.clone());
         self.search.preview = None;
+        if let Some(r) = self.search.cached(&q).cloned() {
+            self.search.searching = None;
+            self.search.results = Some((q, r));
+            return Task::none();
+        }
+        self.search.searching = Some(q.clone());
         let query = q.clone();
         let job = rt.spawn(async move {
             let y = provider.ytdlp();
@@ -507,6 +608,33 @@ impl Surco {
         ]
         .spacing(10)
         .align_y(Alignment::Center);
+
+        // Sugerencias para lo que se está escribiendo (Enter las esconde).
+        let q = self.search.query.trim();
+        let chips = self
+            .search
+            .suggestions
+            .as_ref()
+            .filter(|(sq, list)| sq == q && !list.is_empty() && self.search.preview.is_none())
+            .map(|(_, list)| {
+                row(list.iter().map(|s| {
+                    button(
+                        text(s.clone())
+                            .size(theme::SIZE_S)
+                            .wrapping(text::Wrapping::None),
+                    )
+                    .on_press(Message::Search(SearchMsg::Pick(s.clone())))
+                    .padding([4, 10])
+                    .style(theme::choice_button(false))
+                    .into()
+                }))
+                .spacing(6)
+                .wrap()
+            });
+        let input: Element<'_, Message> = match chips {
+            Some(chips) => column![input, chips].spacing(10).into(),
+            None => input.into(),
+        };
 
         let body: Element<'_, Message> = if let Some(p) = &self.search.preview {
             self.view_preview(p)
