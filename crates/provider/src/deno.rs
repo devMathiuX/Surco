@@ -72,64 +72,127 @@ pub async fn download_deno(client: &reqwest::Client, dir: &Path) -> Result<PathB
     Ok(dest)
 }
 
-/// Saca el archivo `name` de un zip (guardado o comprimido con deflate),
-/// leyendo el directorio central del final.
-pub(crate) fn extract(zip: &[u8], name: &str) -> Result<Vec<u8>> {
-    let bad = |what: &str| Error::Parse(format!("zip inválido: {what}"));
-    let u16_at = |at: usize| -> Result<usize> {
-        zip.get(at..at + 2)
-            .map(|b| usize::from(u16::from_le_bytes([b[0], b[1]])))
-            .ok_or_else(|| bad("corto"))
-    };
-    let u32_at = |at: usize| -> Result<usize> {
-        zip.get(at..at + 4)
-            .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]) as usize)
-            .ok_or_else(|| bad("corto"))
-    };
+/// Una entrada del directorio central de un zip.
+struct Entry<'a> {
+    name: &'a [u8],
+    method: usize,
+    compressed: usize,
+    size: usize,
+    local: usize,
+    /// Permisos de Unix (los 16 bits altos de los atributos externos).
+    mode: u32,
+}
 
+fn bad(what: &str) -> Error {
+    Error::Parse(format!("zip inválido: {what}"))
+}
+
+fn u16_at(zip: &[u8], at: usize) -> Result<usize> {
+    zip.get(at..at + 2)
+        .map(|b| usize::from(u16::from_le_bytes([b[0], b[1]])))
+        .ok_or_else(|| bad("corto"))
+}
+
+fn u32_at(zip: &[u8], at: usize) -> Result<usize> {
+    zip.get(at..at + 4)
+        .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]) as usize)
+        .ok_or_else(|| bad("corto"))
+}
+
+/// Lee el directorio central del final del zip.
+fn entries(zip: &[u8]) -> Result<Vec<Entry<'_>>> {
     // Fin del directorio central: firma PK\x05\x06, buscada desde el final.
     let eocd = (0..zip.len().saturating_sub(21))
         .rev()
         .find(|&i| zip[i..].starts_with(b"PK\x05\x06"))
         .ok_or_else(|| bad("sin directorio central"))?;
-    let entries = u16_at(eocd + 10)?;
-    let mut at = u32_at(eocd + 16)?;
-    for _ in 0..entries {
-        if u32_at(at)? != 0x0201_4b50 {
+    let count = u16_at(zip, eocd + 10)?;
+    let mut at = u32_at(zip, eocd + 16)?;
+    let mut out = Vec::with_capacity(count);
+    for _ in 0..count {
+        if u32_at(zip, at)? != 0x0201_4b50 {
             return Err(bad("entrada rota"));
         }
-        let method = u16_at(at + 10)?;
-        let compressed = u32_at(at + 20)?;
-        let size = u32_at(at + 24)?;
-        let name_len = u16_at(at + 28)?;
-        let extra_len = u16_at(at + 30)?;
-        let comment_len = u16_at(at + 32)?;
-        let local = u32_at(at + 42)?;
-        let entry = zip
-            .get(at + 46..at + 46 + name_len)
-            .ok_or_else(|| bad("nombre"))?;
+        let name_len = u16_at(zip, at + 28)?;
+        let extra_len = u16_at(zip, at + 30)?;
+        let comment_len = u16_at(zip, at + 32)?;
+        out.push(Entry {
+            method: u16_at(zip, at + 10)?,
+            compressed: u32_at(zip, at + 20)?,
+            size: u32_at(zip, at + 24)?,
+            mode: (u32_at(zip, at + 38)? >> 16) as u32,
+            local: u32_at(zip, at + 42)?,
+            name: zip
+                .get(at + 46..at + 46 + name_len)
+                .ok_or_else(|| bad("nombre"))?,
+        });
         at += 46 + name_len + extra_len + comment_len;
-        if entry != name.as_bytes() {
+    }
+    Ok(out)
+}
+
+/// Datos descomprimidos de una entrada.
+fn read_entry(zip: &[u8], e: &Entry<'_>) -> Result<Vec<u8>> {
+    if u32_at(zip, e.local)? != 0x0403_4b50 {
+        return Err(bad("encabezado local"));
+    }
+    let start = e.local + 30 + u16_at(zip, e.local + 26)? + u16_at(zip, e.local + 28)?;
+    let data = zip
+        .get(start..start + e.compressed)
+        .ok_or_else(|| bad("datos"))?;
+    match e.method {
+        0 => Ok(data.to_vec()),
+        8 => {
+            let mut out = Vec::with_capacity(e.size);
+            flate2::read::DeflateDecoder::new(data).read_to_end(&mut out)?;
+            Ok(out)
+        }
+        m => Err(bad(&format!("compresión {m}"))),
+    }
+}
+
+/// Saca el archivo `name` de un zip (guardado o comprimido con deflate),
+/// leyendo el directorio central del final.
+pub(crate) fn extract(zip: &[u8], name: &str) -> Result<Vec<u8>> {
+    let entry = entries(zip)?
+        .into_iter()
+        .find(|e| e.name == name.as_bytes())
+        .ok_or_else(|| bad(&format!("no tiene {name}")))?;
+    read_entry(zip, &entry)
+}
+
+/// Descomprime todo el zip en `dir` (que tiene que existir). Rechaza rutas
+/// que se salgan de `dir`. Devuelve cuántos archivos escribió.
+pub(crate) fn extract_all(zip: &[u8], dir: &Path) -> Result<usize> {
+    let mut files = 0;
+    for e in entries(zip)? {
+        let name = std::str::from_utf8(e.name).map_err(|_| bad("nombre no UTF-8"))?;
+        let rel = Path::new(name);
+        let safe = rel
+            .components()
+            .all(|c| matches!(c, std::path::Component::Normal(_)));
+        if !safe || name.contains('\\') {
+            return Err(bad(&format!("ruta peligrosa: {name}")));
+        }
+        let dest = dir.join(rel);
+        if name.ends_with('/') {
+            std::fs::create_dir_all(&dest)?;
             continue;
         }
-        if u32_at(local)? != 0x0403_4b50 {
-            return Err(bad("encabezado local"));
+        if let Some(parent) = dest.parent() {
+            std::fs::create_dir_all(parent)?;
         }
-        let start = local + 30 + u16_at(local + 26)? + u16_at(local + 28)?;
-        let data = zip
-            .get(start..start + compressed)
-            .ok_or_else(|| bad("datos"))?;
-        return match method {
-            0 => Ok(data.to_vec()),
-            8 => {
-                let mut out = Vec::with_capacity(size);
-                flate2::read::DeflateDecoder::new(data).read_to_end(&mut out)?;
-                Ok(out)
-            }
-            m => Err(bad(&format!("compresión {m}"))),
-        };
+        std::fs::write(&dest, read_entry(zip, &e)?)?;
+        #[cfg(unix)]
+        if e.mode & 0o111 != 0 {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(e.mode & 0o777))?;
+        }
+        #[cfg(not(unix))]
+        let _ = e.mode;
+        files += 1;
     }
-    Err(bad(&format!("no tiene {name}")))
+    Ok(files)
 }
 
 #[cfg(test)]
@@ -146,6 +209,30 @@ mod tests {
         assert_eq!(extract(ZIP, "README.txt").unwrap(), b"hola");
         assert!(extract(ZIP, "deno.exe").is_err());
         assert!(extract(b"no es un zip", "deno").is_err());
+    }
+
+    #[test]
+    fn extracts_everything() {
+        let dir = std::env::temp_dir().join(format!("surco-unzip-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        assert_eq!(extract_all(ZIP, &dir).unwrap(), 2);
+        assert_eq!(std::fs::read(dir.join("README.txt")).unwrap(), b"hola");
+        assert!(dir.join("deno").is_file());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Con el zip real de yt-dlp: `SURCO_YTDLP_ZIP=yt-dlp_linux.zip
+    /// cargo test -p surco-provider real_ytdlp_zip -- --ignored`.
+    #[test]
+    #[ignore = "necesita el zip real de yt-dlp"]
+    fn real_ytdlp_zip() {
+        let zip = std::fs::read(std::env::var("SURCO_YTDLP_ZIP").unwrap()).unwrap();
+        let dir = std::env::temp_dir().join(format!("surco-ytdlp-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        assert!(extract_all(&zip, &dir).unwrap() > 100);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Con un zip real: `SURCO_DENO_ZIP=deno-x86_64-pc-windows-msvc.zip

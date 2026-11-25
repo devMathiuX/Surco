@@ -276,3 +276,30 @@ fn song_after_a_failed_load_plays() {
         });
     }
 }
+
+/// Retomar la última canción: carga en pausa donde había quedado y suena
+/// desde ahí al darle a play.
+#[test]
+fn load_at_resumes_paused_where_it_was() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let p = surco_player::spawn(None, rt.handle().clone(), Options { null_output: true }).unwrap();
+    p.send(Command::LoadAt {
+        source: Source::File(fixture("tone.m4a")),
+        at: Duration::from_secs(4),
+        paused: true,
+    });
+    let s = wait_for(&p, "Paused", Duration::from_secs(5), |s| {
+        s.state == PlayerState::Paused
+    });
+    assert!(
+        s.position >= Duration::from_secs(4) && s.position < Duration::from_millis(4500),
+        "posición {:?}",
+        s.position
+    );
+    std::thread::sleep(Duration::from_millis(300));
+    assert_eq!(p.status().state, PlayerState::Paused);
+    p.send(Command::Play);
+    wait_for(&p, "suena desde ~4 s", Duration::from_secs(3), |s| {
+        s.state == PlayerState::Playing && s.position > Duration::from_millis(4200)
+    });
+}

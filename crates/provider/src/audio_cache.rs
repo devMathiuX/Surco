@@ -23,6 +23,9 @@ pub struct AudioCache {
     limit: u64,
     /// Videos que no se borran solos (compartido entre las copias).
     pinned: Arc<Mutex<HashSet<String>>>,
+    /// La última canción escuchada: tampoco se borra (para retomarla al
+    /// abrir la app sin esperar).
+    kept: Arc<Mutex<Option<String>>>,
 }
 
 /// Uso actual de la caché.
@@ -45,6 +48,15 @@ impl AudioCache {
             dir: dir.into(),
             limit,
             pinned: Arc::default(),
+            kept: Arc::default(),
+        }
+    }
+
+    /// Cambia la canción que se guarda para retomar al abrir. La anterior
+    /// queda como precarga común (se borra al cerrar).
+    pub fn keep(&self, video: Option<&str>) {
+        if let Ok(mut k) = self.kept.lock() {
+            *k = video.map(str::to_owned);
         }
     }
 
@@ -60,6 +72,7 @@ impl AudioCache {
 
     pub fn is_pinned(&self, video: &str) -> bool {
         self.pinned.lock().is_ok_and(|p| p.contains(video))
+            || self.kept.lock().is_ok_and(|k| k.as_deref() == Some(video))
     }
 
     /// Si el archivo es de un video fijado.
@@ -196,6 +209,22 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("surco-audio-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         dir
+    }
+
+    #[test]
+    fn kept_song_survives_clear() {
+        let dir = temp_dir("kept");
+        let c = AudioCache::new(&dir, DEFAULT_LIMIT);
+        c.put("aaaaaaaaaaa", b"uno").unwrap();
+        c.put("bbbbbbbbbbb", b"dos").unwrap();
+        c.keep(Some("aaaaaaaaaaa"));
+        c.clear();
+        assert!(c.contains("aaaaaaaaaaa"));
+        assert!(!c.contains("bbbbbbbbbbb"));
+        c.keep(None);
+        c.clear();
+        assert!(!c.contains("aaaaaaaaaaa"));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

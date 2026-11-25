@@ -125,3 +125,22 @@ async fn downloads_whole_file_in_chunks() {
         .unwrap_err();
     assert!(matches!(err, Error::Expired), "{err}");
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn hands_over_the_whole_file_when_done() {
+    // Grande (varios bloques) y chico (entra en el primero: ya está completo).
+    for len in [2 * 1024 * 1024 + 7, 1000] {
+        let data = sample(len);
+        let (url, _) = serve(Arc::clone(&data), false).await;
+        let stream = HttpStream::open(reqwest::Client::new(), url).await.unwrap();
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        stream.on_complete(move |bytes| {
+            let _ = tx.send(bytes.to_vec());
+        });
+        let got = tokio::time::timeout(std::time::Duration::from_secs(10), rx)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(got, *data);
+    }
+}

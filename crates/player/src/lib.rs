@@ -83,6 +83,13 @@ fn is_video_id(s: &str) -> bool {
 #[derive(Debug, Clone)]
 pub enum Command {
     Load(Source),
+    /// Cargar desde `at` y quedar en pausa o sonando (retomar la última
+    /// canción al abrir la app).
+    LoadAt {
+        source: Source,
+        at: Duration,
+        paused: bool,
+    },
     Play,
     Pause,
     TogglePause,
@@ -387,12 +394,17 @@ impl Engine {
             Command::Load(source) if self.next.as_ref().is_some_and(|n| n.source == source) => {
                 self.promote_next(false);
             }
-            Command::Load(source) => {
+            Command::Load(source) => self.command(Command::LoadAt {
+                source,
+                at: Duration::ZERO,
+                paused: false,
+            }),
+            Command::LoadAt { source, at, paused } => {
                 self.unload();
-                self.status.position = Duration::ZERO;
+                self.status.position = at;
                 self.status.duration = None;
                 self.status.title = None;
-                self.paused = false;
+                self.paused = paused;
                 self.status.source = Some(source.clone());
                 self.load(source, 0, false);
             }
@@ -894,12 +906,25 @@ async fn open_source(
                 .await
                 {
                     Ok(stream) => {
+                        // Bajada entera, queda en la caché de disco: si se
+                        // vuelve a escuchar (o se retoma al abrir) no espera.
+                        if let Some(cache) = provider.audio_cache().cloned() {
+                            let video = video.clone();
+                            stream.on_complete(move |data| {
+                                if !cache.contains(&video) {
+                                    match cache.put(&video, data) {
+                                        Ok(_) => tracing::debug!(video, "audio escuchado guardado en disco"),
+                                        Err(e) => tracing::debug!(video, error = %e, "no se pudo guardar el audio escuchado"),
+                                    }
+                                }
+                            });
+                        }
                         return Ok(Opened {
                             source: Box::new(StreamSource(stream)),
                             ext: Some(info.ext),
                             title: info.title,
                             duration: info.duration,
-                        })
+                        });
                     }
                     Err(surco_provider::Error::Expired) if attempt < EXPIRED_RETRIES => {
                         tracing::info!(attempt, "URL rechazada al abrir, re-resolviendo");

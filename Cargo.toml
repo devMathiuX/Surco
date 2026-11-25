@@ -12,7 +12,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.6.2"
+version = "0.6.3"
 edition = "2021"
 rust-version = "1.88"
 license = "MIT"
@@ -98,3 +98,14 @@ opt-level = 3
 [profile.release-z]
 inherits = "release"
 opt-level = "z"
+
+# Los crates propios que no están en el camino del audio también van con
+# "s" (la app arma la interfaz, pero el dibujado lo hacen iced y tiny-skia).
+[profile.release.package.surco-provider]
+opt-level = "s"
+
+[profile.release.package.surco-resolver]
+opt-level = "s"
+
+[profile.release.package.surco-storage]
+opt-level = "s"
