@@ -124,6 +124,9 @@ impl YtDlp {
                 js.iter().map(String::as_str).chain([
                     "--no-playlist",
                     "--no-warnings",
+                    // La URL queda atada a la IP: la descarga también va por
+                    // IPv4 (ver `stream_client`).
+                    "--force-ipv4",
                     "-f",
                     AUDIO_FORMAT,
                     "--print",
@@ -463,6 +466,15 @@ pub fn search_path() -> Option<OsString> {
     if cfg!(unix) {
         if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
             for sub in [".deno/bin", ".bun/bin", ".local/bin"] {
+                dirs.push(home.join(sub));
+            }
+        }
+    }
+    // En Windows, el instalador de deno lo pone en %USERPROFILE%\.deno\bin y
+    // cambia el PATH del usuario, pero Surco puede haberse abierto antes.
+    if cfg!(windows) {
+        if let Some(home) = std::env::var_os("USERPROFILE").map(PathBuf::from) {
+            for sub in [".deno\\bin", ".bun\\bin"] {
                 dirs.push(home.join(sub));
             }
         }

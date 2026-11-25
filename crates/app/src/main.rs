@@ -441,7 +441,7 @@ impl Surco {
             spotify_creds: None,
             spotify_source: spotify_keys::KeySource::None,
             keys_form: spotify_keys::KeysForm::default(),
-            http: HttpClient::new(),
+            http: surco_provider::stream_client(),
             playlists: Vec::new(),
             selected: None,
             import_input: String::new(),

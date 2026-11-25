@@ -13,6 +13,19 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 pub use audio_cache::{is_video_id, AudioCache, CacheUsage, DEFAULT_LIMIT as AUDIO_CACHE_LIMIT};
+/// Cliente HTTP para bajar el audio de YouTube.
+///
+/// Va siempre por IPv4, igual que yt-dlp (`--force-ipv4`): las URLs de
+/// googlevideo quedan atadas a la IP que las pidió (`ip=` en la URL). Con
+/// IPv6, Windows usa direcciones temporales que cambian, y si yt-dlp y la
+/// descarga salen por direcciones distintas YouTube contesta 403.
+pub fn stream_client() -> HttpClient {
+    HttpClient::builder()
+        .local_address(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED))
+        .build()
+        .unwrap_or_default()
+}
+
 pub use http_stream::{download_all, download_all_with, HttpStream, StreamProgress};
 pub use reqwest::Client as HttpClient;
 pub use ytdlp::{Listing, SearchResult, StreamInfo, YtDlp, AUDIO_FORMAT, BINARY_NAME};

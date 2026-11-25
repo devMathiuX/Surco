@@ -279,7 +279,7 @@ impl Engine {
         }
         Self {
             provider,
-            client: HttpClient::new(),
+            client: surco_provider::stream_client(),
             rt,
             tx,
             status_tx,
