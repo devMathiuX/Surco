@@ -52,6 +52,9 @@ const SEEK_STEP: f32 = 5.0;
 /// Runtime de tokio para la red y los procesos hijos (yt-dlp).
 static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
 
+/// Caché de audio en uso, para borrar la precarga al cerrar Surco.
+static AUDIO_CACHE: std::sync::Mutex<Option<AudioCache>> = std::sync::Mutex::new(None);
+
 fn main() -> anyhow::Result<()> {
     // El guard vacía el log en disco al salir.
     let _log_guard = init_logging();
@@ -76,6 +79,14 @@ fn main() -> anyhow::Result<()> {
             ..window::Settings::default()
         })
         .run()?;
+
+    // La precarga dura lo que dura la sesión: al cerrar se borra todo menos
+    // las playlists descargadas (al abrir se vuelve a limpiar, por si Surco
+    // se cerró de golpe).
+    if let Some(cache) = AUDIO_CACHE.lock().ok().and_then(|c| c.clone()) {
+        cache.clear();
+        tracing::info!("precarga de la sesión borrada");
+    }
 
     Ok(())
 }
@@ -148,7 +159,13 @@ fn audio_cache_dir() -> Option<PathBuf> {
 fn make_provider(ytdlp: YtDlp) -> Arc<Provider> {
     let p = Provider::new(ytdlp);
     Arc::new(match audio_cache_dir() {
-        Some(dir) => p.with_audio_cache(AudioCache::new(dir, AUDIO_CACHE_LIMIT)),
+        Some(dir) => {
+            let cache = AudioCache::new(dir, AUDIO_CACHE_LIMIT);
+            if let Ok(mut slot) = AUDIO_CACHE.lock() {
+                *slot = Some(cache.clone());
+            }
+            p.with_audio_cache(cache)
+        }
         None => p,
     })
 }
@@ -343,6 +360,8 @@ enum Message {
     StartRadio,
     RadioLoaded(bool, radio::RadioResult),
     Precached(String, Result<Match, String>),
+    /// Termina la pausa de la precarga después de un rechazo de YouTube.
+    PrecacheResume,
     /// Llegaron parecidas para la cola sin fin (semilla, videos).
     QueueExtended(String, Result<Vec<surco_provider::SearchResult>, String>),
     /// Mostrar u ocultar la cola.
@@ -614,6 +633,7 @@ impl Surco {
             }
             Message::RadioLoaded(autostart, result) => return self.on_radio(autostart, result),
             Message::Precached(key, result) => return self.on_precached(key, result),
+            Message::PrecacheResume => self.resume_precache(),
             Message::QueueExtended(seed, result) => return self.on_extended(seed, result),
             Message::ToggleQueue => {
                 self.drag = None;

@@ -43,6 +43,9 @@ pub struct StreamInfo {
     pub ext: String,
     pub title: Option<String>,
     pub duration: Option<Duration>,
+    /// `User-Agent` con el que yt-dlp pidió la URL: hay que mandar el mismo
+    /// al bajarla, o YouTube puede contestar 403.
+    pub user_agent: Option<String>,
 }
 
 impl StreamInfo {
@@ -129,6 +132,8 @@ impl YtDlp {
                     "%(duration)s",
                     "--print",
                     "%(title)s",
+                    "--print",
+                    "%(http_headers)j",
                     "--print",
                     "%(url)s",
                     "--",
@@ -376,14 +381,20 @@ fn search_result(v: &serde_json::Value) -> Option<SearchResult> {
     })
 }
 
-/// Parsea la salida de `--print ext --print duration --print title --print url`.
+/// Parsea la salida de `--print ext --print duration --print title
+/// --print http_headers --print url` (también sin los encabezados). Los
+/// encabezados vienen en JSON; de ahí sale el `User-Agent`.
 fn parse_stream_info(out: &str) -> Result<StreamInfo> {
     let lines: Vec<&str> = out.lines().map(str::trim).collect();
-    let [ext, duration, title, url] = lines.as_slice() else {
-        return Err(Error::Parse(format!(
-            "se esperaban 4 líneas de yt-dlp, llegaron {}",
-            lines.len()
-        )));
+    let (ext, duration, title, user_agent, url) = match lines.as_slice() {
+        [ext, duration, title, ua, url] => (ext, duration, title, Some(ua), url),
+        [ext, duration, title, url] => (ext, duration, title, None, url),
+        _ => {
+            return Err(Error::Parse(format!(
+                "se esperaban 5 líneas de yt-dlp, llegaron {}",
+                lines.len()
+            )))
+        }
     };
     if !url.starts_with("http") {
         return Err(Error::Parse(format!("URL inválida: {url}")));
@@ -391,6 +402,7 @@ fn parse_stream_info(out: &str) -> Result<StreamInfo> {
     let not_na = |s: &&str| !s.is_empty() && *s != "NA";
     Ok(StreamInfo {
         url: (*url).to_owned(),
+        user_agent: user_agent.and_then(|h| user_agent_of(h)),
         ext: (*ext).to_owned(),
         title: Some(*title).filter(not_na).map(str::to_owned),
         duration: Some(*duration)
@@ -399,6 +411,13 @@ fn parse_stream_info(out: &str) -> Result<StreamInfo> {
             .filter(|d| d.is_finite() && *d >= 0.0)
             .map(Duration::from_secs_f64),
     })
+}
+
+/// `User-Agent` del JSON de `http_headers` que imprime yt-dlp.
+fn user_agent_of(headers: &str) -> Option<String> {
+    let v: serde_json::Value = serde_json::from_str(headers).ok()?;
+    let ua = v.get("User-Agent")?.as_str()?.trim();
+    (!ua.is_empty()).then(|| ua.to_owned())
 }
 
 /// Desde fines de 2025, yt-dlp necesita un runtime de JavaScript externo para
@@ -521,8 +540,9 @@ mod tests {
 
     #[test]
     fn parses_stream_info() {
-        let out = "m4a\n212.5\nRick Astley - Never Gonna Give You Up\nhttps://rr1.googlevideo.com/x?y=1\n";
+        let out = "m4a\n212.5\nRick Astley - Never Gonna Give You Up\n{\"User-Agent\": \"Mozilla/5.0 (X11)\", \"Accept\": \"*/*\"}\nhttps://rr1.googlevideo.com/x?y=1\n";
         let info = parse_stream_info(out).unwrap();
+        assert_eq!(info.user_agent.as_deref(), Some("Mozilla/5.0 (X11)"));
         assert_eq!(info.ext, "m4a");
         assert!(info.is_supported());
         assert_eq!(info.duration, Some(Duration::from_millis(212_500)));
@@ -536,6 +556,7 @@ mod tests {
     #[test]
     fn parses_missing_fields_as_none() {
         let info = parse_stream_info("webm\nNA\nNA\nhttps://a/b\n").unwrap();
+        assert_eq!(info.user_agent, None);
         assert_eq!(info.duration, None);
         assert_eq!(info.title, None);
         assert!(!info.is_supported());

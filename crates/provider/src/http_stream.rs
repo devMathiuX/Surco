@@ -11,7 +11,7 @@ use std::io::{self, Read, Seek, SeekFrom};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::Duration;
 
-use reqwest::header::{CONTENT_LENGTH, CONTENT_RANGE, RANGE};
+use reqwest::header::{CONTENT_LENGTH, CONTENT_RANGE, RANGE, USER_AGENT};
 use reqwest::StatusCode;
 use tokio::task::JoinHandle;
 
@@ -73,7 +73,18 @@ impl HttpStream {
     /// lanza la descarga del resto en segundo plano. Debe llamarse dentro de
     /// un runtime de tokio.
     pub async fn open(client: reqwest::Client, url: String) -> Result<Self> {
-        let first = fetch_range(&client, &url, 0, CHUNK as u64 - 1).await?;
+        Self::open_with(client, url, None).await
+    }
+
+    /// Como [`open`](Self::open), mandando el `User-Agent` con el que yt-dlp
+    /// resolvió la URL (YouTube puede rechazar con 403 la URL si no coincide).
+    pub async fn open_with(
+        client: reqwest::Client,
+        url: String,
+        user_agent: Option<String>,
+    ) -> Result<Self> {
+        let ua = user_agent.as_deref();
+        let first = fetch_range(&client, &url, ua, 0, CHUNK as u64 - 1).await?;
         let len = first.total;
         let chunks = (len as usize).div_ceil(CHUNK);
 
@@ -98,7 +109,7 @@ impl HttpStream {
             }),
             cond: Condvar::new(),
         });
-        let task = tokio::spawn(download(client, url, Arc::clone(&shared), len));
+        let task = tokio::spawn(download(client, url, user_agent, Arc::clone(&shared), len));
         tracing::debug!(len, chunks, "stream HTTP abierto");
         Ok(Self {
             shared,
@@ -196,7 +207,13 @@ impl Seek for HttpStream {
 
 /// Tarea de descarga: baja los bloques que faltan, priorizando el que pida
 /// el lector.
-async fn download(client: reqwest::Client, url: String, shared: Arc<Shared>, len: u64) {
+async fn download(
+    client: reqwest::Client,
+    url: String,
+    user_agent: Option<String>,
+    shared: Arc<Shared>,
+    len: u64,
+) {
     let mut cursor = 0usize;
     loop {
         let next = {
@@ -215,7 +232,7 @@ async fn download(client: reqwest::Client, url: String, shared: Arc<Shared>, len
 
         let start = (next * CHUNK) as u64;
         let end = (start + CHUNK as u64).min(len) - 1;
-        let result = fetch_with_retries(&client, &url, start, end).await;
+        let result = fetch_with_retries(&client, &url, user_agent.as_deref(), start, end).await;
 
         let Ok(mut state) = shared.lock() else { return };
         match result {
@@ -247,14 +264,23 @@ async fn download(client: reqwest::Client, url: String, shared: Arc<Shared>, len
 
 /// Baja el archivo entero a memoria, en bloques `Range` uno detrás de otro.
 pub async fn download_all(client: &reqwest::Client, url: &str) -> Result<Vec<u8>> {
-    let first = fetch_range(client, url, 0, CHUNK as u64 - 1).await?;
+    download_all_with(client, url, None).await
+}
+
+/// Como [`download_all`], con el `User-Agent` de yt-dlp.
+pub async fn download_all_with(
+    client: &reqwest::Client,
+    url: &str,
+    ua: Option<&str>,
+) -> Result<Vec<u8>> {
+    let first = fetch_range(client, url, ua, 0, CHUNK as u64 - 1).await?;
     let len = first.total;
     let mut data = first.body;
     // Si el servidor ignoró el Range, ya vino todo.
     while (data.len() as u64) < len {
         let start = data.len() as u64;
         let end = (start + CHUNK as u64).min(len) - 1;
-        let body = fetch_with_retries(client, url, start, end).await?;
+        let body = fetch_with_retries(client, url, ua, start, end).await?;
         if body.is_empty() {
             return Err(Error::Parse("el servidor cortó la descarga".into()));
         }
@@ -277,12 +303,13 @@ fn pick_next(have: &[bool], want: Option<usize>, cursor: usize) -> Option<usize>
 async fn fetch_with_retries(
     client: &reqwest::Client,
     url: &str,
+    ua: Option<&str>,
     start: u64,
     end: u64,
 ) -> Result<Vec<u8>> {
     let mut attempt = 0;
     loop {
-        match fetch_range(client, url, start, end).await {
+        match fetch_range(client, url, ua, start, end).await {
             Ok(r) => return Ok(r.body),
             Err(e @ (Error::Expired | Error::Status(_))) => return Err(e),
             Err(e) if attempt + 1 >= RETRIES => return Err(e),
@@ -303,14 +330,17 @@ struct RangeResponse {
 async fn fetch_range(
     client: &reqwest::Client,
     url: &str,
+    ua: Option<&str>,
     start: u64,
     end: u64,
 ) -> Result<RangeResponse> {
-    let resp = client
+    let mut req = client
         .get(url)
-        .header(RANGE, format!("bytes={start}-{end}"))
-        .send()
-        .await?;
+        .header(RANGE, format!("bytes={start}-{end}"));
+    if let Some(ua) = ua {
+        req = req.header(USER_AGENT, ua);
+    }
+    let resp = req.send().await?;
     let status = resp.status();
     if status == StatusCode::FORBIDDEN || status == StatusCode::GONE {
         return Err(Error::Expired);
