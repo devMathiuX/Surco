@@ -333,6 +333,7 @@ impl Surco {
     /// Aviso si falta yt-dlp (con el botón para bajarlo) o si el audio no arrancó.
     pub(crate) fn view_ytdlp_banner(&self) -> Option<Element<'_, Message>> {
         let content: Element<'_, Message> = match &self.ytdlp {
+            YtDlpState::Found(_) if self.fatal.is_none() => self.view_deno_banner()?,
             YtDlpState::Found(_) => text(trf!(
                 "No se pudo abrir la salida de audio: {}",
                 "Couldn't open the audio output: {}",
@@ -383,5 +384,50 @@ impl Surco {
                 .style(theme::card)
                 .into(),
         )
+    }
+
+    /// Aviso si falta deno, con el botón para instalarlo.
+    fn view_deno_banner(&self) -> Option<Element<'_, Message>> {
+        use crate::DenoState;
+        let hint = || {
+            text(tr!(
+                "Falta deno: yt-dlp lo necesita para que YouTube no rechace las canciones.",
+                "deno is missing: yt-dlp needs it so YouTube doesn't reject songs."
+            ))
+            .size(theme::SIZE_S)
+            .width(Length::Fill)
+        };
+        let install = |label: &'static str| {
+            button(text(label).size(theme::SIZE_S))
+                .on_press(Message::DownloadDeno)
+                .padding([6, 14])
+                .style(theme::primary_button)
+        };
+        Some(match &self.deno {
+            DenoState::Ok => return None,
+            DenoState::Missing => row![hint(), install(tr!("Instalar deno", "Install deno"))]
+                .spacing(12)
+                .align_y(Alignment::Center)
+                .into(),
+            DenoState::Downloading => text(tr!(
+                "Descargando deno (unos 40 MB)…",
+                "Downloading deno (about 40 MB)…"
+            ))
+            .size(theme::SIZE_S)
+            .into(),
+            DenoState::Failed(e) => row![
+                text(trf!(
+                    "No se pudo instalar deno: {e}",
+                    "Couldn't install deno: {e}"
+                ))
+                .size(theme::SIZE_S)
+                .style(theme::error_text)
+                .width(Length::Fill),
+                install(tr!("Reintentar", "Retry")),
+            ]
+            .spacing(12)
+            .align_y(Alignment::Center)
+            .into(),
+        })
     }
 }

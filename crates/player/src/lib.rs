@@ -279,7 +279,7 @@ impl Engine {
         }
         Self {
             provider,
-            client: HttpClient::new(),
+            client: surco_provider::stream_client(),
             rt,
             tx,
             status_tx,
@@ -897,10 +897,22 @@ async fn open_source(
                         refresh = true;
                         tokio::time::sleep(Duration::from_millis(800)).await;
                     }
+                    Err(surco_provider::Error::Expired) => break,
                     Err(e) => return Err(e.to_string()),
                 }
             }
-            Err("la URL del stream venció".into())
+            // YouTube sigue rechazando la URL: que la baje yt-dlp entera.
+            let path = provider.download_with_ytdlp(&video).await.map_err(|e| {
+                format!("la URL del stream venció y yt-dlp tampoco pudo bajarla: {e}")
+            })?;
+            let file =
+                std::fs::File::open(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+            Ok(Opened {
+                source: Box::new(file),
+                ext: Some("m4a".into()),
+                title: None,
+                duration: None,
+            })
         }
     }
 }

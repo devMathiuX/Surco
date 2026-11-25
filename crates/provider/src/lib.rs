@@ -4,6 +4,7 @@
 pub use surco_core as core;
 
 mod audio_cache;
+mod deno;
 mod http_stream;
 mod ytdlp;
 
@@ -13,9 +14,23 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 pub use audio_cache::{is_video_id, AudioCache, CacheUsage, DEFAULT_LIMIT as AUDIO_CACHE_LIMIT};
+/// Cliente HTTP para bajar el audio de YouTube.
+///
+/// Va siempre por IPv4, igual que yt-dlp (`--force-ipv4`): las URLs de
+/// googlevideo quedan atadas a la IP que las pidió (`ip=` en la URL). Con
+/// IPv6, Windows usa direcciones temporales que cambian, y si yt-dlp y la
+/// descarga salen por direcciones distintas YouTube contesta 403.
+pub fn stream_client() -> HttpClient {
+    HttpClient::builder()
+        .local_address(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED))
+        .build()
+        .unwrap_or_default()
+}
+
+pub use deno::{download_deno, set_tools_dir, DENO_BINARY};
 pub use http_stream::{download_all, download_all_with, HttpStream, StreamProgress};
 pub use reqwest::Client as HttpClient;
-pub use ytdlp::{Listing, SearchResult, StreamInfo, YtDlp, AUDIO_FORMAT, BINARY_NAME};
+pub use ytdlp::{js_runtime, Listing, SearchResult, StreamInfo, YtDlp, AUDIO_FORMAT, BINARY_NAME};
 
 /// Errores de este crate.
 #[derive(Debug, thiserror::Error)]
@@ -113,10 +128,26 @@ impl Provider {
                     self.invalidate(video);
                     refresh = true;
                 }
+                Err(Error::Expired) => break,
                 Err(e) => return Err(e),
             }
         }
-        Err(Error::Expired)
+        self.download_with_ytdlp(video).await
+    }
+
+    /// Plan B ante un 403: que yt-dlp baje el audio y guardarlo en la caché.
+    pub async fn download_with_ytdlp(&self, video: &str) -> Result<PathBuf> {
+        let cache = self
+            .audio
+            .as_ref()
+            .ok_or_else(|| Error::Parse("no hay caché de audio".into()))?;
+        tracing::info!(video, "YouTube rechazó la URL; la baja yt-dlp");
+        let tmp = self.ytdlp.download_audio(video, cache.dir()).await?;
+        let data = tokio::fs::read(&tmp).await;
+        let _ = tokio::fs::remove_file(&tmp).await;
+        let path = cache.put(video, &data?)?;
+        tracing::info!(video, "audio bajado por yt-dlp");
+        Ok(path)
     }
 
     pub fn ytdlp(&self) -> &YtDlp {
@@ -137,6 +168,13 @@ impl Provider {
             cache.insert(video.to_owned(), (info.clone(), Instant::now()));
         }
         Ok(info)
+    }
+
+    /// Olvida todas las URLs cacheadas (por ejemplo, al instalar deno).
+    pub fn forget_urls(&self) {
+        if let Ok(mut cache) = self.cache.lock() {
+            cache.clear();
+        }
     }
 
     /// Olvida la URL cacheada de `video` (por ejemplo, después de un 403).
