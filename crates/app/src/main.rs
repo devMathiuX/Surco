@@ -24,6 +24,8 @@ mod settings;
 mod skeleton;
 mod spotify_keys;
 mod theme;
+mod tray;
+mod updater;
 mod view;
 mod warm;
 
@@ -81,6 +83,8 @@ fn main() -> anyhow::Result<()> {
             size: Size::new(1000.0, 640.0),
             min_size: Some(Size::new(800.0, 500.0)),
             icon: window_icon(),
+            // En Windows la X esconde la ventana en la bandeja (ver `tray`).
+            exit_on_close_request: !cfg!(windows),
             ..window::Settings::default()
         })
         .run()?;
@@ -92,6 +96,7 @@ fn main() -> anyhow::Result<()> {
         cache.clear();
         tracing::info!("precarga de la sesión borrada");
     }
+    updater::relaunch_if_updated();
 
     Ok(())
 }
@@ -297,6 +302,11 @@ struct Surco {
     pulse: u32,
     /// URL pedida de antemano al pasar el mouse por una canción.
     warm: warm::Warm,
+    /// Versión nueva disponible (o instalándose).
+    update: updater::Update,
+    /// Ícono en la bandeja (Windows) y la ventana escondida ahí.
+    tray: Option<tray::Tray>,
+    hidden: Option<window::Id>,
     logo: Option<image::Handle>,
 }
 
@@ -397,6 +407,10 @@ enum Message {
     HoverSettled(String),
     /// Terminó de pedirse la URL de este video.
     Warmed(String),
+    Update(updater::UpdateMsg),
+    /// Se tocó la X de la ventana.
+    CloseRequested(window::Id),
+    Tray(tray::TrayMsg),
     GoHome,
     /// Escribieron en el buscador del inicio.
     HomeSearch(String),
@@ -552,6 +566,9 @@ impl Surco {
             radio_waiting: false,
             pulse: 0,
             warm: warm::Warm::default(),
+            update: updater::Update::default(),
+            tray: tray::create(),
+            hidden: None,
             logo: logo(),
         };
         state.restore();
@@ -569,7 +586,7 @@ impl Surco {
                 None => Task::done(None),
             })
             .map(Message::WindowHandle);
-        (state, Task::batch([handle, covers, home]))
+        (state, Task::batch([handle, covers, home, updater::check()]))
     }
 
     fn send(&self, cmd: Command) {
@@ -738,6 +755,25 @@ impl Surco {
             Message::HoverTrack(h) => return self.on_hover(h),
             Message::HoverSettled(key) => return self.on_hover_settled(key),
             Message::Warmed(video) => self.on_warmed(video),
+            Message::Update(msg) => return self.on_update(msg),
+            Message::CloseRequested(id) => {
+                if self.tray.is_none() {
+                    return iced::exit();
+                }
+                // Sigue sonando en la bandeja.
+                self.hidden = Some(id);
+                return window::set_mode(id, window::Mode::Hidden);
+            }
+            Message::Tray(tray::TrayMsg::Show) => {
+                if let Some(id) = self.hidden.take() {
+                    return Task::batch([
+                        window::set_mode(id, window::Mode::Windowed),
+                        window::gain_focus(id),
+                    ]);
+                }
+            }
+            Message::Tray(tray::TrayMsg::TogglePause) => return self.toggle_pause(),
+            Message::Tray(tray::TrayMsg::Quit) => return iced::exit(),
             Message::GoHome => return self.go_home(),
             Message::HomeSearch(q) => return self.home_search(q),
             Message::PlayRecent(i) => return self.play_recent(i),
@@ -998,6 +1034,10 @@ impl Surco {
 
     fn subscription(&self) -> Subscription<Message> {
         let mut subs = vec![keyboard::listen().filter_map(on_key)];
+        if cfg!(windows) {
+            subs.push(window::close_requests().map(Message::CloseRequested));
+            subs.push(Subscription::run(tray::events));
+        }
         if let Some(p) = &self.player {
             subs.push(Subscription::run_with(
                 StatusFeed(p.subscribe()),

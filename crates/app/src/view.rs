@@ -223,6 +223,9 @@ impl Surco {
         ]
         .spacing(16)
         .height(Length::Fill);
+        if let Some(card) = self.view_update() {
+            col = col.push(card);
+        }
         if let Some(n) = &self.notice {
             col = col.push(text(&n.text).size(theme::SIZE_S).style(if n.error {
                 theme::error_text
