@@ -19,7 +19,7 @@ Funciona en **Linux**, **Windows** y **macOS** (Intel y Apple Silicon).
 - **Elegir otro video** si Surco encontró una versión equivocada de una canción (en vivo, cover, etc.).
 - **Usar las teclas multimedia** del teclado y los controles de música del sistema.
 - **Escuchar sin conexión**: la flechita de una playlist baja todas sus canciones y las deja guardadas.
-- **Cambiar el tema**: oscuro, verde, rosa, claro, claro rosa o uno **personalizado** con tus dos colores.
+- **Cambiar el tema**: oscuro, verde, rosa, claro, claro rosa, **vidrio** (fondo de colores con paneles translúcidos), **brutal** (bordes duros y acento lima), **brillo** (oscuro con resplandor violeta) o uno **personalizado** con tus dos colores.
 - **Español o inglés**: elegí el idioma en los ajustes (de entrada usa el de tu computadora).
 
 Todo lo que importás queda guardado en tu computadora: playlists, videos elegidos, historial y ajustes. La pantalla de **Inicio** te muestra tus playlists y lo último que escuchaste.
@@ -197,6 +197,8 @@ En Windows, la X esconde la ventana y Surco sigue sonando en la bandeja (la flec
 ### Ajustes
 
 ![Ajustes](docs/ajustes.png)
+
+La primera vez que abrís Surco aparece una pantalla de bienvenida para elegir el tema, el idioma, el tamaño y la precarga. Tocá **Empezar** y listo; todo se puede cambiar después.
 
 El engranaje de arriba a la izquierda abre los ajustes:
 

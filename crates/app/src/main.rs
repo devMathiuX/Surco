@@ -5,6 +5,7 @@
 
 #[macro_use]
 mod i18n;
+mod backdrop;
 mod bar;
 mod config;
 mod covers;
@@ -28,6 +29,7 @@ mod tray;
 mod updater;
 mod view;
 mod warm;
+mod welcome;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -324,6 +326,8 @@ struct Drag {
 /// Panel principal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Screen {
+    /// Bienvenida de la primera vez.
+    Welcome,
     Home,
     /// Playlist abierta.
     Library,
@@ -408,6 +412,8 @@ enum Message {
     /// Terminó de pedirse la URL de este video.
     Warmed(String),
     Update(updater::UpdateMsg),
+    /// Terminó la bienvenida.
+    FinishWelcome,
     /// Se tocó la X de la ventana.
     CloseRequested(window::Id),
     Tray(tray::TrayMsg),
@@ -574,6 +580,7 @@ impl Surco {
         };
         state.restore();
         state.load_settings();
+        state.maybe_welcome();
         state.load_spotify_keys();
         state.refresh_downloads();
         state.drop_temporary_audio();
@@ -773,6 +780,7 @@ impl Surco {
             Message::HoverSettled(key) => return self.on_hover_settled(key),
             Message::Warmed(video) => self.on_warmed(video),
             Message::Update(msg) => return self.on_update(msg),
+            Message::FinishWelcome => return self.finish_welcome(),
             Message::CloseRequested(id) => {
                 if self.tray.is_none() {
                     return iced::exit();
