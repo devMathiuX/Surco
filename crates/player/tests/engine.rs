@@ -206,3 +206,73 @@ fn skips_leading_and_trailing_silence() {
         "sonó {played:?}: no se salteó el silencio final"
     );
 }
+
+/// Una intro muda más larga que el silencio que se saltea y que el que se
+/// retiene no tiene que dejar la canción cargando para siempre.
+#[test]
+fn long_quiet_intro_still_starts() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let p = surco_player::spawn(None, rt.handle().clone(), Options { null_output: true }).unwrap();
+    p.send(Command::Load(Source::File(fixture("quiet-intro.m4a"))));
+    wait_for(&p, "Playing", Duration::from_secs(5), |s| {
+        s.state == PlayerState::Playing
+    });
+    let start = wait_for(&p, "posición", Duration::from_secs(2), |s| {
+        s.position > Duration::ZERO
+    })
+    .position;
+    wait_for(&p, "posición que avanza", Duration::from_secs(3), |s| {
+        s.position > start + Duration::from_millis(500)
+    });
+}
+
+/// Cambiar de canción muchas veces seguidas (mientras la anterior todavía
+/// abre) no tiene que dejar la última "sonando" en silencio.
+#[test]
+fn rapid_switches_still_play_the_last_one() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let p = surco_player::spawn(None, rt.handle().clone(), Options { null_output: true }).unwrap();
+    let a = Source::File(fixture("tone.m4a"));
+    let b = Source::File(fixture("padded.m4a"));
+    for round in 0..6 {
+        p.send(Command::Load(a.clone()));
+        if round % 2 == 0 {
+            std::thread::sleep(Duration::from_millis(30));
+        }
+        p.send(Command::Load(b.clone()));
+        std::thread::sleep(Duration::from_millis(round * 15));
+    }
+    p.send(Command::Load(a));
+    wait_for(&p, "Playing", Duration::from_secs(5), |s| {
+        s.state == PlayerState::Playing
+    });
+    wait_for(&p, "posición que avanza", Duration::from_secs(3), |s| {
+        s.position > Duration::from_millis(700)
+    });
+}
+
+/// Una carga que falla justo después de otra (dos vaciados de la salida
+/// seguidos) no tiene que comerse la canción que se pone después.
+#[test]
+fn song_after_a_failed_load_plays() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let p = surco_player::spawn(None, rt.handle().clone(), Options { null_output: true }).unwrap();
+    let tone = Source::File(fixture("tone.m4a"));
+    for _ in 0..5 {
+        p.send(Command::Load(tone.clone()));
+        wait_for(&p, "Playing", Duration::from_secs(5), |s| {
+            s.state == PlayerState::Playing
+        });
+        p.send(Command::Load(Source::File(fixture("no-existe.m4a"))));
+        wait_for(&p, "Error", Duration::from_secs(5), |s| {
+            matches!(s.state, PlayerState::Error(_))
+        });
+        p.send(Command::Load(tone.clone()));
+        wait_for(&p, "Playing", Duration::from_secs(5), |s| {
+            s.state == PlayerState::Playing
+        });
+        wait_for(&p, "posición que avanza", Duration::from_secs(3), |s| {
+            s.position > Duration::from_millis(400)
+        });
+    }
+}
