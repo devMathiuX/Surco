@@ -244,12 +244,21 @@ fn run(
         }
 
         // Silencio retenido: se suelta cuando hace falta para no cortar.
+        // Antes de arrancar se suelta hasta el pre-buffer: si no, una canción
+        // con una intro muy callada se quedaba esperando para siempre (buffer
+        // "lleno" de silencio retenido, pero sin llegar a avisar que está lista).
         if let Some(s) = spec {
             let mut buf = shared.buf();
-            let low = s.samples_for(LOW_WATER);
+            let low = s.samples_for(if ready_sent { LOW_WATER } else { PREBUFFER });
             if trim.pending > 0 && buf.len() < low {
                 let n = trim.release(low - buf.len(), usize::from(s.channels));
                 buf.extend(std::iter::repeat_n(0.0, n));
+            }
+            let buffered = buf.len();
+            drop(buf);
+            if !ready_sent && buffered >= s.samples_for(PREBUFFER) {
+                ready_sent = true;
+                on_event(DecodeEvent::Ready { spec: s, duration });
             }
         }
 
@@ -437,6 +446,8 @@ impl Trimmer {
 /// Fuente de rodio que lee del buffer compartido. Nunca bloquea.
 pub(crate) struct RingSource {
     shared: Arc<Shared>,
+    /// Saca esta fuente de la salida sin parar el decodificador.
+    cancel: Arc<AtomicBool>,
     local: Vec<f32>,
     idx: usize,
     generation: u64,
@@ -449,6 +460,7 @@ impl RingSource {
     pub(crate) fn new(shared: Arc<Shared>, spec: AudioSpec) -> Option<Self> {
         Some(Self {
             shared,
+            cancel: Arc::default(),
             local: Vec::with_capacity(BATCH),
             idx: 0,
             generation: 0,
@@ -476,7 +488,7 @@ impl Iterator for RingSource {
     type Item = f32;
 
     fn next(&mut self) -> Option<f32> {
-        if self.shared.stop.load(Ordering::Relaxed) {
+        if self.shared.stop.load(Ordering::Relaxed) || self.cancel.load(Ordering::Relaxed) {
             return None;
         }
         // Un seek invalida lo que quedaba en el lote local.
@@ -495,6 +507,12 @@ impl Iterator for RingSource {
 }
 
 impl RingSource {
+    /// Bandera que, al prenderse, termina esta fuente (la salida pasa a la
+    /// siguiente) sin tocar el buffer ni el decodificador.
+    pub(crate) fn cancel_handle(&self) -> Arc<AtomicBool> {
+        Arc::clone(&self.cancel)
+    }
+
     fn shared_generation_changed(&self) -> bool {
         self.shared.generation.load(Ordering::Relaxed) != self.generation
     }

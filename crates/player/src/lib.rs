@@ -235,6 +235,8 @@ struct Next {
     duration: Option<Duration>,
     /// Ya está encolada en la salida, detrás de la actual.
     appended: bool,
+    /// Para sacarla de la salida si la actual se descarga antes de terminar.
+    cancel: Option<Arc<std::sync::atomic::AtomicBool>>,
 }
 
 /// Salida de audio: dispositivo real o "nula" para pruebas.
@@ -580,7 +582,14 @@ impl Engine {
         self.status.state = PlayerState::Error(error);
     }
 
-    /// Detiene el decodificador y vacía la salida (sin olvidar `current`).
+    /// Detiene el decodificador y saca la canción de la salida (sin olvidar
+    /// `current`).
+    ///
+    /// No usa `Player::clear()` de rodio: marca cuántas fuentes saltear y se
+    /// aplica después, así que dos `clear()` seguidos (cargar una canción
+    /// mientras otra todavía abría, un 403 que re-resuelve…) podían dejar un
+    /// salteo pendiente que se comía la canción siguiente: quedaba "sonando"
+    /// en 0:00 sin audio. Cada fuente nuestra termina sola al ver su bandera.
     fn unload(&mut self) {
         if let Some(shared) = self.current.as_mut().and_then(|c| c.shared.take()) {
             shared.stop();
@@ -588,14 +597,13 @@ impl Engine {
         if let Some(cur) = &mut self.current {
             cur.spec = None;
         }
-        if let Ok(out) = &self.output {
-            out.player.clear();
-        }
-        // La pre-carga salió de la salida junto con todo lo demás.
+        // La pre-carga encolada detrás sale de la salida, pero sigue lista.
         if let Some(n) = &mut self.next {
+            if let Some(cancel) = n.cancel.take() {
+                cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+            }
             n.appended = false;
         }
-        // `clear()` deja la salida en pausa: la reactivamos para la próxima.
         if let Ok(out) = &self.output {
             out.player.play();
         }
@@ -622,6 +630,7 @@ impl Engine {
             title: None,
             duration: None,
             appended: false,
+            cancel: None,
         });
         let tx = self.tx.clone();
         let provider = self.provider.clone();
@@ -679,6 +688,7 @@ impl Engine {
             return;
         };
         if let Some(ring) = RingSource::new(Arc::clone(shared), spec) {
+            n.cancel = Some(ring.cancel_handle());
             out.player.append(ring);
             n.appended = true;
             tracing::debug!("pre-carga encolada");
