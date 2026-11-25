@@ -631,10 +631,14 @@ impl Surco {
                 .spacing(6)
                 .wrap()
             });
-        let input: Element<'_, Message> = match chips {
-            Some(chips) => column![input, chips].spacing(10).into(),
-            None => input.into(),
+        // El árbol de widgets no cambia de forma cuando aparecen o se van las
+        // sugerencias: si cambiara, iced perdería el estado del campo y con
+        // él el foco (no se podría seguir escribiendo).
+        let chips: Element<'_, Message> = match chips {
+            Some(chips) => container(chips).padding(iced::Padding::ZERO.top(10)).into(),
+            None => Space::new().height(0).into(),
         };
+        let input = column![input, chips];
 
         let body: Element<'_, Message> = if let Some(p) = &self.search.preview {
             self.view_preview(p)
