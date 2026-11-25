@@ -530,7 +530,8 @@ impl Surco {
         let playing =
             video.is_some_and(|v| self.now_track().and_then(|t| self.video_of_track(t)) == Some(v));
         let add = add_button(&track, None);
-        button(
+        let menu = song_menu(&track, None);
+        let row = button(
             row![
                 cover,
                 column![
@@ -556,8 +557,8 @@ impl Surco {
         .on_press(on_play)
         .padding([4, 8])
         .width(Length::Fill)
-        .style(theme::list_button(playing))
-        .into()
+        .style(theme::list_button(playing));
+        iced::widget::mouse_area(row).on_right_press(menu).into()
     }
 
     fn view_results<'a>(&'a self, q: &'a str, r: &'a Results) -> Element<'a, Message> {
@@ -672,6 +673,25 @@ fn section(title: &str) -> Element<'_, Message> {
     text(title).size(theme::SIZE_M).into()
 }
 
+/// Mensaje que abre el menú "Agregar a…" de una canción.
+pub fn song_menu(track: &Track, from: Option<(usize, usize)>) -> Message {
+    Message::SongMenu(Some(Box::new(crate::playlists::SongMenu {
+        track: track.clone(),
+        from,
+    })))
+}
+
+/// Una fila de canción que también abre su menú con clic derecho.
+pub fn with_menu<'a>(
+    row: impl Into<Element<'a, Message>>,
+    track: &Track,
+    from: Option<(usize, usize)>,
+) -> Element<'a, Message> {
+    iced::widget::mouse_area(row)
+        .on_right_press(song_menu(track, from))
+        .into()
+}
+
 /// Botón "+" de una canción: abre el menú para agregarla a la cola o a una
 /// playlist (`from`: playlist y posición, para poder quitarla de ahí).
 pub fn add_button<'a>(track: &Track, from: Option<(usize, usize)>) -> Element<'a, Message> {
@@ -681,12 +701,7 @@ pub fn add_button<'a>(track: &Track, from: Option<(usize, usize)>) -> Element<'a
             theme::colors().text_secondary,
             14.0,
         ))
-        .on_press(Message::SongMenu(Some(Box::new(
-            crate::playlists::SongMenu {
-                track: track.clone(),
-                from,
-            },
-        ))))
+        .on_press(song_menu(track, from))
         .padding(6)
         .style(theme::icon_button),
         container(text("Agregar a…").size(theme::SIZE_S))
