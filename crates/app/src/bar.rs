@@ -121,7 +121,7 @@ impl Surco {
         let play = button(
             container(icons::icon(
                 if playing { Kind::Pause } else { Kind::Play },
-                theme::colors().background,
+                theme::play_icon(),
                 18.0,
             ))
             .center(18),
@@ -163,7 +163,7 @@ impl Surco {
             text(ms.map(format_duration).unwrap_or_else(|| "--:--".into()))
                 .size(theme::SIZE_S)
                 .style(theme::secondary_text)
-                .width(44)
+                .width(48)
         };
         let progress = row![
             time(Some((shown * 1000.0) as u64)).align_x(Alignment::End),
@@ -219,7 +219,7 @@ impl Surco {
         )
         .padding([10, 16])
         .width(Length::Fill)
-        .style(theme::surface)
+        .style(theme::player_bar)
         .into()
     }
 }
@@ -266,7 +266,7 @@ impl Surco {
             button(radio_icon)
                 .on_press_maybe((can_radio && !self.radio_loading).then_some(Message::StartRadio))
                 .padding(6)
-                .style(theme::icon_button),
+                .style(theme::side_button),
             container(
                 text(if self.radio_loading {
                     tr!("Armando la radio…", "Building the radio…")
@@ -282,12 +282,20 @@ impl Surco {
             .style(theme::card),
             tooltip::Position::Top,
         );
-        let queue = icons::toggle_button(
+        let queue_on = self.screen == crate::Screen::Queue;
+        let queue = button(icons::icon(
             Kind::Queue,
+            if queue_on {
+                theme::colors().accent
+            } else {
+                theme::colors().text
+            },
             18.0,
-            self.screen == crate::Screen::Queue,
-            Message::ToggleQueue,
-        );
+        ))
+        .on_press(Message::ToggleQueue)
+        .padding(6)
+        .style(theme::side_button)
+        .into();
         [change, radio.into(), queue]
     }
 
@@ -297,13 +305,13 @@ impl Surco {
         let muted = self.status.volume <= 0.001;
         let icon = icons::icon(
             if muted { Kind::Muted } else { Kind::Volume },
-            theme::colors().text_secondary,
+            theme::colors().text,
             18.0,
         );
         let button = button(icon)
             .on_press(Message::VolumeUi(VolumeMsg::ToggleMute))
             .padding(6)
-            .style(theme::icon_button);
+            .style(theme::side_button);
         if compact {
             mouse_area(button)
                 .on_enter(Message::VolumeUi(VolumeMsg::IconHover(true)))
