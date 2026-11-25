@@ -26,23 +26,29 @@ pub struct CoverJobs {
     failed: std::collections::HashSet<String>,
     running: usize,
 }
-/// Canciones que se buscan a la vez en segundo plano (para las portadas).
 /// Canciones de más (después de las que se ven) que se buscan de fondo.
 const BACKGROUND_AHEAD: usize = 30;
+/// Canciones que se buscan a la vez en segundo plano (las que se ven).
 const BACKGROUND_JOBS: usize = 2;
 
-/// Búsqueda en segundo plano de las canciones de la playlist abierta, para
-/// que aparezcan sus portadas (y después suenen sin esperar).
+/// Búsqueda en segundo plano de las canciones de la playlist abierta: así
+/// aparecen sus portadas y, al tocarlas, suenan sin esperar la búsqueda.
 #[derive(Debug, Default)]
 pub struct Background {
+    /// Las que se ven (y las que siguen): van primero, de a `BACKGROUND_JOBS`.
     queue: std::collections::VecDeque<Track>,
+    /// El resto de la playlist: de a una, cuando no queda nada más urgente.
+    rest: std::collections::VecDeque<Track>,
     /// Claves que se están buscando.
     running: std::collections::HashSet<String>,
+    /// Claves del resto que se están buscando: no piden portada (no se ven).
+    quiet: std::collections::HashSet<String>,
 }
 
 impl Background {
+    /// Hay búsquedas de lo que se ve (no cuenta el resto de la playlist).
     pub fn is_running(&self) -> bool {
-        !self.queue.is_empty() || !self.running.is_empty()
+        !self.queue.is_empty() || self.running.len() > self.quiet.len()
     }
 }
 
@@ -233,7 +239,7 @@ impl Surco {
     }
 
     /// Lanza la resolución en el runtime; el resultado vuelve como mensaje.
-    fn spawn_resolve(&mut self, track: Track) -> Task<Message> {
+    pub(crate) fn spawn_resolve(&mut self, track: Track) -> Task<Message> {
         let (Some(resolver), Some(rt)) = (self.resolver.clone(), RUNTIME.get()) else {
             self.notice = Some(Notice {
                 error: true,
@@ -265,24 +271,27 @@ impl Surco {
         result: Result<Match, String>,
     ) -> Task<Message> {
         self.background.running.remove(&key);
+        let quiet = self.background.quiet.remove(&key);
         let is_now = self.now_track().is_some_and(|t| cache_key(t) == key);
         match result {
             Ok(m) => {
                 self.persist_match(&key, &m);
+                let video = m.youtube_id.clone();
                 let mut task = Task::none();
                 if is_now {
                     self.send(Command::Load(Source::YouTube(m.youtube_id.clone())));
                     task = self.fetch_cover(&m.youtube_id);
                 }
-                let cover = if self.settings.covers_in_list {
+                let cover = if self.settings.covers_in_list && !quiet {
                     self.queue_cover(&m.youtube_id)
                 } else {
                     Task::none()
                 };
-                self.resolutions.insert(key, TrackRes::Done(m));
+                self.resolutions.insert(key.clone(), TrackRes::Done(m));
                 self.update_preload();
                 let recs = self.maybe_load_recs();
-                Task::batch([task, cover, recs])
+                let warm = self.warm_after_resolved(&key, &video);
+                Task::batch([task, cover, recs, warm])
             }
             Err(e) => {
                 self.resolutions.insert(key, TrackRes::Failed(e.clone()));
@@ -571,32 +580,44 @@ impl Surco {
         )
     }
 
-    /// Encola la búsqueda de las canciones sin video de la playlist abierta
-    /// (solo con "portadas en la lista": es para eso). Solo las que se ven y
-    /// las que siguen: en una playlist de miles no se buscan todas de una.
+    /// Encola la búsqueda de las canciones sin video de la playlist abierta:
+    /// primero las que se ven y las que siguen, después el resto (de a una).
+    /// Lo encontrado queda guardado, así que cada canción se busca una sola vez.
     pub(crate) fn resolve_in_background(&mut self) -> Task<Message> {
         self.background.queue.clear();
-        if !self.settings.covers_in_list || self.resolver.is_none() {
+        self.background.rest.clear();
+        if self.resolver.is_none() {
             return Task::none();
         }
         let Some((p, _)) = self.selected.and_then(|i| self.playlists.get(i)) else {
             return Task::none();
         };
-        let (first, last) = crate::view::visible_rows(self.list_view, p.tracks.len());
-        let last = (last + BACKGROUND_AHEAD).min(p.tracks.len());
+        let n = p.tracks.len();
+        let (first, last) = crate::view::visible_rows(self.list_view, n);
+        let last = (last + BACKGROUND_AHEAD).min(n);
+        let first = first.min(last);
+        let pending = |t: &&Track| self.resolution(t).is_none();
         let todo: Vec<Track> = p.tracks[first..last]
             .iter()
-            .filter(|t| self.resolution(t).is_none())
+            .filter(pending)
+            .cloned()
+            .collect();
+        let rest: Vec<Track> = p.tracks[last..]
+            .iter()
+            .chain(&p.tracks[..first])
+            .filter(pending)
             .cloned()
             .collect();
         self.background.queue.extend(todo);
+        self.background.rest.extend(rest);
         self.pump_background()
     }
 
-    /// Lanza búsquedas de fondo hasta `BACKGROUND_JOBS`. Espera mientras se
-    /// busca la que tiene que sonar, para no demorarla.
+    /// Lanza búsquedas de fondo: las que se ven hasta `BACKGROUND_JOBS`, el
+    /// resto de a una y solo sin nada más en curso. Espera mientras se busca
+    /// la que tiene que sonar, para no demorarla.
     pub(crate) fn pump_background(&mut self) -> Task<Message> {
-        if self.background.queue.is_empty()
+        if (self.background.queue.is_empty() && self.background.rest.is_empty())
             || self
                 .now_track()
                 .is_some_and(|t| matches!(self.resolution(t), Some(TrackRes::Resolving)))
@@ -613,6 +634,18 @@ impl Surco {
             }
             self.background.running.insert(cache_key(&t));
             tasks.push(self.spawn_resolve(t));
+        }
+        if self.background.queue.is_empty() && self.background.running.is_empty() {
+            while let Some(t) = self.background.rest.pop_front() {
+                if self.resolution(&t).is_some() {
+                    continue;
+                }
+                let key = cache_key(&t);
+                self.background.running.insert(key.clone());
+                self.background.quiet.insert(key);
+                tasks.push(self.spawn_resolve(t));
+                break;
+            }
         }
         Task::batch(tasks)
     }

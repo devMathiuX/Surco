@@ -8,8 +8,9 @@ mod deno;
 mod http_stream;
 mod ytdlp;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -67,6 +68,17 @@ pub type Result<T, E = Error> = std::result::Result<T, E>;
 /// Las URLs de googlevideo vencen a las ~6 h; nos quedamos con 5 h de margen.
 pub const STREAM_URL_TTL: Duration = Duration::from_secs(5 * 60 * 60);
 
+/// Cliente de YouTube que no necesita resolver el desafío de JavaScript
+/// (el mismo que usa yt-dlp cuando no hay deno). Pedir la URL con él tarda
+/// bastante menos; si falla o YouTube rechaza esa URL, se usa el normal.
+pub const FAST_CLIENT: &str = "visionos";
+
+/// Tiempo máximo del intento rápido antes de pasar al normal.
+const FAST_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// Fallos del cliente rápido tras los cuales se deja de usar en la sesión.
+const FAST_MAX_FAILURES: u32 = 3;
+
 /// Punto de entrada: yt-dlp + caché en memoria de URLs de stream.
 #[derive(Debug)]
 pub struct Provider {
@@ -74,6 +86,10 @@ pub struct Provider {
     cache: Mutex<HashMap<String, (StreamInfo, Instant)>>,
     ttl: Duration,
     audio: Option<AudioCache>,
+    /// Videos cuya URL en caché salió del cliente rápido.
+    fast_urls: Mutex<HashSet<String>>,
+    /// Fallos del cliente rápido en esta sesión (ver [`FAST_MAX_FAILURES`]).
+    fast_failures: AtomicU32,
 }
 
 impl Provider {
@@ -83,6 +99,8 @@ impl Provider {
             cache: Mutex::new(HashMap::new()),
             ttl: STREAM_URL_TTL,
             audio: None,
+            fast_urls: Mutex::new(HashSet::new()),
+            fast_failures: AtomicU32::new(0),
         }
     }
 
@@ -163,11 +181,62 @@ impl Provider {
                 return Ok(info);
             }
         }
+        // Después de un rechazo (`refresh`) va directo al cliente normal.
+        if !refresh && self.fast_enabled() {
+            match self
+                .ytdlp
+                .stream_info_with(video, Some(FAST_CLIENT), FAST_TIMEOUT)
+                .await
+            {
+                Ok(info) if info.is_supported() => {
+                    tracing::debug!(video, "URL de stream con el cliente rápido");
+                    self.remember(video, &info, true);
+                    return Ok(info);
+                }
+                // Sin yt-dlp no tiene sentido reintentar.
+                Err(e @ Error::Spawn { .. }) => return Err(e),
+                Ok(info) => {
+                    tracing::warn!(video, ext = %info.ext, "el cliente rápido dio un formato no soportado");
+                    self.fast_failed();
+                }
+                Err(e) => {
+                    tracing::warn!(video, error = %e, "falló el cliente rápido; se usa el normal");
+                    self.fast_failed();
+                }
+            }
+        }
         let info = self.ytdlp.stream_info(video).await?;
+        self.remember(video, &info, false);
+        Ok(info)
+    }
+
+    fn remember(&self, video: &str, info: &StreamInfo, fast: bool) {
         if let Ok(mut cache) = self.cache.lock() {
             cache.insert(video.to_owned(), (info.clone(), Instant::now()));
         }
-        Ok(info)
+        if let Ok(mut set) = self.fast_urls.lock() {
+            if fast {
+                set.insert(video.to_owned());
+            } else {
+                set.remove(video);
+            }
+        }
+    }
+
+    fn fast_enabled(&self) -> bool {
+        self.fast_failures.load(Ordering::Relaxed) < FAST_MAX_FAILURES
+    }
+
+    fn fast_failed(&self) {
+        let n = self.fast_failures.fetch_add(1, Ordering::Relaxed) + 1;
+        if n == FAST_MAX_FAILURES {
+            tracing::warn!("el cliente rápido de YouTube falló varias veces; se deja de usar");
+        }
+    }
+
+    /// Hay una URL vigente de `video` en la caché.
+    pub fn has_url(&self, video: &str) -> bool {
+        self.cached(video).is_some()
     }
 
     /// Olvida todas las URLs cacheadas (por ejemplo, al instalar deno).
@@ -175,12 +244,19 @@ impl Provider {
         if let Ok(mut cache) = self.cache.lock() {
             cache.clear();
         }
+        if let Ok(mut set) = self.fast_urls.lock() {
+            set.clear();
+        }
     }
 
     /// Olvida la URL cacheada de `video` (por ejemplo, después de un 403).
     pub fn invalidate(&self, video: &str) {
         if let Ok(mut cache) = self.cache.lock() {
             cache.remove(video);
+        }
+        // YouTube rechazó una URL del cliente rápido: cuenta como fallo.
+        if self.fast_urls.lock().is_ok_and(|mut s| s.remove(video)) {
+            self.fast_failed();
         }
     }
 
@@ -234,6 +310,55 @@ mod tests {
             .unwrap()
             .insert("v".into(), (info(), Instant::now()));
         assert_eq!(p.cached("v"), None);
+    }
+
+    /// yt-dlp falso que falla si le piden el cliente rápido y anota cada llamada.
+    #[cfg(unix)]
+    fn fake_ytdlp(name: &str, fast_works: bool) -> (std::path::PathBuf, std::path::PathBuf) {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("surco-fast-{name}-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let log = dir.join("calls");
+        let _ = std::fs::remove_file(&log);
+        let script = dir.join("yt-dlp");
+        let fast = if fast_works { ":" } else { "exit 1" };
+        std::fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\ncase \"$*\" in *player_client=*) echo fast >> '{l}'; {fast};; *) echo normal >> '{l}';; esac\nprintf 'm4a\\n1\\nt\\nhttps://example.com/%s\\n' \"$1\"\n",
+                l = log.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        (script, log)
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn fast_client_first_then_normal_after_rejection() {
+        let (script, log) = fake_ytdlp("ok", true);
+        let p = Provider::new(YtDlp::new(&script));
+        p.stream_info("aqz-KE-bpKQ", false).await.unwrap();
+        // Una URL rápida rechazada: el refresco va por el cliente normal.
+        p.invalidate("aqz-KE-bpKQ");
+        p.stream_info("aqz-KE-bpKQ", true).await.unwrap();
+        let calls = std::fs::read_to_string(&log).unwrap();
+        assert_eq!(calls.lines().collect::<Vec<_>>(), ["fast", "normal"]);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn fast_client_failures_fall_back_and_turn_it_off() {
+        let (script, log) = fake_ytdlp("fail", false);
+        let p = Provider::new(YtDlp::new(&script));
+        for i in 0..5 {
+            p.stream_info(&format!("video{i}"), false).await.unwrap();
+        }
+        let calls = std::fs::read_to_string(&log).unwrap();
+        let fast = calls.lines().filter(|l| *l == "fast").count();
+        let normal = calls.lines().filter(|l| *l == "normal").count();
+        assert_eq!((fast, normal), (FAST_MAX_FAILURES as usize, 5));
     }
 
     #[tokio::test]

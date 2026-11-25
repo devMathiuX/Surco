@@ -25,6 +25,7 @@ mod skeleton;
 mod spotify_keys;
 mod theme;
 mod view;
+mod warm;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -294,6 +295,8 @@ struct Surco {
     radio_waiting: bool,
     /// Latido de los esqueletos de carga.
     pulse: u32,
+    /// URL pedida de antemano al pasar el mouse por una canción.
+    warm: warm::Warm,
     logo: Option<image::Handle>,
 }
 
@@ -388,6 +391,12 @@ enum Message {
     DragOver(DragList, usize),
     DragEnd,
     SidebarHover(Option<usize>),
+    /// El mouse entró a (o salió de) una fila de canción.
+    HoverTrack(Option<Box<warm::Hover>>),
+    /// El mouse siguió un rato sobre la canción (clave del resolver).
+    HoverSettled(String),
+    /// Terminó de pedirse la URL de este video.
+    Warmed(String),
     GoHome,
     /// Escribieron en el buscador del inicio.
     HomeSearch(String),
@@ -542,6 +551,7 @@ impl Surco {
             background: playback::Background::default(),
             radio_waiting: false,
             pulse: 0,
+            warm: warm::Warm::default(),
             logo: logo(),
         };
         state.restore();
@@ -725,6 +735,9 @@ impl Surco {
             }
             Message::DragEnd => return self.drag_end(),
             Message::SidebarHover(i) => self.sidebar_hover = i,
+            Message::HoverTrack(h) => return self.on_hover(h),
+            Message::HoverSettled(key) => return self.on_hover_settled(key),
+            Message::Warmed(video) => self.on_warmed(video),
             Message::GoHome => return self.go_home(),
             Message::HomeSearch(q) => return self.home_search(q),
             Message::PlayRecent(i) => return self.play_recent(i),
