@@ -196,11 +196,11 @@ impl Provider {
                 // Sin yt-dlp no tiene sentido reintentar.
                 Err(e @ Error::Spawn { .. }) => return Err(e),
                 Ok(info) => {
-                    tracing::debug!(video, ext = %info.ext, "el cliente rápido dio un formato no soportado");
+                    tracing::warn!(video, ext = %info.ext, "el cliente rápido dio un formato no soportado");
                     self.fast_failed();
                 }
                 Err(e) => {
-                    tracing::debug!(video, error = %e, "falló el cliente rápido");
+                    tracing::warn!(video, error = %e, "falló el cliente rápido; se usa el normal");
                     self.fast_failed();
                 }
             }
@@ -230,7 +230,7 @@ impl Provider {
     fn fast_failed(&self) {
         let n = self.fast_failures.fetch_add(1, Ordering::Relaxed) + 1;
         if n == FAST_MAX_FAILURES {
-            tracing::info!("el cliente rápido de YouTube falló varias veces; se usa el normal");
+            tracing::warn!("el cliente rápido de YouTube falló varias veces; se deja de usar");
         }
     }
 
