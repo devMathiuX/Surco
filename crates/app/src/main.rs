@@ -477,6 +477,7 @@ impl Surco {
         state.load_settings();
         state.load_spotify_keys();
         state.refresh_downloads();
+        state.drop_temporary_audio();
         let covers = state.queue_list_covers();
         let home = state.refresh_home();
         // Los controles del sistema necesitan la ventana (HWND en Windows).
