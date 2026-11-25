@@ -6,10 +6,10 @@
 use std::collections::HashMap;
 
 use iced::widget::{
-    button, center, column, container, mouse_area, opaque, operation, row, scrollable, text,
-    Column, Id, Space,
+    button, column, container, mouse_area, opaque, operation, row, scrollable, stack, text, Column,
+    Id, Space,
 };
-use iced::{Alignment, Element, Length, Task};
+use iced::{Alignment, Element, Length, Size, Task};
 use surco_core::{format_duration, Playlist, Track};
 use surco_provider::SearchResult;
 use surco_resolver::cache_key;
@@ -223,7 +223,7 @@ impl Surco {
         }
         self.notice = Some(Notice {
             error: false,
-            text: format!("Agregada a «{name}»."),
+            text: trf!("Agregada a «{name}».", "Added to “{name}”."),
         });
         self.update_preload();
         self.refresh_downloads();
@@ -305,46 +305,7 @@ impl Surco {
             }
         }
         self.downloads = out;
-    }
-
-    /// Borra el audio descargado de las canciones de una playlist.
-    pub(crate) fn delete_downloads(&mut self, p: usize) {
-        let Some(cache) = self
-            .provider
-            .as_ref()
-            .and_then(|p| p.audio_cache())
-            .cloned()
-        else {
-            return;
-        };
-        let Some((playlist, _)) = self.playlists.get(p) else {
-            return;
-        };
-        let videos: Vec<String> = playlist
-            .tracks
-            .iter()
-            .filter_map(|t| self.video_of_track(t).map(str::to_owned))
-            .collect();
-        let name = playlist.name.clone();
-        let (mut files, mut bytes) = (0, 0);
-        for v in &videos {
-            let freed = cache.remove(v);
-            if freed > 0 {
-                files += 1;
-                bytes += freed;
-            }
-            self.precache.forget(v);
-        }
-        tracing::info!(files, bytes, playlist = %name, "descargas borradas");
-        self.notice = Some(Notice {
-            error: false,
-            text: format!(
-                "Borré {} descargadas de «{name}» ({}).",
-                crate::view::songs(files),
-                crate::view::format_bytes(bytes)
-            ),
-        });
-        self.refresh_downloads();
+        self.update_pins();
     }
 
     // ── Recomendadas ───────────────────────────────────────────────────────
@@ -510,38 +471,41 @@ impl Surco {
     /// Sección "Recomendadas" al final de una playlist.
     pub(crate) fn view_recs(&self, p: usize, playlist: &Playlist) -> Element<'_, Message> {
         let title = column![
-            text("Recomendadas").size(theme::SIZE_M),
-            text("Parecidas a las canciones de esta playlist. Agregalas para hacerla más grande.")
-                .size(theme::SIZE_S)
-                .style(theme::secondary_text),
+            text(tr!("Recomendadas", "Recommended")).size(theme::SIZE_M),
+            text(tr!(
+                "Parecidas a las canciones de esta playlist. Agregalas para hacerla más grande.",
+                "Similar to the songs in this playlist. Add them to make it bigger."
+            ))
+            .size(theme::SIZE_S)
+            .style(theme::secondary_text),
         ]
         .spacing(2)
         .width(Length::Fill);
-        let more = button(text("Otras").size(theme::SIZE_S))
+        let more = button(text(tr!("Otras", "Others")).size(theme::SIZE_S))
             .on_press(Message::RecsRefresh(p))
             .padding([4, 10])
             .style(theme::ghost_button);
         let body: Element<'_, Message> = match self.recs.get(&playlist.id) {
             None if playlist.tracks.is_empty() => text(
-                "Agregá canciones con el + del buscador y acá van a aparecer recomendaciones.",
+                tr!("Agregá canciones con el + del buscador y acá van a aparecer recomendaciones.", "Add songs with the + in search and recommendations will show up here."),
             )
             .size(theme::SIZE_S)
             .style(theme::secondary_text)
             .into(),
             None if self.background.is_running() => skeleton::song_rows(3, self.pulse),
             None => text(
-                "Las recomendaciones aparecen cuando Surco encuentra en YouTube alguna canción de esta playlist (por ejemplo, al escucharla).",
+                tr!("Las recomendaciones aparecen cuando Surco encuentra en YouTube alguna canción de esta playlist (por ejemplo, al escucharla).", "Recommendations show up once Surco finds a song from this playlist on YouTube (for example, when you play it)."),
             )
             .size(theme::SIZE_S)
             .style(theme::secondary_text)
             .into(),
             Some(Recs::Loading) => skeleton::song_rows(3, self.pulse),
-            Some(Recs::Failed) => text("No pude traer recomendaciones. Probá con «Otras».")
+            Some(Recs::Failed) => text(tr!("No pude traer recomendaciones. Probá con «Otras».", "Couldn't get recommendations. Try “Others”."))
                 .size(theme::SIZE_S)
                 .style(theme::secondary_text)
                 .into(),
             Some(Recs::Ready(list)) if list.is_empty() => {
-                text("No encontré canciones nuevas para recomendar. Probá con «Otras».")
+                text(tr!("No encontré canciones nuevas para recomendar. Probá con «Otras».", "Found no new songs to recommend. Try “Others”."))
                     .size(theme::SIZE_S)
                     .style(theme::secondary_text)
                     .into()
@@ -595,7 +559,7 @@ impl Surco {
                 .spacing(2)
                 .width(Length::Fill)
                 .clip(true),
-                button(text("Agregar").size(theme::SIZE_S))
+                button(text(tr!("Agregar", "Add")).size(theme::SIZE_S))
                     .on_press(Message::RecAdd(p, i))
                     .padding([4, 10])
                     .style(theme::ghost_button),
@@ -631,15 +595,16 @@ impl Surco {
             .style(theme::list_button(false))
         };
         let mut options = column![option(
-            "Renombrar".into(),
+            tr!("Renombrar", "Rename").into(),
             Message::RenameFromMenu(index),
             false
         )]
         .spacing(2);
         if let Some((files, bytes)) = self.downloads.get(&p.id) {
             options = options.push(option(
-                format!(
+                trf!(
                     "Borrar descargas ({}, {})",
+                    "Delete downloads ({}, {})",
                     crate::view::songs(*files),
                     crate::view::format_bytes(*bytes)
                 ),
@@ -648,7 +613,7 @@ impl Surco {
             ));
         }
         options = options.push(option(
-            "Quitar playlist".into(),
+            tr!("Quitar playlist", "Remove playlist").into(),
             Message::RemovePlaylist(index),
             true,
         ));
@@ -666,9 +631,11 @@ impl Surco {
             .spacing(10),
         )
         .padding(14)
-        .width(300)
+        .width(PLAYLIST_MENU_WIDTH)
         .style(theme::dialog);
-        dialog_backdrop(card, Message::PlaylistMenu(None))
+        let rows = 2 + usize::from(self.downloads.contains_key(&p.id));
+        let size = Size::new(PLAYLIST_MENU_WIDTH, 64.0 + rows as f32 * 37.0);
+        self.anchored(card, size, Message::PlaylistMenu(None))
     }
 
     pub(crate) fn view_song_menu<'a>(&'a self, menu: &'a SongMenu) -> Element<'a, Message> {
@@ -694,7 +661,7 @@ impl Surco {
         }
         let mut col = column![
             column![
-                text("Agregar a…").size(theme::SIZE_M),
+                text(tr!("Agregar a…", "Add to…")).size(theme::SIZE_M),
                 text(format!(
                     "{} · {}",
                     menu.track.title,
@@ -707,9 +674,21 @@ impl Surco {
             .spacing(2)
             .padding([0, 10]),
             column![
-                option("La cola (al final)".into(), AddTarget::Queue, false),
-                option("La cola (que suene después)".into(), AddTarget::Next, false),
-                option("+ Nueva playlist".into(), AddTarget::NewPlaylist, false),
+                option(
+                    tr!("La cola (al final)", "The queue (at the end)").into(),
+                    AddTarget::Queue,
+                    false
+                ),
+                option(
+                    tr!("La cola (que suene después)", "The queue (play next)").into(),
+                    AddTarget::Next,
+                    false
+                ),
+                option(
+                    tr!("+ Nueva playlist", "+ New playlist").into(),
+                    AddTarget::NewPlaylist,
+                    false
+                ),
             ]
             .spacing(2),
         ]
@@ -717,7 +696,7 @@ impl Surco {
         if others > 0 {
             col = col.push(
                 container(
-                    text("Tus playlists")
+                    text(tr!("Tus playlists", "Your playlists"))
                         .size(theme::SIZE_S)
                         .style(theme::secondary_text),
                 )
@@ -731,35 +710,105 @@ impl Surco {
         {
             let name = &self.playlists[p].0.name;
             col = col.push(option(
-                format!("Quitar de «{name}»"),
+                trf!("Quitar de «{name}»", "Remove from “{name}”"),
                 AddTarget::Remove,
                 true,
             ));
         }
+        // Alto aproximado, para saber si entra abajo del mouse.
+        let rows = 3 + others + usize::from(menu.from.is_some());
+        let extra = if others > 0 { 30.0 } else { 0.0 };
+        let height = (70.0 + rows as f32 * 37.0 + extra).min(MENU_MAX);
         let card = container(col.clip(true))
             .padding(14)
-            .width(340)
-            .max_height(460)
+            .width(SONG_MENU_WIDTH)
+            .max_height(MENU_MAX)
             .style(theme::dialog);
-        dialog_backdrop(card, Message::SongMenu(None))
+        self.anchored(
+            card,
+            Size::new(SONG_MENU_WIDTH, height),
+            Message::SongMenu(None),
+        )
+    }
+
+    /// Menú flotante al lado del último clic. Clic afuera lo cierra.
+    pub(crate) fn anchored<'a>(
+        &self,
+        card: impl Into<Element<'a, Message>>,
+        size: Size,
+        close: Message,
+    ) -> Element<'a, Message> {
+        let (at, window) = self.menu_at;
+        let pos = crate::pointer::place(at, size, window);
+        let backdrop = mouse_area(
+            container(Space::new())
+                .width(Length::Fill)
+                .height(Length::Fill),
+        )
+        .on_press(close.clone())
+        .on_right_press(close);
+        let placed = column![
+            Space::new().height(pos.y),
+            row![Space::new().width(pos.x), opaque(card)],
+        ];
+        opaque(stack![backdrop, placed])
+    }
+
+    /// Menú de la flechita de una playlist descargada.
+    pub(crate) fn view_download_menu(&self, index: usize) -> Element<'_, Message> {
+        let Some((p, _)) = self.playlists.get(index) else {
+            return Space::new().into();
+        };
+        let detail = match self.downloads.get(&p.id) {
+            Some((files, bytes)) => {
+                let (n, size) = (
+                    crate::view::songs(*files),
+                    crate::view::format_bytes(*bytes),
+                );
+                tr!(
+                    format!("{n} descargadas ({size})."),
+                    format!("{n} downloaded ({size}).")
+                )
+            }
+            None => tr!("Todavía no se bajó nada.", "Nothing downloaded yet.").to_owned(),
+        };
+        let card = container(
+            column![
+                column![
+                    text(tr!("Descargada", "Downloaded")).size(theme::SIZE_M),
+                    text(detail)
+                        .size(theme::SIZE_S)
+                        .style(theme::secondary_text),
+                ]
+                .spacing(2)
+                .padding([0, 10]),
+                button(
+                    text(tr!("Borrar las descargas", "Delete the downloads"))
+                        .size(theme::SIZE_S)
+                        .style(theme::error_text)
+                )
+                .on_press(Message::DeleteDownloads(index))
+                .width(Length::Fill)
+                .padding([8, 10])
+                .style(theme::list_button(false)),
+            ]
+            .spacing(10),
+        )
+        .padding(14)
+        .width(PLAYLIST_MENU_WIDTH)
+        .style(theme::dialog);
+        self.anchored(
+            card,
+            Size::new(PLAYLIST_MENU_WIDTH, 120.0),
+            Message::DownloadMenu(None),
+        )
     }
 }
 
-/// Diálogo centrado sobre un fondo oscuro; clic afuera (o derecho) cierra.
-fn dialog_backdrop<'a>(
-    card: impl Into<Element<'a, Message>>,
-    close: Message,
-) -> Element<'a, Message> {
-    let backdrop = mouse_area(
-        container(center(opaque(card)))
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .style(theme::backdrop),
-    )
-    .on_press(close.clone())
-    .on_right_press(close);
-    opaque(backdrop)
-}
+const SONG_MENU_WIDTH: f32 = 340.0;
+const PLAYLIST_MENU_WIDTH: f32 = 300.0;
+/// Alto máximo de un menú (después, scroll).
+const MENU_MAX: f32 = 460.0;
 
 #[cfg(test)]
 mod tests {

@@ -237,7 +237,11 @@ impl Surco {
         let (Some(resolver), Some(rt)) = (self.resolver.clone(), RUNTIME.get()) else {
             self.notice = Some(Notice {
                 error: true,
-                text: "Falta yt-dlp para buscar en YouTube.".into(),
+                text: tr!(
+                    "Falta yt-dlp para buscar en YouTube.",
+                    "yt-dlp is missing, so YouTube can't be searched."
+                )
+                .into(),
             });
             return Task::none();
         };
@@ -378,15 +382,16 @@ impl Surco {
         if self.failures_in_a_row >= MAX_FAILURES_IN_A_ROW {
             self.notice = Some(Notice {
                 error: true,
-                text: format!(
-                    "Frené después de {MAX_FAILURES_IN_A_ROW} errores seguidos. Último: {error}"
+                text: trf!(
+                    "Frené después de {MAX_FAILURES_IN_A_ROW} errores seguidos. Último: {error}",
+                    "Stopped after {MAX_FAILURES_IN_A_ROW} errors in a row. Last one: {error}"
                 ),
             });
             return self.finish();
         }
         self.notice = Some(Notice {
             error: true,
-            text: format!("Salteé «{title}»: {error}"),
+            text: trf!("Salteé «{title}»: {error}", "Skipped “{title}”: {error}"),
         });
         // A mano (no automático) para no repetir en bucle con "repetir una".
         match self.active.as_mut().and_then(|a| a.queue.skip(true)) {

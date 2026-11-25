@@ -142,16 +142,19 @@ impl Surco {
     pub(crate) fn view_home(&self) -> Element<'_, Message> {
         let search = row![
             icons::icon(Kind::Search, theme::colors().text_secondary, 18.0),
-            text_input("¿Qué querés escuchar?", "")
-                .on_input(Message::HomeSearch)
-                .padding(12)
-                .size(theme::SIZE_M)
-                .style(theme::input),
+            text_input(
+                tr!("¿Qué querés escuchar?", "What do you want to listen to?"),
+                ""
+            )
+            .on_input(Message::HomeSearch)
+            .padding(12)
+            .size(theme::SIZE_M)
+            .style(theme::input),
         ]
         .spacing(10)
         .align_y(Alignment::Center);
 
-        let mut col = column![text("Inicio").size(theme::SIZE_L), search].spacing(18);
+        let mut col = column![text(tr!("Inicio", "Home")).size(theme::SIZE_L), search].spacing(18);
 
         if let Some(banner) = self.view_ytdlp_banner() {
             col = col.push(banner);
@@ -162,16 +165,16 @@ impl Surco {
             col = col.push(
                 container(
                     column![
-                        text("Todavía no tenés playlists").size(theme::SIZE_M),
-                        text("Importá una de Spotify o YouTube, o armá la tuya con canciones del buscador.")
+                        text(tr!("Todavía no tenés playlists", "You don't have any playlists yet")).size(theme::SIZE_M),
+                        text(tr!("Importá una de Spotify o YouTube, o armá la tuya con canciones del buscador.", "Import one from Spotify or YouTube, or build your own with songs from search."))
                             .size(theme::SIZE_S)
                             .style(theme::secondary_text),
                         row![
-                            button(text("Importar playlist").size(theme::SIZE_S))
+                            button(text(tr!("Importar playlist", "Import playlist")).size(theme::SIZE_S))
                                 .on_press(Message::OpenImport)
                                 .padding([6, 14])
                                 .style(theme::primary_button),
-                            button(text("Crear playlist").size(theme::SIZE_S))
+                            button(text(tr!("Crear playlist", "Create playlist")).size(theme::SIZE_S))
                                 .on_press(Message::NewPlaylist)
                                 .padding([6, 14])
                                 .style(theme::ghost_button),
@@ -189,9 +192,9 @@ impl Surco {
             col = col.push(
                 column![
                     text(if self.home.recent_playlists.is_empty() {
-                        "Tus playlists"
+                        tr!("Tus playlists", "Your playlists")
                     } else {
-                        "Escuchadas hace poco"
+                        tr!("Escuchadas hace poco", "Recently played")
                     })
                     .size(theme::SIZE_M),
                     tiles.wrap().vertical_spacing(10)
@@ -211,7 +214,11 @@ impl Surco {
             )
             .spacing(2);
             col = col.push(
-                column![text("Canciones que escuchaste").size(theme::SIZE_M), list].spacing(10),
+                column![
+                    text(tr!("Canciones que escuchaste", "Songs you played")).size(theme::SIZE_M),
+                    list
+                ]
+                .spacing(10),
             );
         }
 
@@ -326,18 +333,22 @@ impl Surco {
     /// Aviso si falta yt-dlp (con el botón para bajarlo) o si el audio no arrancó.
     pub(crate) fn view_ytdlp_banner(&self) -> Option<Element<'_, Message>> {
         let content: Element<'_, Message> = match &self.ytdlp {
-            YtDlpState::Found(_) => text(format!(
+            YtDlpState::Found(_) => text(trf!(
                 "No se pudo abrir la salida de audio: {}",
+                "Couldn't open the audio output: {}",
                 self.fatal.as_ref()?
             ))
             .size(theme::SIZE_S)
             .style(theme::error_text)
             .into(),
             YtDlpState::Missing => row![
-                text("Surco necesita yt-dlp para buscar y escuchar música de YouTube.")
-                    .size(theme::SIZE_S)
-                    .width(Length::Fill),
-                button(text("Descargar yt-dlp").size(theme::SIZE_S))
+                text(tr!(
+                    "Surco necesita yt-dlp para buscar y escuchar música de YouTube.",
+                    "Surco needs yt-dlp to search and play music from YouTube."
+                ))
+                .size(theme::SIZE_S)
+                .width(Length::Fill),
+                button(text(tr!("Descargar yt-dlp", "Download yt-dlp")).size(theme::SIZE_S))
                     .on_press(Message::DownloadYtDlp)
                     .padding([6, 14])
                     .style(theme::primary_button),
@@ -345,13 +356,18 @@ impl Surco {
             .spacing(12)
             .align_y(Alignment::Center)
             .into(),
-            YtDlpState::Downloading => text("Descargando yt-dlp…").size(theme::SIZE_S).into(),
+            YtDlpState::Downloading => text(tr!("Descargando yt-dlp…", "Downloading yt-dlp…"))
+                .size(theme::SIZE_S)
+                .into(),
             YtDlpState::Failed(e) => row![
-                text(format!("No se pudo descargar yt-dlp: {e}"))
-                    .size(theme::SIZE_S)
-                    .style(theme::error_text)
-                    .width(Length::Fill),
-                button(text("Reintentar").size(theme::SIZE_S))
+                text(trf!(
+                    "No se pudo descargar yt-dlp: {e}",
+                    "Couldn't download yt-dlp: {e}"
+                ))
+                .size(theme::SIZE_S)
+                .style(theme::error_text)
+                .width(Length::Fill),
+                button(text(tr!("Reintentar", "Retry")).size(theme::SIZE_S))
                     .on_press(Message::DownloadYtDlp)
                     .padding([6, 14])
                     .style(theme::ghost_button),

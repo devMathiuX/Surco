@@ -4,7 +4,7 @@
 //! son funciones `fn(&Theme, Status)` que iced llama al dibujar, y así todas
 //! leen la misma paleta sin pasarla a mano por cada vista.
 
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{PoisonError, RwLock};
 
 use iced::theme::Palette;
 use iced::widget::{button, container, slider, text, text_input, toggler};
@@ -20,8 +20,6 @@ pub const RADIUS: f32 = 6.0;
 pub struct Colors {
     /// Clave que se guarda en los ajustes.
     pub id: &'static str,
-    /// Nombre que ve el usuario.
-    pub name: &'static str,
     pub background: Color,
     /// Barra lateral y barra de reproducción.
     pub surface: Color,
@@ -45,7 +43,6 @@ pub struct Colors {
 pub const THEMES: [Colors; 5] = [
     Colors {
         id: "dark",
-        name: "Oscuro",
         background: color!(0x111111),
         surface: color!(0x1A1A1A),
         raised: color!(0x242424),
@@ -62,7 +59,6 @@ pub const THEMES: [Colors; 5] = [
     },
     Colors {
         id: "green",
-        name: "Verde",
         background: color!(0x121212),
         surface: color!(0x000000),
         raised: color!(0x282828),
@@ -79,7 +75,6 @@ pub const THEMES: [Colors; 5] = [
     },
     Colors {
         id: "pink",
-        name: "Rosa",
         background: color!(0x170F14),
         surface: color!(0x21151C),
         raised: color!(0x31202A),
@@ -96,7 +91,6 @@ pub const THEMES: [Colors; 5] = [
     },
     Colors {
         id: "light",
-        name: "Claro",
         background: color!(0xFAFAFA),
         surface: color!(0xF0F0F0),
         raised: color!(0xE2E2E2),
@@ -113,7 +107,6 @@ pub const THEMES: [Colors; 5] = [
     },
     Colors {
         id: "light-pink",
-        name: "Claro rosa",
         background: color!(0xFFF7FA),
         surface: color!(0xFCECF3),
         raised: color!(0xF6D7E5),
@@ -130,29 +123,140 @@ pub const THEMES: [Colors; 5] = [
     },
 ];
 
-static CURRENT: AtomicUsize = AtomicUsize::new(0);
+/// Índice del tema personalizado: va después de los de [`THEMES`].
+pub const CUSTOM: usize = THEMES.len();
+
+/// Colores de partida del tema personalizado.
+pub const CUSTOM_DEFAULT: (Color, Color) = (color!(0x14161C), color!(0xF2A65A));
+
+/// Tema activo: una entrada de [`THEMES`] o un tema personalizado armado con
+/// [`derive`], que se filtra a propósito (~150 bytes por cada color que el
+/// usuario elige) para que [`colors`] pueda devolver una referencia estática.
+static ACTIVE: RwLock<&'static Colors> = RwLock::new(&THEMES[0]);
 
 /// Colores del tema activo.
 pub fn colors() -> &'static Colors {
-    &THEMES[CURRENT.load(Ordering::Relaxed).min(THEMES.len() - 1)]
+    *ACTIVE.read().unwrap_or_else(PoisonError::into_inner)
 }
 
-/// Cambia el tema activo. Devuelve el `Theme` de iced que le corresponde.
-pub fn set(index: usize) -> Theme {
-    CURRENT.store(index.min(THEMES.len() - 1), Ordering::Relaxed);
+/// Cambia el tema activo. `custom` son los dos colores (fondo y acento) del
+/// tema personalizado, que se usan si `index` es [`CUSTOM`]. Devuelve el
+/// `Theme` de iced que le corresponde.
+pub fn set(index: usize, custom: (Color, Color)) -> Theme {
+    let active: &'static Colors = if index >= CUSTOM {
+        Box::leak(Box::new(derive(custom.0, custom.1)))
+    } else {
+        &THEMES[index]
+    };
+    *ACTIVE.write().unwrap_or_else(PoisonError::into_inner) = active;
     iced_theme()
 }
 
 /// Índice del tema con esa clave.
 pub fn index_of(id: &str) -> Option<usize> {
+    if id == CUSTOM_ID {
+        return Some(CUSTOM);
+    }
     THEMES.iter().position(|t| t.id == id)
+}
+
+/// Clave del tema `index` para guardarla en los ajustes.
+pub fn id_of(index: usize) -> &'static str {
+    THEMES.get(index).map_or(CUSTOM_ID, |t| t.id)
+}
+
+const CUSTOM_ID: &str = "custom";
+
+/// Nombre del tema en el idioma elegido.
+pub fn name_of(index: usize) -> &'static str {
+    match THEMES.get(index).map(|t| t.id) {
+        Some("dark") => tr!("Oscuro", "Dark"),
+        Some("green") => tr!("Verde", "Green"),
+        Some("pink") => tr!("Rosa", "Pink"),
+        Some("light") => tr!("Claro", "Light"),
+        Some("light-pink") => tr!("Claro rosa", "Light pink"),
+        Some(other) => other,
+        None => tr!("Personalizado", "Custom"),
+    }
+}
+
+/// Arma un tema completo a partir de dos colores: el fondo y el acento. Las
+/// superficies salen de aclarar (fondo oscuro) u oscurecer (fondo claro) el
+/// fondo, y los textos se eligen para que se lean sobre él.
+pub fn derive(background: Color, accent: Color) -> Colors {
+    let background = Color {
+        a: 1.0,
+        ..background
+    };
+    let accent = Color { a: 1.0, ..accent };
+    let dark = luminance(background) < 0.4;
+    let toward = if dark { Color::WHITE } else { Color::BLACK };
+    let text = if dark {
+        color!(0xEDEDED)
+    } else {
+        color!(0x1A1A1A)
+    };
+    let base = if dark { THEMES[0] } else { THEMES[3] };
+    Colors {
+        id: CUSTOM_ID,
+        background,
+        surface: mix(background, toward, 0.04),
+        raised: mix(background, toward, 0.10),
+        hover: mix(background, toward, 0.07),
+        border: mix(background, toward, 0.12),
+        rail: mix(background, toward, 0.20),
+        text,
+        text_secondary: mix(background, text, 0.55),
+        accent,
+        accent_hover: mix(accent, toward, 0.18),
+        on_accent: if luminance(accent) > 0.45 {
+            color!(0x111111)
+        } else {
+            Color::WHITE
+        },
+        danger: base.danger,
+        warning: base.warning,
+    }
+}
+
+/// Lee un color `#RRGGBB` o `#RGB` (el `#` es opcional).
+pub fn parse_hex(s: &str) -> Option<Color> {
+    let s = s.trim().trim_start_matches('#');
+    if !s.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    let s = match s.len() {
+        6 => s.to_owned(),
+        3 => s.chars().flat_map(|c| [c, c]).collect(),
+        _ => return None,
+    };
+    let v = u32::from_str_radix(&s, 16).ok()?;
+    Some(Color::from_rgb8((v >> 16) as u8, (v >> 8) as u8, v as u8))
+}
+
+/// Escribe un color como `#RRGGBB`.
+pub fn to_hex(c: Color) -> String {
+    let [r, g, b, _] = c.into_rgba8();
+    format!("#{r:02X}{g:02X}{b:02X}")
+}
+
+/// Luminancia relativa (0 negro, 1 blanco).
+fn luminance(c: Color) -> f32 {
+    let lin = |v: f32| {
+        if v <= 0.04045 {
+            v / 12.92
+        } else {
+            ((v + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    0.2126 * lin(c.r) + 0.7152 * lin(c.g) + 0.0722 * lin(c.b)
 }
 
 /// `Theme` de iced para los widgets que no tienen estilo propio.
 pub fn iced_theme() -> Theme {
     let c = colors();
     Theme::custom(
-        format!("Surco {}", c.name),
+        format!("Surco {}", c.id),
         Palette {
             background: c.background,
             text: c.text,
@@ -242,6 +346,14 @@ pub fn input(_: &Theme, status: text_input::Status) -> text_input::Style {
         placeholder: c.text_secondary,
         value: c.text,
         selection: c.accent.scale_alpha(0.35),
+    }
+}
+
+/// Campo con un valor que no se puede usar (borde rojo).
+pub fn input_error(theme: &Theme, status: text_input::Status) -> text_input::Style {
+    text_input::Style {
+        border: border::rounded(RADIUS).width(1).color(colors().danger),
+        ..input(theme, status)
     }
 }
 
@@ -439,14 +551,6 @@ pub fn tile(_: &Theme, status: button::Status) -> button::Style {
     }
 }
 
-/// Fondo oscuro detrás de un diálogo.
-pub fn backdrop(_: &Theme) -> container::Style {
-    container::Style {
-        background: Some(Color::BLACK.scale_alpha(0.45).into()),
-        ..container::Style::default()
-    }
-}
-
 /// Diálogo flotante.
 pub fn dialog(_: &Theme) -> container::Style {
     let c = colors();
@@ -479,5 +583,28 @@ mod tests {
             assert_eq!(index_of(t.id), Some(i));
         }
         assert_eq!(index_of("nope"), None);
+        assert_eq!(index_of(id_of(CUSTOM)), Some(CUSTOM));
+    }
+
+    #[test]
+    fn hex_round_trips() {
+        let c = parse_hex("#1db954").unwrap();
+        assert_eq!(to_hex(c), "#1DB954");
+        assert_eq!(parse_hex("FFFFFF"), Some(Color::WHITE));
+        assert_eq!(parse_hex("#12345"), None);
+        assert_eq!(parse_hex("#7cf"), parse_hex("#77CCFF"));
+        assert_eq!(parse_hex("#GGGGGG"), None);
+    }
+
+    #[test]
+    fn custom_theme_text_is_readable() {
+        let dark = derive(color!(0x101010), color!(0xFFD000));
+        assert!(luminance(dark.text) > 0.7);
+        assert!(luminance(dark.surface) > luminance(dark.background));
+        assert_eq!(dark.on_accent, color!(0x111111));
+        let light = derive(color!(0xF5F0E6), color!(0x2040A0));
+        assert!(luminance(light.text) < 0.1);
+        assert!(luminance(light.surface) < luminance(light.background));
+        assert_eq!(light.on_accent, Color::WHITE);
     }
 }

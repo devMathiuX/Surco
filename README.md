@@ -18,7 +18,9 @@ Funciona en **Linux**, **Windows** y **macOS** (Intel y Apple Silicon).
 - **Editar la cola**: agregá, quitá y reordená canciones arrastrándolas.
 - **Elegir otro video** si Surco encontró una versión equivocada de una canción (en vivo, cover, etc.).
 - **Usar las teclas multimedia** del teclado y los controles de música del sistema.
-- **Cambiar el tema**: oscuro, verde, rosa, claro y claro rosa.
+- **Escuchar sin conexión**: la flechita de una playlist baja todas sus canciones y las deja guardadas.
+- **Cambiar el tema**: oscuro, verde, rosa, claro, claro rosa o uno **personalizado** con tus dos colores.
+- **Español o inglés**: elegí el idioma en los ajustes (de entrada usa el de tu computadora).
 
 Todo lo que importás queda guardado en tu computadora: playlists, videos elegidos, historial y ajustes. La pantalla de **Inicio** te muestra tus playlists y lo último que escuchaste.
 
@@ -162,7 +164,9 @@ Escribí en el buscador del **Inicio** o entrá a **Buscar** en la barra lateral
 - **Quitar una canción:** el **+** de la canción dentro de la playlist, y **Quitar de…**.
 - **Cambiar el nombre:** el lápiz al lado del nombre, o clic derecho sobre la playlist en la barra lateral > **Renombrar**. También sirve para guardar una radio: con nombre deja de reemplazarse por la próxima.
 - **Cambiar el orden:** arrastrá la playlist en la barra lateral.
-- **Más opciones:** clic derecho sobre una playlist en la barra lateral para renombrarla, borrar sus descargas o quitarla.
+- **Descargarla para escucharla sin conexión:** la **flechita** de arriba a la derecha de la playlist. Se pone del color de acento y baja las canciones de a una (al lado ves cuántas van). Si la tocás de nuevo, te deja **borrar las descargas**.
+- **Quitarla:** la **×** de arriba a la derecha. Las canciones descargadas que no estén en otra playlist descargada se borran del disco.
+- **Más opciones:** clic derecho sobre una playlist en la barra lateral para renombrarla, borrar sus descargas o quitarla. Los menús se abren al lado del mouse.
 - **Buscar dentro de una playlist:** el buscador de arriba de la lista (Ctrl+F te lleva ahí).
 - **Recomendadas:** al final de cada playlist hay canciones parecidas. **Agregar** la suma a la playlist, un clic la escucha, y **Otras** trae más.
 
@@ -176,7 +180,7 @@ Abrila con **Cola** en la barra lateral o con el botón de la lista en la barra 
 
 ### Si suena la versión equivocada
 
-Cuando Surco no está seguro de haber encontrado la canción correcta, la marca como **"dudosa"** en la lista. Hacé clic en "dudosa", o en **Cambiar video** en la barra de abajo, y elegí otro video de la lista. Surco recuerda tu elección.
+Cuando Surco no está seguro de haber encontrado la canción correcta, la marca como **"dudosa"** en la lista. Hacé clic en "dudosa", o en el botón de **cambiar video** de la barra de abajo (un video con flechas alrededor), y elegí otro video de la lista. Surco recuerda tu elección.
 
 ### Radio
 
@@ -188,9 +192,10 @@ El botón de ondas de la barra de abajo arma la playlist "Radio" con unas 25 can
 
 El engranaje de arriba a la izquierda abre los ajustes:
 
-- **Tema** de colores.
+- **Idioma:** español o inglés. De entrada, español si tu computadora está en español, e inglés si no.
+- **Tema** de colores. Con **Personalizado** elegís el fondo y el acento: tocá una muestra o escribí el color (`#1E2A3A`). Los demás colores salen solos de esos dos.
 - **Portadas en la lista** de canciones.
-- **Precargar canciones:** baja de antemano las próximas 5 canciones, o toda la playlist, para que no haya que esperar ni dependan de la conexión. Usa hasta 2 GB de disco. **Vaciar** borra todo lo descargado, y en la lista de abajo podés borrar solo lo de una playlist. También está **Borrar descargas** arriba de cada playlist.
+- **Precargar canciones:** baja de antemano las próximas 5 canciones, o toda la playlist, para que no haya que esperar ni dependan de la conexión. Usa hasta 2 GB de disco y, al pasarse, borra lo menos escuchado. **Vaciar** borra esa precarga, pero no las playlists descargadas con la flechita (esas se quedan hasta que borres sus descargas o quites la playlist).
 - **Spotify:** claves propias de la Web API, opcionales (ver abajo).
 
 ### Atajos de teclado

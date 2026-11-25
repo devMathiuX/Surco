@@ -3,6 +3,8 @@
 // En Windows, release sin ventana de consola.
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
+#[macro_use]
+mod i18n;
 mod bar;
 mod config;
 mod covers;
@@ -10,8 +12,10 @@ mod home;
 mod icons;
 mod library;
 mod media;
+mod offline;
 mod playback;
 mod playlists;
+mod pointer;
 mod precache;
 mod queue_view;
 mod radio;
@@ -208,6 +212,8 @@ struct Surco {
     recorded: Option<Source>,
     /// Ajustes de la pantalla de ajustes.
     settings: Settings,
+    /// Lo que se escribe en los campos de color del tema personalizado.
+    custom_hex: [String; 2],
     /// Qué muestra el panel principal.
     screen: Screen,
     theme: Theme,
@@ -216,6 +222,8 @@ struct Surco {
     precache: PrecacheState,
     /// Hay que revisar qué precargar (cambió la cola, una resolución o un ajuste).
     precache_dirty: bool,
+    /// IDs de las playlists descargadas (ver `offline`).
+    offline: std::collections::HashSet<String>,
     radio_loading: bool,
     cover_jobs: CoverJobs,
     /// Pidiendo parecidas para la cola sin fin.
@@ -232,6 +240,12 @@ struct Surco {
     song_menu: Option<playlists::SongMenu>,
     /// Playlist de la barra lateral con el menú de clic derecho abierto.
     playlist_menu: Option<usize>,
+    /// Menú de la flechita de una playlist descargada (borrar descargas).
+    download_menu: Option<usize>,
+    /// Último clic (y tamaño de la ventana), para abrir menús al lado.
+    pointer: (iced::Point, iced::Size),
+    /// Dónde se abrió el menú que está abierto.
+    menu_at: (iced::Point, iced::Size),
     /// Cambia con cada cambio de pantalla (ver `Surco::style`).
     repaint: u8,
     /// Mutear y desplegable del volumen.
@@ -352,6 +366,10 @@ enum Message {
     SongMenuPick(playlists::AddTarget),
     /// Menú de clic derecho de una playlist de la barra lateral.
     PlaylistMenu(Option<usize>),
+    /// Menú de la flechita de una playlist descargada.
+    DownloadMenu(Option<usize>),
+    /// Clic en (posición, tamaño de la ventana).
+    Pointer(iced::Point, iced::Size),
     VolumeUi(bar::VolumeMsg),
     /// Abrir una playlist y empezar a renombrarla.
     RenameFromMenu(usize),
@@ -359,7 +377,10 @@ enum Message {
     RecsRefresh(usize),
     RecAdd(usize, usize),
     RecPlay(usize, usize),
+    /// Dejar de descargar una playlist y borrar su audio.
     DeleteDownloads(usize),
+    /// Flechita: descargar la playlist.
+    StartOffline(usize),
     /// Paso del latido de los esqueletos de carga.
     Tick,
     Search(search::SearchMsg),
@@ -422,11 +443,13 @@ impl Surco {
             store: library::open(),
             recorded: None,
             settings: Settings::default(),
+            custom_hex: Default::default(),
             screen: Screen::Home,
             theme: theme::iced_theme(),
             provider,
             precache: PrecacheState::default(),
             precache_dirty: false,
+            offline: Default::default(),
             radio_loading: false,
             cover_jobs: CoverJobs::default(),
             extending: false,
@@ -437,6 +460,9 @@ impl Surco {
             home: home::HomeState::default(),
             song_menu: None,
             playlist_menu: None,
+            download_menu: None,
+            pointer: Default::default(),
+            menu_at: Default::default(),
             repaint: 0,
             volume_ui: bar::VolumeUi::default(),
             renaming: None,
@@ -527,7 +553,7 @@ impl Surco {
                 return Task::perform(
                     async {
                         rfd::AsyncFileDialog::new()
-                            .set_title("Importar CSV de Exportify")
+                            .set_title(tr!("Importar CSV de Exportify", "Import Exportify CSV"))
                             .add_filter("CSV", &["csv"])
                             .pick_file()
                             .await
@@ -552,6 +578,7 @@ impl Surco {
             }
             Message::RemovePlaylist(i) => {
                 self.playlist_menu = None;
+                self.forget_offline(i);
                 self.remove_playlist(i);
             }
             Message::FocusImport | Message::OpenImport => {
@@ -620,9 +647,18 @@ impl Surco {
                 }
             }
             Message::RenameCommit => self.commit_rename(),
-            Message::SongMenu(menu) => self.song_menu = menu.map(|m| *m),
+            Message::Pointer(at, window) => self.pointer = (at, window),
+            Message::SongMenu(menu) => {
+                self.menu_at = self.pointer;
+                self.song_menu = menu.map(|m| *m);
+            }
+            Message::DownloadMenu(menu) => {
+                self.menu_at = self.pointer;
+                self.download_menu = menu;
+            }
             Message::VolumeUi(msg) => return self.on_volume_ui(msg),
             Message::PlaylistMenu(menu) => {
+                self.menu_at = self.pointer;
                 self.playlist_menu = menu;
                 if menu.is_some() {
                     self.refresh_downloads();
@@ -641,8 +677,10 @@ impl Surco {
             Message::RecPlay(p, i) => return self.play_rec(p, i),
             Message::DeleteDownloads(p) => {
                 self.playlist_menu = None;
-                self.delete_downloads(p);
+                self.download_menu = None;
+                self.stop_offline(p);
             }
+            Message::StartOffline(p) => self.start_offline(p),
             Message::Tick => self.pulse = self.pulse.wrapping_add(1),
             Message::ListScrolled(offset, height) => {
                 let before = view::visible_rows(self.list_view, usize::MAX);
@@ -667,6 +705,7 @@ impl Surco {
                 self.renaming = None;
                 self.song_menu = None;
                 self.playlist_menu = None;
+                self.download_menu = None;
             }
             Message::WindowHandle(hwnd) => {
                 if self.media.is_none() && std::env::var_os("SURCO_NO_MEDIA_KEYS").is_none() {
@@ -799,8 +838,11 @@ impl Surco {
         if csv.is_none() && surco_spotify::parse_playlist_id(&input).is_none() {
             self.notice = Some(Notice {
                 error: true,
-                text: "Eso no parece un link de playlist de Spotify o YouTube, ni un archivo .csv."
-                    .into(),
+                text: tr!(
+                    "Eso no parece un link de playlist de Spotify o YouTube, ni un archivo .csv.",
+                    "That doesn't look like a Spotify or YouTube playlist link, or a .csv file."
+                )
+                .into(),
             });
             return Task::none();
         }
@@ -885,7 +927,9 @@ impl Surco {
     /// Qué pantalla (y playlist, y si hay un diálogo) se ve: al cambiar, se
     /// redibuja todo.
     fn page(&self) -> (Screen, Option<usize>, bool) {
-        let dialog = self.song_menu.is_some() || self.playlist_menu.is_some();
+        let dialog = self.song_menu.is_some()
+            || self.playlist_menu.is_some()
+            || self.download_menu.is_some();
         (self.screen, self.selected, dialog)
     }
 

@@ -5,9 +5,10 @@ use iced::widget::{
     button, column, container, image, mouse_area, row, scrollable, stack, text, text_input,
     toggler, tooltip, Column, Id, Space,
 };
-use iced::{mouse, Alignment, Element, Length};
+use iced::{mouse, Alignment, Color, Element, Length};
 use surco_core::{format_duration, Playlist, Track};
 
+use crate::i18n::{self, Lang};
 use crate::icons::{self, Kind};
 use crate::playback::TrackRes;
 use crate::playlists::{OWN_SOURCE, RENAME_INPUT};
@@ -45,16 +46,20 @@ impl Surco {
             self.view_player_bar()
         ]
         .into();
-        if let Some(menu) = &self.song_menu {
-            return stack![app, self.view_song_menu(menu)].into();
-        }
-        if let Some(i) = self.playlist_menu {
-            return stack![app, self.view_playlist_menu(i)].into();
-        }
-        match self.view_volume_popup() {
-            Some(popup) => stack![app, popup].into(),
+        let layer = if let Some(menu) = &self.song_menu {
+            Some(self.view_song_menu(menu))
+        } else if let Some(i) = self.playlist_menu {
+            Some(self.view_playlist_menu(i))
+        } else if let Some(i) = self.download_menu {
+            Some(self.view_download_menu(i))
+        } else {
+            self.view_volume_popup()
+        };
+        let app = match layer {
+            Some(layer) => stack![app, layer].into(),
             None => app,
-        }
+        };
+        crate::pointer::Pointer::new(app, Message::Pointer).into()
     }
 
     pub(crate) fn view_sidebar(&self) -> Element<'_, Message> {
@@ -132,26 +137,31 @@ impl Surco {
             .map(|a| a.queue.len().saturating_sub(a.queue.pos() + 1))
             .unwrap_or(0);
         let nav = column![
-            nav(Kind::Home, "Inicio", Screen::Home, Message::GoHome),
+            nav(
+                Kind::Home,
+                tr!("Inicio", "Home"),
+                Screen::Home,
+                Message::GoHome
+            ),
             nav(
                 Kind::Search,
-                "Buscar",
+                tr!("Buscar", "Search"),
                 Screen::Search,
                 Message::Search(crate::search::SearchMsg::Open)
             ),
             nav(
                 Kind::Queue,
                 if queue_len > 0 {
-                    "Cola"
+                    tr!("Cola", "Queue")
                 } else {
-                    "Cola (vacía)"
+                    tr!("Cola (vacía)", "Queue (empty)")
                 },
                 Screen::Queue,
                 Message::ToggleQueue
             ),
             nav(
                 Kind::Import,
-                "Importar",
+                tr!("Importar", "Import"),
                 Screen::Import,
                 Message::OpenImport
             ),
@@ -171,7 +181,7 @@ impl Surco {
             .on_press(Message::ToggleSettings)
             .padding(4)
             .style(theme::icon_button),
-            container(text("Ajustes").size(theme::SIZE_S))
+            container(text(tr!("Ajustes", "Settings")).size(theme::SIZE_S))
                 .padding(6)
                 .style(theme::card),
             tooltip::Position::Bottom,
@@ -189,7 +199,7 @@ impl Surco {
         .padding(0)
         .style(theme::list_button(false));
         let library_header = row![
-            text("Tu biblioteca")
+            text(tr!("Tu biblioteca", "Your library"))
                 .size(theme::SIZE_S)
                 .style(theme::secondary_text)
                 .width(Length::Fill),
@@ -198,7 +208,7 @@ impl Surco {
                     .on_press(Message::NewPlaylist)
                     .padding(4)
                     .style(theme::icon_button),
-                container(text("Nueva playlist").size(theme::SIZE_S))
+                container(text(tr!("Nueva playlist", "New playlist")).size(theme::SIZE_S))
                     .padding(6)
                     .style(theme::card),
                 tooltip::Position::Bottom,
@@ -230,33 +240,36 @@ impl Surco {
 
     /// Pantalla "Importar": pegar un link o elegir un CSV.
     pub(crate) fn view_import(&self) -> Element<'_, Message> {
-        let input = text_input("Pegá el link de la playlist", &self.import_input)
-            .id(Id::new(IMPORT_INPUT))
-            .on_input(Message::ImportInputChanged)
-            .on_submit(Message::Import)
-            .padding(10)
-            .size(theme::SIZE_M)
-            .style(theme::input);
-        let import = button(text("Importar").size(theme::SIZE_S))
+        let input = text_input(
+            tr!("Pegá el link de la playlist", "Paste the playlist link"),
+            &self.import_input,
+        )
+        .id(Id::new(IMPORT_INPUT))
+        .on_input(Message::ImportInputChanged)
+        .on_submit(Message::Import)
+        .padding(10)
+        .size(theme::SIZE_M)
+        .style(theme::input);
+        let import = button(text(tr!("Importar", "Import")).size(theme::SIZE_S))
             .on_press_maybe((!self.importing).then_some(Message::Import))
             .padding([10, 16])
             .style(theme::primary_button);
-        let pick_csv = button(text("Elegir CSV…").size(theme::SIZE_S))
+        let pick_csv = button(text(tr!("Elegir CSV…", "Choose CSV…")).size(theme::SIZE_S))
             .on_press_maybe((!self.importing).then_some(Message::PickCsv))
             .padding([6, 12])
             .style(theme::ghost_button);
         let hint = |t: &'static str| text(t).size(theme::SIZE_S).style(theme::secondary_text);
         let mut col = column![
             column![
-                text("Importar").size(theme::SIZE_L),
-                hint("Traé tus playlists de Spotify, YouTube o YouTube Music pegando el link (Ctrl+L)."),
+                text(tr!("Importar", "Import")).size(theme::SIZE_L),
+                hint(tr!("Traé tus playlists de Spotify, YouTube o YouTube Music pegando el link (Ctrl+L).", "Bring your playlists from Spotify, YouTube or YouTube Music by pasting the link (Ctrl+L).")),
             ]
             .spacing(4),
             row![input, import].spacing(8).align_y(Alignment::Center),
             column![
-                hint("• Spotify: Compartir > Copiar enlace a la playlist."),
-                hint("• YouTube y YouTube Music: el link de la playlist, o un video que esté dentro de una."),
-                hint("• Un archivo CSV, por ejemplo exportado desde exportify.net."),
+                hint(tr!("• Spotify: Compartir > Copiar enlace a la playlist.", "• Spotify: Share > Copy link to playlist.")),
+                hint(tr!("• YouTube y YouTube Music: el link de la playlist, o un video que esté dentro de una.", "• YouTube and YouTube Music: the playlist link, or a video that's inside one.")),
+                hint(tr!("• Un archivo CSV, por ejemplo exportado desde exportify.net.", "• A CSV file, for example exported from exportify.net.")),
             ]
             .spacing(4),
             pick_csv,
@@ -269,7 +282,7 @@ impl Surco {
         if self.importing {
             col = col.push(
                 column![
-                    text("Importando…")
+                    text(tr!("Importando…", "Importing…"))
                         .size(theme::SIZE_S)
                         .style(theme::secondary_text),
                     skeleton::song_rows(6, self.pulse),
@@ -288,9 +301,23 @@ impl Surco {
     ) -> Element<'a, Message> {
         let total_ms: u64 = p.tracks.iter().map(|t| t.duration_ms).sum();
         let origin = match source {
-            "radio" => "canciones parecidas, del Mix de YouTube".to_owned(),
-            OWN_SOURCE => "playlist tuya".to_owned(),
-            _ => format!("importada desde {source}"),
+            "radio" => tr!(
+                "canciones parecidas, del Mix de YouTube",
+                "similar songs, from the YouTube Mix"
+            )
+            .to_owned(),
+            OWN_SOURCE => tr!("playlist tuya", "your playlist").to_owned(),
+            _ if !i18n::en() => format!("importada desde {source}"),
+            // Los nombres de origen se guardan en español (los da el importador).
+            _ => {
+                let source = match source {
+                    "reproductor web de Spotify" => "the Spotify web player",
+                    "Web API de Spotify" => "the Spotify Web API",
+                    "página embed" => "the Spotify embed page",
+                    other => other,
+                };
+                format!("imported from {source}")
+            }
         };
         let mut info = format!(
             "{} · {} · {origin}",
@@ -303,12 +330,13 @@ impl Surco {
             .is_some_and(|a| a.origin == Some(index))
             && self.precache.target > 0
         {
-            info.push_str(&format!(
+            info.push_str(&trf!(
                 " · precargadas {} de {}{}",
+                " · preloaded {} of {}{}",
                 self.precache.ready,
                 self.precache.target,
                 if self.precache.running.is_some() {
-                    " (bajando…)"
+                    tr!(" (bajando…)", " (downloading…)")
                 } else {
                     ""
                 }
@@ -316,14 +344,14 @@ impl Surco {
         }
         let name: Element<'_, Message> = match &self.renaming {
             Some((r, value)) if *r == index => row![
-                text_input("Nombre de la playlist", value)
+                text_input(tr!("Nombre de la playlist", "Playlist name"), value)
                     .id(Id::new(RENAME_INPUT))
                     .on_input(Message::RenameInput)
                     .on_submit(Message::RenameCommit)
                     .padding(6)
                     .size(theme::SIZE_L)
                     .style(theme::input),
-                button(text("Guardar").size(theme::SIZE_S))
+                button(text(tr!("Guardar", "Save")).size(theme::SIZE_S))
                     .on_press(Message::RenameCommit)
                     .padding([6, 12])
                     .style(theme::primary_button),
@@ -344,7 +372,7 @@ impl Surco {
                     .on_press(Message::StartRename(index))
                     .padding(6)
                     .style(theme::icon_button),
-                    container(text("Renombrar").size(theme::SIZE_S))
+                    container(text(tr!("Renombrar", "Rename")).size(theme::SIZE_S))
                         .padding(6)
                         .style(theme::card),
                     tooltip::Position::Bottom,
@@ -354,24 +382,65 @@ impl Surco {
             .align_y(Alignment::Center)
             .into(),
         };
-        let small = |label: String, msg: Message| {
-            button(text(label).size(theme::SIZE_S))
-                .on_press(msg)
-                .padding([4, 10])
-                .style(theme::ghost_button)
+        let tip = |content: Element<'a, Message>, label: &'static str| -> Element<'a, Message> {
+            tooltip(
+                content,
+                container(text(label).size(theme::SIZE_S))
+                    .padding(6)
+                    .style(theme::card),
+                tooltip::Position::Bottom,
+            )
+            .into()
         };
-        let mut actions = row![].spacing(8);
-        if let Some((files, bytes)) = self.downloads.get(&p.id) {
-            actions = actions.push(small(
-                format!(
-                    "Borrar descargas ({}, {})",
-                    songs(*files),
-                    format_bytes(*bytes)
-                ),
-                Message::DeleteDownloads(index),
-            ));
+        // Flechita: descargar la playlist; si ya está, en acento y abre el
+        // menú para borrar las descargas.
+        let offline = self.is_offline(index);
+        let download = button(icons::icon(
+            Kind::Download,
+            if offline {
+                theme::colors().accent
+            } else {
+                theme::colors().text_secondary
+            },
+            18.0,
+        ))
+        .on_press(if offline {
+            Message::DownloadMenu(Some(index))
+        } else {
+            Message::StartOffline(index)
+        })
+        .padding(6)
+        .style(theme::icon_button);
+        let mut actions = row![].spacing(4).align_y(Alignment::Center);
+        if let Some((done, total)) = self.offline_progress(index) {
+            if done < total {
+                actions = actions.push(
+                    text(format!("{done}/{total}"))
+                        .size(theme::SIZE_S)
+                        .style(theme::secondary_text),
+                );
+            }
         }
-        actions = actions.push(small("Quitar".into(), Message::RemovePlaylist(index)));
+        actions = actions.push(tip(
+            download.into(),
+            if offline {
+                tr!("Descargada", "Downloaded")
+            } else {
+                tr!("Descargar", "Download")
+            },
+        ));
+        actions = actions.push(tip(
+            button(icons::icon(
+                Kind::Close,
+                theme::colors().text_secondary,
+                16.0,
+            ))
+            .on_press(Message::RemovePlaylist(index))
+            .padding(7)
+            .style(theme::icon_button)
+            .into(),
+            tr!("Quitar playlist", "Remove playlist"),
+        ));
         let header = column![
             row![container(name).width(Length::Fill), actions]
                 .spacing(16)
@@ -399,19 +468,19 @@ impl Surco {
         let rows = Column::with_children(shown[first..last].iter().map(|&(i, t)| {
             let playing = self.now_in_playlist() == Some((index, i));
             let badge: Element<'_, Message> = match self.resolution(t) {
-                Some(TrackRes::Resolving) => text("buscando…")
+                Some(TrackRes::Resolving) => text(tr!("buscando…", "searching…"))
                     .size(theme::SIZE_S)
                     .style(theme::secondary_text)
                     .into(),
                 Some(TrackRes::Done(m)) if m.is_doubtful() => {
-                    button(text("dudosa").size(theme::SIZE_S))
+                    button(text(tr!("dudosa", "unsure")).size(theme::SIZE_S))
                         .on_press(Message::OpenChooser(Some((index, i))))
                         .padding([2, 8])
                         .style(theme::ghost_button)
                         .into()
                 }
                 Some(TrackRes::Failed(e)) => tooltip(
-                    text("sin match")
+                    text(tr!("sin match", "no match"))
                         .size(theme::SIZE_S)
                         .style(theme::error_text),
                     container(text(e).size(theme::SIZE_S))
@@ -499,12 +568,15 @@ impl Surco {
         if !p.tracks.is_empty() {
             let mut search = row![
                 icons::icon(Kind::Search, theme::colors().text_secondary, 18.0),
-                text_input("Buscar en la playlist", query)
-                    .id(Id::new(FILTER_INPUT))
-                    .on_input(Message::FilterChanged)
-                    .padding(8)
-                    .size(theme::SIZE_S)
-                    .style(theme::input),
+                text_input(
+                    tr!("Buscar en la playlist", "Search in the playlist"),
+                    query
+                )
+                .id(Id::new(FILTER_INPUT))
+                .on_input(Message::FilterChanged)
+                .padding(8)
+                .size(theme::SIZE_S)
+                .style(theme::input),
             ]
             .spacing(8)
             .align_y(Alignment::Center);
@@ -524,23 +596,27 @@ impl Surco {
         }
         if !query.trim().is_empty() && !p.tracks.iter().any(|t| matches_filter(t, query)) {
             col = col.push(
-                text(format!("Nada coincide con «{}».", query.trim()))
-                    .size(theme::SIZE_S)
-                    .style(theme::secondary_text),
+                text(trf!(
+                    "Nada coincide con «{}».",
+                    "Nothing matches “{}”.",
+                    query.trim()
+                ))
+                .size(theme::SIZE_S)
+                .style(theme::secondary_text),
             );
         }
         if p.tracks.is_empty() {
             col = col.push(
                 column![
-                    text("Está vacía. Buscá canciones y agregalas con el + de cada una (o con clic derecho), o sumá de las recomendadas.")
+                    text(tr!("Está vacía. Buscá canciones y agregalas con el + de cada una (o con clic derecho), o sumá de las recomendadas.", "It's empty. Search for songs and add them with the + on each one (or right-click), or add some of the recommended ones."))
                         .size(theme::SIZE_S)
                         .style(theme::secondary_text),
                     // Por si en realidad querían pegar el link de una playlist.
                     row![
-                        text("¿Querías traer una playlist de Spotify o YouTube?")
+                        text(tr!("¿Querías traer una playlist de Spotify o YouTube?", "Did you want to bring a playlist from Spotify or YouTube?"))
                             .size(theme::SIZE_S)
                             .style(theme::secondary_text),
-                        button(text("Importar una playlist").size(theme::SIZE_S))
+                        button(text(tr!("Importar una playlist", "Import a playlist")).size(theme::SIZE_S))
                             .on_press(Message::OpenImport)
                             .padding([4, 10])
                             .style(theme::ghost_button),
@@ -563,7 +639,7 @@ impl Surco {
         .into()
     }
 
-    /// Pantalla de ajustes: tema, portadas, precarga y radio automática.
+    /// Pantalla de ajustes: idioma, tema, portadas, precarga y radio automática.
     pub(crate) fn view_settings(&self) -> Element<'_, Message> {
         let section = |title: &'static str, hint: &'static str| {
             column![
@@ -572,20 +648,35 @@ impl Surco {
             ]
             .spacing(2)
         };
+        let sw = |c, size: u32| {
+            container(Space::new())
+                .width(size)
+                .height(size)
+                .style(theme::swatch(c))
+        };
 
-        // Temas: botón con dos muestras de color (fondo y acento).
-        let themes = row(theme::THEMES.iter().enumerate().map(|(i, t)| {
-            let sw = |c| {
-                container(Space::new())
-                    .width(14)
-                    .height(14)
-                    .style(theme::swatch(c))
-            };
+        let languages = row(Lang::ALL.iter().map(|&l| {
+            button(text(l.name()).size(theme::SIZE_S))
+                .on_press(Message::Setting(Change::Language(l)))
+                .padding([6, 10])
+                .style(theme::choice_button(self.settings.language == l))
+                .into()
+        }))
+        .spacing(8);
+
+        // Temas: botón con dos muestras de color (fondo y acento). El último es
+        // el personalizado, con los colores que eligió el usuario.
+        let (custom_bg, custom_accent) = self.settings.custom;
+        let swatches = theme::THEMES
+            .iter()
+            .map(|t| (t.background, t.accent))
+            .chain([(custom_bg, custom_accent)]);
+        let themes = row(swatches.enumerate().map(|(i, (bg, accent))| {
             button(
                 row![
-                    sw(t.background),
-                    sw(t.accent),
-                    text(t.name).size(theme::SIZE_S)
+                    sw(bg, 14),
+                    sw(accent, 14),
+                    text(theme::name_of(i)).size(theme::SIZE_S)
                 ]
                 .spacing(6)
                 .align_y(Alignment::Center),
@@ -597,6 +688,7 @@ impl Surco {
         }))
         .spacing(8)
         .wrap();
+        let custom = (self.settings.theme == theme::CUSTOM).then(|| self.view_custom_theme());
 
         let precache = row(Precache::ALL.iter().map(|&p| {
             button(text(p.label()).size(theme::SIZE_S))
@@ -626,7 +718,7 @@ impl Surco {
                     text(format!("{}, {}", songs(*files), format_bytes(*bytes)))
                         .size(theme::SIZE_S)
                         .style(theme::secondary_text),
-                    button(text("Borrar").size(theme::SIZE_S))
+                    button(text(tr!("Borrar", "Delete")).size(theme::SIZE_S))
                         .on_press(Message::DeleteDownloads(i))
                         .padding([4, 10])
                         .style(theme::ghost_button),
@@ -636,14 +728,22 @@ impl Surco {
             );
         }
         let cache_row = row![
-            text(format!(
-                "En disco: {} canciones, {}",
-                usage.files,
-                format_bytes(usage.bytes)
-            ))
+            text(if i18n::en() {
+                format!(
+                    "On disk: {}, {}",
+                    songs(usage.files),
+                    format_bytes(usage.bytes)
+                )
+            } else {
+                format!(
+                    "En disco: {}, {}",
+                    songs(usage.files),
+                    format_bytes(usage.bytes)
+                )
+            })
             .size(theme::SIZE_S)
             .style(theme::secondary_text),
-            button(text("Vaciar").size(theme::SIZE_S))
+            button(text(tr!("Vaciar", "Clear")).size(theme::SIZE_S))
                 .on_press_maybe((usage.files > 0).then_some(Message::ClearAudioCache))
                 .padding([4, 10])
                 .style(theme::ghost_button),
@@ -654,9 +754,12 @@ impl Surco {
             Space::new().into()
         } else {
             column![
-                text("Descargas por playlist (una canción puede estar en varias)")
-                    .size(theme::SIZE_S)
-                    .style(theme::secondary_text),
+                text(tr!(
+                    "Descargas por playlist (una canción puede estar en varias)",
+                    "Downloads per playlist (a song can be in several)"
+                ))
+                .size(theme::SIZE_S)
+                .style(theme::secondary_text),
                 container(per_playlist).max_width(560),
             ]
             .spacing(8)
@@ -674,19 +777,37 @@ impl Surco {
         };
 
         let body = column![
-            text("Ajustes").size(theme::SIZE_L),
+            text(tr!("Ajustes", "Settings")).size(theme::SIZE_L),
             column![
-                section("Tema", "Cómo se ve Surco."),
-                themes,
+                section(
+                    tr!("Idioma", "Language"),
+                    tr!(
+                        "Por defecto, el del sistema.",
+                        "Defaults to your system language."
+                    )
+                ),
+                languages,
             ]
             .spacing(10),
             column![
                 section(
-                    "Portadas en la lista",
-                    "Muestra la portada al lado de cada canción ya encontrada en YouTube."
+                    tr!("Tema", "Theme"),
+                    tr!("Cómo se ve Surco.", "How Surco looks.")
+                ),
+                themes,
+            ]
+            .push(custom)
+            .spacing(10),
+            column![
+                section(
+                    tr!("Portadas en la lista", "Covers in the list"),
+                    tr!(
+                        "Muestra la portada al lado de cada canción ya encontrada en YouTube.",
+                        "Shows the cover next to each song already found on YouTube."
+                    )
                 ),
                 switch(
-                    "Mostrar portadas",
+                    tr!("Mostrar portadas", "Show covers"),
                     self.settings.covers_in_list,
                     Change::CoversInList
                 ),
@@ -694,8 +815,11 @@ impl Surco {
             .spacing(10),
             column![
                 section(
-                    "Precargar canciones",
-                    "Baja el audio antes de que suene, así no hay que esperar a que cargue. La siguiente siempre se prepara en memoria para que no haya cortes."
+                    tr!("Precargar canciones", "Preload songs"),
+                    tr!(
+                        "Baja el audio antes de que suene, así no hay que esperar a que cargue. La siguiente siempre se prepara en memoria para que no haya cortes. Vaciar no borra las playlists descargadas con la flecha.",
+                        "Downloads the audio before it plays, so you don't wait for it to load. The next song is always prepared in memory so there are no gaps. Clear doesn't delete playlists downloaded with the arrow."
+                    )
                 ),
                 precache,
                 cache_row,
@@ -704,11 +828,17 @@ impl Surco {
             .spacing(10),
             column![
                 section(
-                    "Canciones parecidas",
-                    "Con el botón de radio de la barra de abajo armás una lista de canciones parecidas a la que suena."
+                    tr!("Canciones parecidas", "Similar songs"),
+                    tr!(
+                        "Con el botón de radio de la barra de abajo armás una lista de canciones parecidas a la que suena.",
+                        "The radio button in the bottom bar builds a list of songs similar to the one playing."
+                    )
                 ),
                 switch(
-                    "Al terminar, seguir con canciones parecidas",
+                    tr!(
+                        "Al terminar, seguir con canciones parecidas",
+                        "When the queue ends, keep playing similar songs"
+                    ),
                     self.settings.autoplay,
                     Change::Autoplay
                 ),
@@ -717,7 +847,7 @@ impl Surco {
             self.view_spotify_keys(),
             text(match &self.ytdlp {
                 crate::YtDlpState::Found(p) => format!("yt-dlp: {}", p.display()),
-                _ => "yt-dlp: no encontrado".to_owned(),
+                _ => tr!("yt-dlp: no encontrado", "yt-dlp: not found").to_owned(),
             })
             .size(theme::SIZE_S)
             .style(theme::secondary_text),
@@ -728,14 +858,82 @@ impl Surco {
         scrollable(body).height(Length::Fill).into()
     }
 
+    /// Tema personalizado: el fondo y el acento, con un campo `#RRGGBB` y
+    /// unas muestras para elegir rápido.
+    fn view_custom_theme(&self) -> Element<'_, Message> {
+        const BACKGROUNDS: [u32; 9] = [
+            0x0E0E10, 0x14161C, 0x1B2030, 0x201A28, 0x10201A, 0x2A1C16, 0xF7F4EE, 0xEEF2F7,
+            0xFFFFFF,
+        ];
+        const ACCENTS: [u32; 9] = [
+            0xF2A65A, 0xFF6B6B, 0xFFD166, 0x06D6A0, 0x4CC9F0, 0x7C9CFF, 0xB388FF, 0xFF6FAE,
+            0x2F52C4,
+        ];
+        let line = |which: usize, label: &'static str, current: Color, presets: [u32; 9]| {
+            let input_ok = theme::parse_hex(&self.custom_hex[which]).is_some();
+            let presets = row(presets.into_iter().map(|v| {
+                let c = Color::from_rgb8((v >> 16) as u8, (v >> 8) as u8, v as u8);
+                button(
+                    container(Space::new())
+                        .width(20)
+                        .height(20)
+                        .style(theme::swatch(c)),
+                )
+                .on_press(Message::Setting(Change::CustomColor(
+                    which,
+                    theme::to_hex(c),
+                )))
+                .padding(3)
+                .style(theme::choice_button(
+                    theme::to_hex(current) == theme::to_hex(c),
+                ))
+                .into()
+            }))
+            .spacing(4)
+            .wrap();
+            row![
+                text(label).size(theme::SIZE_S).width(90),
+                text_input("#RRGGBB", &self.custom_hex[which])
+                    .on_input(move |s| Message::Setting(Change::CustomColor(which, s)))
+                    .padding(6)
+                    .size(theme::SIZE_S)
+                    .width(100)
+                    .style(if input_ok {
+                        theme::input
+                    } else {
+                        theme::input_error
+                    }),
+                presets,
+            ]
+            .spacing(10)
+            .align_y(Alignment::Center)
+        };
+        let (bg, accent) = self.settings.custom;
+        column![
+            line(0, tr!("Fondo", "Background"), bg, BACKGROUNDS),
+            line(1, tr!("Acento", "Accent"), accent, ACCENTS),
+        ]
+        .spacing(8)
+        .into()
+    }
+
     /// Claves de Spotify: cuáles se usan y cargar las propias.
     fn view_spotify_keys(&self) -> Element<'_, Message> {
         use crate::spotify_keys::{msg, KeySource, KeysMsg};
         let status = match self.spotify_source {
-            KeySource::Own => "Usando tus claves.",
-            KeySource::Config => "Usando las claves de config.toml.",
-            KeySource::Builtin => "Usando las claves incluidas en Surco.",
-            KeySource::None => "Sin claves propias (no hacen falta).",
+            KeySource::Own => tr!("Usando tus claves.", "Using your keys."),
+            KeySource::Config => tr!(
+                "Usando las claves de config.toml.",
+                "Using the keys from config.toml."
+            ),
+            KeySource::Builtin => tr!(
+                "Usando las claves incluidas en Surco.",
+                "Using the keys built into Surco."
+            ),
+            KeySource::None => tr!(
+                "Sin claves propias (no hacen falta).",
+                "No keys of your own (they aren't needed)."
+            ),
         };
         let form = row![
             text_input("Client ID", &self.keys_form.id)
@@ -750,7 +948,7 @@ impl Surco {
                 .padding(8)
                 .size(theme::SIZE_S)
                 .style(theme::input),
-            button(text("Guardar").size(theme::SIZE_S))
+            button(text(tr!("Guardar", "Save")).size(theme::SIZE_S))
                 .on_press_maybe(
                     (!self.keys_form.id.trim().is_empty()
                         && !self.keys_form.secret.trim().is_empty())
@@ -764,7 +962,7 @@ impl Surco {
         let mut col = column![
             column![
                 text("Spotify").size(theme::SIZE_M),
-                text("Surco lee las playlists enteras igual que la web de Spotify, sin cuenta, Premium ni claves. Las claves de la Web API son opcionales: solo se usan si eso falla (y Spotify pide Premium para crearlas en developer.spotify.com).")
+                text(tr!("Surco lee las playlists enteras igual que la web de Spotify, sin cuenta, Premium ni claves. Las claves de la Web API son opcionales: solo se usan si eso falla (y Spotify pide Premium para crearlas en developer.spotify.com).", "Surco reads whole playlists the same way the Spotify website does, with no account, Premium or keys. Web API keys are optional: they're only used if that fails (and Spotify requires Premium to create them at developer.spotify.com)."))
                     .size(theme::SIZE_S)
                     .style(theme::secondary_text),
             ]
@@ -775,7 +973,7 @@ impl Surco {
         .spacing(10);
         if self.spotify_source == KeySource::Own {
             col = col.push(
-                button(text("Borrar mis claves").size(theme::SIZE_S))
+                button(text(tr!("Borrar mis claves", "Delete my keys")).size(theme::SIZE_S))
                     .on_press(msg(KeysMsg::Clear))
                     .padding([4, 10])
                     .style(theme::ghost_button),
@@ -810,7 +1008,7 @@ impl Surco {
                                 c.candidate
                                     .channel
                                     .as_deref()
-                                    .unwrap_or("canal desconocido")
+                                    .unwrap_or(tr!("canal desconocido", "unknown channel"))
                             )
                             .size(theme::SIZE_S)
                             .style(theme::secondary_text),
@@ -832,14 +1030,15 @@ impl Surco {
             );
         }
         let header = row![
-            text(format!(
+            text(trf!(
                 "Elegí el video para «{}» ({} canciones de YouTube; el número es el puntaje)",
+                "Pick the video for “{}” ({} YouTube songs; the number is the score)",
                 track.title,
                 m.candidates.len()
             ))
             .size(theme::SIZE_S)
             .width(Length::Fill),
-            button(text("Cerrar").size(theme::SIZE_S))
+            button(text(tr!("Cerrar", "Close")).size(theme::SIZE_S))
                 .on_press(Message::OpenChooser(None))
                 .padding([2, 8])
                 .style(theme::ghost_button),
@@ -857,11 +1056,7 @@ impl Surco {
 
 /// "1 canción", "12 canciones".
 pub(crate) fn songs(n: usize) -> String {
-    if n == 1 {
-        "1 canción".to_owned()
-    } else {
-        format!("{n} canciones")
-    }
+    crate::i18n::songs(n)
 }
 
 /// Tamaño de las portadas en la lista.

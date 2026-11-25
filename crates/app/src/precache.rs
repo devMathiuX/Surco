@@ -51,11 +51,6 @@ impl Surco {
             return Task::none();
         }
         let n = self.lookahead();
-        let (Some(a), true) = (&self.active, n > 0) else {
-            self.precache.target = 0;
-            self.precache.ready = 0;
-            return Task::none();
-        };
         let (Some(provider), Some(resolver), Some(rt)) =
             (self.provider.clone(), self.resolver.clone(), RUNTIME.get())
         else {
@@ -64,11 +59,14 @@ impl Surco {
         let Some(cache) = provider.audio_cache() else {
             return Task::none();
         };
-        let tracks: Vec<Track> = a
-            .upcoming(n.min(a.queue.len()))
-            .into_iter()
-            .cloned()
-            .collect();
+        let tracks: Vec<Track> = match (&self.active, n > 0) {
+            (Some(a), true) => a
+                .upcoming(n.min(a.queue.len()))
+                .into_iter()
+                .cloned()
+                .collect(),
+            _ => Vec::new(),
+        };
 
         let mut ready = 0;
         let mut todo = None;
@@ -96,7 +94,9 @@ impl Surco {
         if self.precache.running.is_some() {
             return Task::none();
         }
-        let Some(track) = todo else {
+        // Después de las próximas, las playlists descargadas.
+        let failed = &self.precache.failed;
+        let Some(track) = todo.or_else(|| self.next_offline_track(&|k| failed.contains(k))) else {
             return Task::none();
         };
         let key = cache_key(&track);
