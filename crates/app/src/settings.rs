@@ -101,6 +101,8 @@ pub enum Change {
     Theme(usize),
     /// Texto de los campos de color del tema personalizado (0 fondo, 1 acento).
     CustomColor(usize, String),
+    /// El editor de colores se movió (se guarda al soltar, con `CustomColor`).
+    CustomHsv(usize, theme::Hsv),
     Language(Lang),
     CoversInList(bool),
     Precache(Precache),
@@ -154,6 +156,10 @@ impl Surco {
         eq::set(s.equalizer);
         self.settings = s;
         self.custom_hex = [theme::to_hex(s.custom.0), theme::to_hex(s.custom.1)];
+        self.custom_hsv = [
+            theme::Hsv::from_color(s.custom.0),
+            theme::Hsv::from_color(s.custom.1),
+        ];
         i18n::set(s.language);
         self.theme = theme::set(s.theme, s.custom);
     }
@@ -191,6 +197,21 @@ impl Surco {
                 self.settings.theme = i.min(theme::CUSTOM);
                 self.theme = theme::set(self.settings.theme, self.settings.custom);
                 self.save_setting(THEME, theme::id_of(self.settings.theme));
+                // Saliendo de Minimal: faltan las portadas que no se bajaron.
+                self.queue_list_covers()
+            }
+            Change::CustomHsv(which, hsv) => {
+                let which = which.min(1);
+                let c = hsv.to_color();
+                self.custom_hsv[which] = hsv;
+                self.custom_hex[which] = theme::to_hex(c);
+                if which == 0 {
+                    self.settings.custom.0 = c;
+                } else {
+                    self.settings.custom.1 = c;
+                }
+                self.settings.theme = theme::CUSTOM;
+                self.theme = theme::set(theme::CUSTOM, self.settings.custom);
                 Task::none()
             }
             Change::CustomColor(which, value) => {
@@ -198,6 +219,11 @@ impl Surco {
                 let parsed = theme::parse_hex(&value);
                 self.custom_hex[which] = value;
                 if let Some(c) = parsed {
+                    // El tono de un gris no se puede sacar del color: se
+                    // queda el que tenía el editor.
+                    if theme::to_hex(self.custom_hsv[which].to_color()) != theme::to_hex(c) {
+                        self.custom_hsv[which] = theme::Hsv::from_color(c);
+                    }
                     let (key, slot) = if which == 0 {
                         (THEME_BACKGROUND, &mut self.settings.custom.0)
                     } else {

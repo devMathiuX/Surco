@@ -33,6 +33,14 @@ pub struct Warm {
 }
 
 impl Surco {
+    /// La fila de esta canción tiene el mouse encima.
+    pub(crate) fn is_hovered(&self, track: &surco_core::Track) -> bool {
+        self.warm
+            .hover
+            .as_ref()
+            .is_some_and(|(k, _)| *k == surco_resolver::cache_key(track))
+    }
+
     pub(crate) fn on_hover(&mut self, hover: Option<Box<Hover>>) -> Task<Message> {
         let Some(h) = hover else {
             self.warm.hover = None;

@@ -45,6 +45,8 @@ path = "src/main.rs"
 
 [dependencies]
 sys-locale = "0.3"
+# Hora local para el saludo del inicio.
+time = { version = "0.3", default-features = false, features = ["std", "local-offset"] }
 surco-core.workspace = true
 surco-spotify.workspace = true
 surco-resolver.workspace = true

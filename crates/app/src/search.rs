@@ -737,6 +737,7 @@ impl Surco {
         on_play: Message,
     ) -> Element<'a, Message> {
         let cover: Element<'_, Message> = match video.and_then(|v| self.covers.get(v)) {
+            _ if theme::minimal() => Space::new().width(0).into(),
             Some(h) => iced::widget::image(h.clone())
                 .width(40)
                 .height(40)
@@ -764,14 +765,17 @@ impl Surco {
             container(number).width(28).clip(true),
             row![
                 cover,
-                text(track.title.clone())
-                    .size(theme::SIZE_M)
-                    .wrapping(text::Wrapping::None)
-                    .style(if playing {
-                        theme::accent_text
-                    } else {
-                        theme::plain_text
-                    }),
+                crate::marquee::marquee(
+                    text(track.title.clone())
+                        .size(theme::SIZE_M)
+                        .wrapping(text::Wrapping::None)
+                        .style(if playing {
+                            theme::accent_text
+                        } else {
+                            theme::plain_text
+                        }),
+                    self.is_hovered(&track),
+                ),
             ]
             .spacing(12)
             .align_y(Alignment::Center)
@@ -803,13 +807,7 @@ impl Surco {
                     .style(theme::secondary_text)
                     .width(48),
             )
-            .push(add)
-            .push(
-                button(text("···").size(theme::SIZE_S).style(theme::secondary_text))
-                    .on_press(menu.clone())
-                    .padding([2, 6])
-                    .style(theme::icon_button),
-            );
+            .push(add);
         let row = button(cells)
             .on_press(on_play)
             .padding([5, 8])
@@ -986,9 +984,12 @@ impl Surco {
             row![
                 crate::home::big_cover(self, video, 72.0),
                 column![
-                    text(s.title.clone())
-                        .size(theme::SIZE_L)
-                        .wrapping(text::Wrapping::None),
+                    crate::marquee::marquee(
+                        text(s.title.clone())
+                            .size(theme::SIZE_L)
+                            .wrapping(text::Wrapping::None),
+                        false,
+                    ),
                     text(detail)
                         .size(theme::SIZE_S)
                         .style(theme::secondary_text)
@@ -1182,15 +1183,19 @@ fn with_hover<'a>(
         .into()
 }
 
-/// Botón "+" de una canción: abre el menú para agregarla a la cola o a una
+/// Botón "⋯" de una canción: abre el menú para agregarla a la cola o a una
 /// playlist (`from`: playlist y posición, para poder quitarla de ahí).
 pub fn add_button<'a>(track: &Track, from: Option<(usize, usize)>) -> Element<'a, Message> {
     iced::widget::tooltip(
-        button(icons::glyph(Kind::Add, theme::add_icon(), 14.0))
-            .on_press(song_menu(track, from))
-            .padding([2, 4])
-            .style(theme::add_button),
-        container(text(tr!("Agregar a…", "Add to…")).size(theme::SIZE_S))
+        button(
+            container(icons::dots(theme::add_icon()))
+                .center_x(16)
+                .center_y(16),
+        )
+        .on_press(song_menu(track, from))
+        .padding([2, 4])
+        .style(theme::add_button),
+        container(text(tr!("Más opciones", "More options")).size(theme::SIZE_S))
             .padding(6)
             .style(theme::card),
         iced::widget::tooltip::Position::Left,

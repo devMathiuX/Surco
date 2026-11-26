@@ -276,6 +276,14 @@ where
             }
             _ => {}
         }
+        // Mientras se desliza, nada queda "con el mouse encima": si no, un
+        // botón que pasa por debajo del mouse cambia de color (o se queda
+        // con el color de encima después de irse).
+        let cursor = if tree.state.downcast_ref::<State>().moving() {
+            cursor.levitate()
+        } else {
+            cursor
+        };
         forward(
             &mut self.content,
             &self.keep,

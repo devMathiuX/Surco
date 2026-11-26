@@ -95,6 +95,8 @@ impl Surco {
         let app = self.with_backdrop(app);
         let layer = if let Some(card) = self.view_tools_popup() {
             Some(card)
+        } else if let Some(card) = self.view_update() {
+            Some(card)
         } else if let Some(i) = self.confirm_remove {
             Some(self.view_confirm_remove(i))
         } else if let Some(card) = self
@@ -110,10 +112,11 @@ impl Surco {
         } else {
             self.view_volume_popup()
         };
-        let app = match layer {
-            Some(layer) => stack![app, layer].into(),
-            None => app,
-        };
+        // Siempre la misma forma (app + capa), aunque no haya menú: si el
+        // árbol cambia al abrir un menú, las listas pierden el scroll y
+        // vuelven arriba.
+        let layer = layer.unwrap_or_else(|| Space::new().into());
+        let app: Element<'_, Message> = stack![app, layer].into();
         crate::pointer::Pointer::new(app, Message::Pointer).into()
     }
 
@@ -170,6 +173,7 @@ impl Surco {
                 .width(Length::Fill);
             let cover: Element<'_, Message> =
                 match self.playlist_cover(i).and_then(|v| self.covers.get(v)) {
+                    _ if theme::minimal() => Space::new().width(0).into(),
                     Some(h) => image(h.clone())
                         .width(SIDEBAR_COVER)
                         .height(SIDEBAR_COVER)
@@ -351,9 +355,6 @@ impl Surco {
         ]
         .spacing(16)
         .height(Length::Fill);
-        if let Some(card) = self.view_update() {
-            col = col.push(card);
-        }
         if let Some(n) = &self.notice {
             col = col.push(text(&n.text).size(theme::SIZE_S).style(if n.error {
                 theme::error_text
@@ -798,7 +799,7 @@ impl Surco {
                 theme::secondary_text
             }))
             .width(40);
-            let cover: Element<'_, Message> = if self.settings.covers_in_list {
+            let cover: Element<'_, Message> = if self.settings.covers_in_list && !theme::minimal() {
                 match self.video_of((index, i)).and_then(|v| self.covers.get(v)) {
                     Some(h) => image(h.clone())
                         .width(LIST_COVER)
@@ -825,9 +826,12 @@ impl Surco {
                     number,
                     cover,
                     column![
-                        text(&t.title)
-                            .size(theme::SIZE_M)
-                            .wrapping(text::Wrapping::None),
+                        crate::marquee::marquee(
+                            text(&t.title)
+                                .size(theme::SIZE_M)
+                                .wrapping(text::Wrapping::None),
+                            self.is_hovered(t),
+                        ),
                         text(t.artists.join(", "))
                             .size(theme::SIZE_S)
                             .style(theme::secondary_text)
@@ -1041,29 +1045,120 @@ impl Surco {
             }))
             .spacing(4)
             .wrap();
-            row![
-                text(label).size(theme::SIZE_S).width(90),
-                text_input("#RRGGBB", &self.custom_hex[which])
-                    .on_input(move |s| Message::Setting(Change::CustomColor(which, s)))
-                    .padding(6)
-                    .size(theme::SIZE_S)
-                    .width(100)
-                    .style(if input_ok {
-                        theme::input
-                    } else {
-                        theme::input_error
-                    }),
-                presets,
+            let hsv = self.custom_hsv[which];
+            // Al soltar se guarda el color que quedó.
+            let save = Message::Setting(Change::CustomColor(which, theme::to_hex(current)));
+            let bar = |name: &'static str,
+                       stops: Vec<Color>,
+                       range: std::ops::RangeInclusive<f32>,
+                       value: f32,
+                       set: fn(theme::Hsv, f32) -> theme::Hsv| {
+                let slider = iced::widget::slider(range, value, move |x| {
+                    Message::Setting(Change::CustomHsv(which, set(hsv, x)))
+                })
+                .step(0.001_f32)
+                .on_release(save.clone())
+                .height(18)
+                .style(theme::color_slider);
+                row![
+                    text(name)
+                        .size(theme::SIZE_S)
+                        .style(theme::secondary_text)
+                        .width(80),
+                    stack![
+                        container(
+                            container(Space::new())
+                                .width(Length::Fill)
+                                .height(12)
+                                .style(theme::color_bar(stops)),
+                        )
+                        .padding([0, 2])
+                        .center_y(18),
+                        slider,
+                    ]
+                    .width(Length::Fill),
+                ]
+                .spacing(10)
+                .align_y(Alignment::Center)
+            };
+            let hues: Vec<Color> = (0..=6)
+                .map(|i| {
+                    theme::Hsv {
+                        h: i as f32 * 60.0,
+                        s: 1.0,
+                        v: 1.0,
+                    }
+                    .to_color()
+                })
+                .collect();
+            let editor = column![
+                bar(tr!("Tono", "Hue"), hues, 0.0..=360.0, hsv.h, |c, x| {
+                    theme::Hsv { h: x, ..c }
+                }),
+                bar(
+                    tr!("Saturación", "Saturation"),
+                    vec![
+                        theme::Hsv { s: 0.0, ..hsv }.to_color(),
+                        theme::Hsv { s: 1.0, ..hsv }.to_color(),
+                    ],
+                    0.0..=1.0,
+                    hsv.s,
+                    |c, x| theme::Hsv { s: x, ..c },
+                ),
+                bar(
+                    tr!("Brillo", "Brightness"),
+                    vec![
+                        theme::Hsv { v: 0.0, ..hsv }.to_color(),
+                        theme::Hsv { v: 1.0, ..hsv }.to_color(),
+                    ],
+                    0.0..=1.0,
+                    hsv.v,
+                    |c, x| theme::Hsv { v: x, ..c },
+                ),
             ]
             .spacing(10)
-            .align_y(Alignment::Center)
+            .width(Length::Fill);
+            container(
+                column![
+                    row![
+                        container(Space::new())
+                            .width(44)
+                            .height(44)
+                            .style(theme::swatch(current)),
+                        column![
+                            text(label).size(theme::SIZE_M),
+                            text_input("#RRGGBB", &self.custom_hex[which])
+                                .on_input(move |s| Message::Setting(Change::CustomColor(which, s)))
+                                .padding(6)
+                                .size(theme::SIZE_S)
+                                .width(100)
+                                .style(if input_ok {
+                                    theme::input
+                                } else {
+                                    theme::input_error
+                                }),
+                        ]
+                        .spacing(6),
+                        container(presets)
+                            .width(Length::Fill)
+                            .align_right(Length::Fill),
+                    ]
+                    .spacing(14)
+                    .align_y(Alignment::Center),
+                    editor,
+                ]
+                .spacing(14),
+            )
+            .padding(14)
+            .width(Length::Fill)
+            .style(theme::inset)
         };
         let (bg, accent) = self.settings.custom;
         column![
             line(0, tr!("Fondo", "Background"), bg, BACKGROUNDS),
             line(1, tr!("Acento", "Accent"), accent, ACCENTS),
         ]
-        .spacing(8)
+        .spacing(10)
         .into()
     }
 
