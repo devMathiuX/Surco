@@ -8,10 +8,12 @@ mod i18n;
 mod backdrop;
 mod bar;
 mod covers;
+mod greeting;
 mod home;
 mod icons;
 mod library;
 mod licenses;
+mod marquee;
 mod media;
 mod playback;
 mod playlists;
@@ -63,6 +65,9 @@ static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
 static AUDIO_CACHE: std::sync::Mutex<Option<AudioCache>> = std::sync::Mutex::new(None);
 
 fn main() -> anyhow::Result<()> {
+    // Antes de abrir otros hilos: en Linux la zona horaria solo se puede
+    // leer así mientras hay un único hilo.
+    greeting::init();
     // El guard vacía el log en disco al salir.
     let _log_guard = init_logging();
     tracing::info!(version = env!("CARGO_PKG_VERSION"), "iniciando Surco");
@@ -250,6 +255,8 @@ struct Surco {
     settings: Settings,
     /// Lo que se escribe en los campos de color del tema personalizado.
     custom_hex: [String; 2],
+    /// Lo que muestra el editor de colores del tema personalizado.
+    custom_hsv: [theme::Hsv; 2],
     /// Portadas grandes (360 px) de lo que se muestra en grande.
     large_covers: HashMap<String, image::Handle>,
     settings_tab: settings_view::Tab,
@@ -572,6 +579,10 @@ impl Surco {
             recorded: None,
             settings: Settings::default(),
             custom_hex: Default::default(),
+            custom_hsv: [
+                theme::Hsv::from_color(theme::CUSTOM_DEFAULT.0),
+                theme::Hsv::from_color(theme::CUSTOM_DEFAULT.1),
+            ],
             large_covers: HashMap::new(),
             settings_tab: settings_view::Tab::default(),
             settings_query: String::new(),

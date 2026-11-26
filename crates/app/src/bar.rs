@@ -103,10 +103,16 @@ impl Surco {
                 String::new(),
             ),
         };
+        // El título que no entra se desliza mientras suena (en Minimal, solo
+        // con el mouse encima).
+        let slide = matches!(s.state, PlayerState::Playing) && !theme::minimal();
         let info = column![
-            text(title)
-                .size(theme::SIZE_M)
-                .wrapping(text::Wrapping::None),
+            crate::marquee::marquee(
+                text(title)
+                    .size(theme::SIZE_M)
+                    .wrapping(text::Wrapping::None),
+                slide,
+            ),
             text(subtitle)
                 .size(theme::SIZE_S)
                 .style(theme::secondary_text)

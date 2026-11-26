@@ -1253,6 +1253,88 @@ pub fn dialog(_: &Theme) -> container::Style {
 }
 
 /// Muestra del color de un tema (en el selector).
+/// Color en tono (0-360), saturación (0-1) y brillo (0-1).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Hsv {
+    pub h: f32,
+    pub s: f32,
+    pub v: f32,
+}
+
+impl Hsv {
+    pub fn from_color(c: Color) -> Self {
+        let max = c.r.max(c.g).max(c.b);
+        let min = c.r.min(c.g).min(c.b);
+        let d = max - min;
+        let h = if d <= f32::EPSILON {
+            0.0
+        } else if max == c.r {
+            60.0 * ((c.g - c.b) / d).rem_euclid(6.0)
+        } else if max == c.g {
+            60.0 * ((c.b - c.r) / d + 2.0)
+        } else {
+            60.0 * ((c.r - c.g) / d + 4.0)
+        };
+        let s = if max <= f32::EPSILON { 0.0 } else { d / max };
+        Self { h, s, v: max }
+    }
+
+    pub fn to_color(self) -> Color {
+        let h = self.h.rem_euclid(360.0) / 60.0;
+        let c = self.v * self.s;
+        let x = c * (1.0 - (h % 2.0 - 1.0).abs());
+        let (r, g, b) = match h as u32 {
+            0 => (c, x, 0.0),
+            1 => (x, c, 0.0),
+            2 => (0.0, c, x),
+            3 => (0.0, x, c),
+            4 => (x, 0.0, c),
+            _ => (c, 0.0, x),
+        };
+        let m = self.v - c;
+        // Redondeado a 8 bits, como se guarda.
+        let q = |f: f32| ((f + m).clamp(0.0, 1.0) * 255.0).round() as u8;
+        Color::from_rgb8(q(r), q(g), q(b))
+    }
+}
+
+/// Barra de colores detrás de un deslizador del editor de colores.
+pub fn color_bar(stops: Vec<Color>) -> impl Fn(&Theme) -> container::Style {
+    move |_| {
+        let n = stops.len().max(2) - 1;
+        let mut g = iced::gradient::Linear::new(std::f32::consts::FRAC_PI_2);
+        for (i, c) in stops.iter().enumerate() {
+            g = g.add_stop(i as f32 / n as f32, *c);
+        }
+        container::Style {
+            background: Some(iced::Gradient::Linear(g).into()),
+            border: border::rounded(6).width(1).color(colors().border),
+            ..container::Style::default()
+        }
+    }
+}
+
+/// Deslizador sobre una [`color_bar`]: sin riel, solo la perilla.
+pub fn color_slider(_: &Theme, status: slider::Status) -> slider::Style {
+    let ring = match status {
+        slider::Status::Dragged | slider::Status::Hovered => 3.0,
+        slider::Status::Active => 2.0,
+    };
+    slider::Style {
+        rail: slider::Rail {
+            backgrounds: (Color::TRANSPARENT.into(), Color::TRANSPARENT.into()),
+            width: 0.0,
+            border: border::rounded(0),
+        },
+        handle: slider::Handle {
+            shape: slider::HandleShape::Circle { radius: 8.0 },
+            background: Color::WHITE.into(),
+            border_width: ring,
+            border_color: Color::from_rgba(0.0, 0.0, 0.0, 0.55),
+        },
+    }
+}
+
 pub fn swatch(color: Color) -> impl Fn(&Theme) -> container::Style {
     move |_| container::Style {
         background: Some(color.into()),
@@ -1284,6 +1366,18 @@ mod tests {
         assert_eq!(parse_hex("#12345"), None);
         assert_eq!(parse_hex("#7cf"), parse_hex("#77CCFF"));
         assert_eq!(parse_hex("#GGGGGG"), None);
+    }
+
+    #[test]
+    fn hsv_round_trips() {
+        for c in [
+            Color::from_rgb8(0xF2, 0xA6, 0x5A),
+            Color::from_rgb8(0x0E, 0x0E, 0x10),
+            Color::from_rgb8(0x2F, 0x52, 0xC4),
+            Color::WHITE,
+        ] {
+            assert_eq!(to_hex(Hsv::from_color(c).to_color()), to_hex(c));
+        }
     }
 
     #[test]

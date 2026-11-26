@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 use std::time::Duration;
 
-use iced::widget::{button, column, container, row, text};
+use iced::widget::{button, column, container, row, text, Space};
 use iced::{Element, Length, Task};
 use surco_provider::update::{self, Installed, Release};
 
@@ -157,13 +157,13 @@ impl Surco {
         Task::none()
     }
 
-    /// Tarjeta de la barra lateral con la versión nueva.
+    /// Ventana emergente con la versión nueva (encima de todo).
     pub(crate) fn view_update(&self) -> Option<Element<'_, Message>> {
         let small = |s: String| text(s).size(theme::SIZE_S).style(theme::secondary_text);
         let action = |label: &'static str, msg: UpdateMsg, primary: bool| {
             button(text(label).size(theme::SIZE_S))
                 .on_press(Message::Update(msg))
-                .padding([4, 10])
+                .padding([6, 14])
                 .style(if primary {
                     theme::primary_button
                 } else {
@@ -180,19 +180,43 @@ impl Surco {
                     action(tr!("Descargar", "Download"), UpdateMsg::OpenPage, true)
                 };
                 column![
-                    text(crate::trf!(
-                        "Surco {} está disponible",
-                        "Surco {} is available",
-                        r.version
-                    ))
-                    .size(theme::SIZE_S),
                     row![
-                        install,
-                        action(tr!("Ahora no", "Not now"), UpdateMsg::Dismiss, false)
+                        crate::icons::logo(36.0),
+                        column![
+                            text(tr!("Hay una versión nueva", "A new version is out"))
+                                .size(theme::SIZE_L),
+                            small(crate::trf!(
+                                "Tenés Surco {}. Ya salió Surco {}.",
+                                "You have Surco {}. Surco {} is out.",
+                                env!("CARGO_PKG_VERSION"),
+                                r.version
+                            )),
+                        ]
+                        .spacing(2),
                     ]
-                    .spacing(6),
+                    .spacing(14)
+                    .align_y(iced::Alignment::Center),
+                    small(if can_install {
+                        tr!(
+                            "Se baja e instala sola; Surco se reinicia al terminar.",
+                            "It downloads and installs by itself; Surco restarts when it's done."
+                        )
+                        .into()
+                    } else {
+                        tr!(
+                            "Se abre la página de descargas para bajarla.",
+                            "The downloads page opens so you can get it."
+                        )
+                        .into()
+                    }),
+                    row![
+                        Space::new().width(Length::Fill),
+                        action(tr!("Ahora no", "Not now"), UpdateMsg::Dismiss, false),
+                        install,
+                    ]
+                    .spacing(8),
                 ]
-                .spacing(8)
+                .spacing(14)
                 .into()
             }
             Update::Installing(v) => small(crate::trf!(
@@ -270,13 +294,23 @@ impl Surco {
             .spacing(8)
             .into(),
         };
-        Some(
-            container(body)
-                .padding(10)
+        let closable = !matches!(self.update, Update::Installing(_));
+        let card = container(body).padding(22).width(420).style(theme::dialog);
+        let mut backdrop = iced::widget::mouse_area(
+            container(Space::new())
                 .width(Length::Fill)
-                .style(theme::card)
-                .into(),
-        )
+                .height(Length::Fill)
+                .style(theme::scrim),
+        );
+        if closable {
+            backdrop = backdrop.on_press(Message::Update(UpdateMsg::Dismiss));
+        }
+        Some(iced::widget::opaque(iced::widget::stack![
+            backdrop,
+            container(iced::widget::opaque(card))
+                .center_x(Length::Fill)
+                .center_y(Length::Fill),
+        ]))
     }
 }
 

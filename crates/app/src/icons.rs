@@ -418,6 +418,7 @@ pub fn glyph<'a, Message: 'a>(kind: Kind, color: Color, size: f32) -> Element<'a
         Kind::Close => "×",
         Kind::Grip => "≡",
         Kind::Volume => "♪",
+        Kind::Repeat => "↻",
         _ => "•",
     };
     iced::widget::text(c)
@@ -425,6 +426,27 @@ pub fn glyph<'a, Message: 'a>(kind: Kind, color: Color, size: f32) -> Element<'a
         .color(color)
         .width(Length::Fixed(size))
         .align_x(iced::alignment::Horizontal::Center)
+        .into()
+}
+
+/// Tres puntos (más opciones). Son rectángulos redondeados, no un `canvas`,
+/// para que no dejen restos al hacer scroll.
+pub fn dots<'a, Message: 'a>(color: Color) -> Element<'a, Message> {
+    let dot = || {
+        iced::widget::container(iced::widget::Space::new())
+            .width(3.5)
+            .height(3.5)
+            .style(move |_: &Theme| iced::widget::container::Style {
+                background: Some(color.into()),
+                border: iced::border::rounded(2),
+                ..Default::default()
+            })
+            .into()
+    };
+    iced::widget::Row::with_children([dot(), dot(), dot()])
+        .spacing(2.5)
+        .height(14)
+        .align_y(iced::Alignment::Center)
         .into()
 }
 

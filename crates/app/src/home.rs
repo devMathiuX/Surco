@@ -252,7 +252,7 @@ impl Surco {
         .max_width(420);
         let header = row![
             column![
-                text(tr!("¡Hola de nuevo!", "Welcome back!"))
+                text(crate::greeting::now())
                     .size(theme::SIZE_S)
                     .style(theme::secondary_text),
                 text(tr!("Tu música", "Your music")).size(theme::SIZE_L + 6),
@@ -323,6 +323,7 @@ impl Surco {
         };
         let cover: Element<'_, Message> =
             match self.playlist_cover(i).and_then(|v| self.covers.get(v)) {
+                _ if theme::minimal() => Space::new().width(0).into(),
                 Some(h) => image(h.clone())
                     .width(TILE_COVER)
                     .height(TILE_COVER)
@@ -477,14 +478,17 @@ impl Surco {
                 container(number).width(28).clip(true),
                 row![
                     cover(self, video, 36.0),
-                    text(&t.title)
-                        .size(theme::SIZE_M)
-                        .wrapping(text::Wrapping::None)
-                        .style(if playing {
-                            theme::accent_text
-                        } else {
-                            theme::plain_text
-                        }),
+                    crate::marquee::marquee(
+                        text(&t.title)
+                            .size(theme::SIZE_M)
+                            .wrapping(text::Wrapping::None)
+                            .style(if playing {
+                                theme::accent_text
+                            } else {
+                                theme::plain_text
+                            }),
+                        self.is_hovered(t),
+                    ),
                 ]
                 .spacing(12)
                 .align_y(Alignment::Center)
@@ -563,9 +567,12 @@ impl Surco {
                     column![
                         big_cover(self, video, SIDE - 32.0),
                         column![
-                            text(&t.title)
-                                .size(theme::SIZE_M + 1)
-                                .wrapping(text::Wrapping::None),
+                            crate::marquee::marquee(
+                                text(&t.title)
+                                    .size(theme::SIZE_M + 1)
+                                    .wrapping(text::Wrapping::None),
+                                false,
+                            ),
                             text(t.artists.join(", "))
                                 .size(theme::SIZE_S)
                                 .style(theme::secondary_text)
@@ -594,9 +601,12 @@ impl Surco {
                         row![
                             cover(self, Some(r.id.as_str()), 40.0),
                             column![
-                                text(r.title.clone())
-                                    .size(theme::SIZE_S + 1)
-                                    .wrapping(text::Wrapping::None),
+                                crate::marquee::marquee(
+                                    text(r.title.clone())
+                                        .size(theme::SIZE_S + 1)
+                                        .wrapping(text::Wrapping::None),
+                                    false,
+                                ),
                                 text(r.channel.clone().unwrap_or_default())
                                     .size(theme::SIZE_S)
                                     .style(theme::secondary_text)
@@ -760,6 +770,9 @@ pub fn heading<'a>(label: &'a str, first: bool) -> Element<'a, Message> {
 
 /// Portada de un video (o un cuadro vacío mientras no está).
 pub fn cover<'a>(app: &'a Surco, video: Option<&str>, size: f32) -> Element<'a, Message> {
+    if theme::minimal() {
+        return Space::new().width(0).height(0).into();
+    }
     match video.and_then(|v| app.covers.get(v)) {
         Some(h) => image(h.clone())
             .width(size)
@@ -777,6 +790,9 @@ pub fn cover<'a>(app: &'a Surco, video: Option<&str>, size: f32) -> Element<'a, 
 
 /// Como [`cover`], pero con la portada grande si ya está (si no, la chica).
 pub fn big_cover<'a>(app: &'a Surco, video: Option<&str>, size: f32) -> Element<'a, Message> {
+    if theme::minimal() {
+        return Space::new().width(0).height(0).into();
+    }
     match video.and_then(|v| app.large_covers.get(v)) {
         Some(h) => image(h.clone())
             .width(size)

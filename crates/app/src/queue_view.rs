@@ -250,9 +250,12 @@ impl Surco {
                         row![
                             crate::home::cover(self, self.video_of_track(t), 36.0),
                             column![
-                                text(&t.title)
-                                    .size(theme::SIZE_S + 1)
-                                    .wrapping(text::Wrapping::None),
+                                crate::marquee::marquee(
+                                    text(&t.title)
+                                        .size(theme::SIZE_S + 1)
+                                        .wrapping(text::Wrapping::None),
+                                    false,
+                                ),
                                 text(t.artists.join(", "))
                                     .size(theme::SIZE_S)
                                     .style(theme::secondary_text)
@@ -370,9 +373,12 @@ impl Surco {
                     text(tr!("Sonando ahora", "Now playing"))
                         .size(theme::SIZE_S)
                         .style(theme::secondary_text),
-                    text(&t.title)
-                        .size(theme::SIZE_L)
-                        .wrapping(text::Wrapping::None),
+                    crate::marquee::marquee(
+                        text(&t.title)
+                            .size(theme::SIZE_L)
+                            .wrapping(text::Wrapping::None),
+                        !theme::minimal(),
+                    ),
                     text(t.artists.join(", "))
                         .size(theme::SIZE_S)
                         .style(theme::secondary_text)
@@ -444,7 +450,7 @@ impl Surco {
         let cover: Element<'_, Message> = match self
             .video_of_track(t)
             .and_then(|v| self.covers.get(v))
-            .filter(|_| self.settings.covers_in_list)
+            .filter(|_| self.settings.covers_in_list && !theme::minimal())
         {
             Some(h) => iced::widget::image(h.clone())
                 .width(36)
@@ -457,14 +463,17 @@ impl Surco {
             container(lead).width(28),
             cover,
             column![
-                text(&t.title)
-                    .size(theme::SIZE_M)
-                    .wrapping(text::Wrapping::None)
-                    .style(if current {
-                        theme::accent_text
-                    } else {
-                        theme::plain_text
-                    }),
+                crate::marquee::marquee(
+                    text(&t.title)
+                        .size(theme::SIZE_M)
+                        .wrapping(text::Wrapping::None)
+                        .style(if current {
+                            theme::accent_text
+                        } else {
+                            theme::plain_text
+                        }),
+                    self.is_hovered(t),
+                ),
                 text(t.artists.join(", "))
                     .size(theme::SIZE_S)
                     .style(theme::secondary_text)

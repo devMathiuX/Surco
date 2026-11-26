@@ -498,7 +498,7 @@ impl Surco {
     /// Portada grande (para mostrarla en grande). Se guardan pocas: cada una
     /// ocupa unos 500 KB en memoria.
     pub(crate) fn fetch_large_cover(&mut self, video: &str) -> Task<Message> {
-        if self.large_covers.contains_key(video) {
+        if self.large_covers.contains_key(video) || crate::theme::minimal() {
             return Task::none();
         }
         let Some(rt) = RUNTIME.get() else {
@@ -534,7 +534,11 @@ impl Surco {
     }
 
     fn enqueue_cover(&mut self, video: &str, first: bool) -> Task<Message> {
-        if self.covers.contains_key(video) || self.cover_jobs.failed.contains(video) {
+        // Minimal: solo la portada de lo que suena (la de la barra).
+        if self.covers.contains_key(video)
+            || self.cover_jobs.failed.contains(video)
+            || (crate::theme::minimal() && !first)
+        {
             return Task::none();
         }
         if self.cover_jobs.pending.insert(video.to_owned()) {

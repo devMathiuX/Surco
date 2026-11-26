@@ -3,8 +3,8 @@
 //! lateral) y las canciones recomendadas que aparecen al final de cada una.
 
 use iced::widget::{
-    button, column, container, mouse_area, opaque, operation, row, scrollable, stack, text, Column,
-    Id, Space,
+    button, column, container, mouse_area, opaque, operation, row, scrollable, stack, text,
+    tooltip, Column, Id, Space,
 };
 use iced::{Alignment, Element, Length, Size, Task};
 use surco_core::{format_duration, Playlist, Track};
@@ -197,6 +197,9 @@ impl Surco {
         let Some((playlist, source)) = self.playlists.get_mut(p) else {
             return;
         };
+        if playlist.tracks.iter().any(|t| same_song(t, &track)) {
+            return;
+        }
         let name = playlist.name.clone();
         let old_len = playlist.tracks.len();
         playlist.tracks.push(track.clone());
@@ -447,10 +450,22 @@ impl Surco {
         ]
         .spacing(2)
         .width(Length::Fill);
-        let more = button(text(tr!("Otras", "Others")).size(theme::SIZE_S))
+        let more = tooltip(
+            button(crate::icons::glyph(
+                crate::icons::Kind::Repeat,
+                theme::colors().text_secondary,
+                20.0,
+            ))
             .on_press(Message::RecsRefresh(p))
-            .padding([4, 10])
-            .style(theme::ghost_button);
+            .padding([2, 6])
+            .style(theme::icon_button),
+            container(
+                text(tr!("Otras recomendaciones", "Other recommendations")).size(theme::SIZE_S),
+            )
+            .padding(6)
+            .style(theme::card),
+            tooltip::Position::Left,
+        );
         let body: Element<'_, Message> = match self.recs.get(&playlist.id) {
             None if playlist.tracks.is_empty() => text(
                 tr!("Agregá canciones con el + del buscador y acá van a aparecer recomendaciones.", "Add songs with the + in search and recommendations will show up here."),
@@ -466,12 +481,12 @@ impl Surco {
             .style(theme::secondary_text)
             .into(),
             Some(Recs::Loading) => skeleton::song_rows(3, self.pulse),
-            Some(Recs::Failed) => text(tr!("No pude traer recomendaciones. Probá con «Otras».", "Couldn't get recommendations. Try “Others”."))
+            Some(Recs::Failed) => text(tr!("No pude traer recomendaciones. Probá con ↻.", "Couldn't get recommendations. Try ↻."))
                 .size(theme::SIZE_S)
                 .style(theme::secondary_text)
                 .into(),
             Some(Recs::Ready(list)) if list.is_empty() => {
-                text(tr!("No encontré canciones nuevas para recomendar. Probá con «Otras».", "Found no new songs to recommend. Try “Others”."))
+                text(tr!("No encontré canciones nuevas para recomendar. Probá con ↻.", "Found no new songs to recommend. Try ↻."))
                     .size(theme::SIZE_S)
                     .style(theme::secondary_text)
                     .into()
@@ -494,6 +509,7 @@ impl Surco {
     fn rec_row<'a>(&'a self, p: usize, i: usize, r: &'a SearchResult) -> Element<'a, Message> {
         let t = track_from(r);
         let cover: Element<'_, Message> = match self.covers.get(&r.id) {
+            _ if theme::minimal() => Space::new().width(0).into(),
             Some(h) => iced::widget::image(h.clone())
                 .width(36)
                 .height(36)
@@ -514,9 +530,12 @@ impl Surco {
                 Space::new().width(40),
                 cover,
                 column![
-                    text(t.title)
-                        .size(theme::SIZE_M)
-                        .wrapping(text::Wrapping::None),
+                    crate::marquee::marquee(
+                        text(t.title)
+                            .size(theme::SIZE_M)
+                            .wrapping(text::Wrapping::None),
+                        false,
+                    ),
                     text(t.artists.join(", "))
                         .size(theme::SIZE_S)
                         .style(theme::secondary_text)
@@ -525,10 +544,23 @@ impl Surco {
                 .spacing(2)
                 .width(Length::Fill)
                 .clip(true),
-                button(text(tr!("Agregar", "Add")).size(theme::SIZE_S))
+                tooltip(
+                    button(crate::icons::glyph(
+                        crate::icons::Kind::Add,
+                        theme::colors().accent,
+                        18.0,
+                    ))
                     .on_press(Message::RecAdd(p, i))
-                    .padding([4, 10])
-                    .style(theme::ghost_button),
+                    .padding([2, 6])
+                    .style(theme::icon_button),
+                    container(
+                        text(tr!("Agregar a la playlist", "Add to the playlist"))
+                            .size(theme::SIZE_S)
+                    )
+                    .padding(6)
+                    .style(theme::card),
+                    tooltip::Position::Left,
+                ),
                 text(duration)
                     .size(theme::SIZE_S)
                     .style(theme::secondary_text),
@@ -610,7 +642,30 @@ impl Surco {
                 continue;
             }
             others += 1;
-            playlists = playlists.push(option(p.name.clone(), AddTarget::Playlist(i), false));
+            if p.tracks.iter().any(|t| same_song(t, &menu.track)) {
+                // Ya la tiene: se muestra, pero no se puede elegir.
+                playlists = playlists.push(
+                    container(
+                        row![
+                            text(p.name.clone())
+                                .size(theme::SIZE_S)
+                                .style(theme::secondary_text)
+                                .wrapping(text::Wrapping::None)
+                                .width(Length::Fill),
+                            text(tr!("Ya está", "Already there"))
+                                .size(theme::SIZE_S - 1)
+                                .style(theme::secondary_text),
+                        ]
+                        .spacing(8)
+                        .align_y(iced::Alignment::Center),
+                    )
+                    .width(Length::Fill)
+                    .padding([8, 10])
+                    .clip(true),
+                );
+            } else {
+                playlists = playlists.push(option(p.name.clone(), AddTarget::Playlist(i), false));
+            }
         }
         let mut col = column![
             column![
@@ -723,6 +778,15 @@ impl Surco {
         ];
         opaque(stack![backdrop, placed])
     }
+}
+
+/// La misma canción, aunque venga de otro lado (Spotify, YouTube, búsqueda).
+pub(crate) fn same_song(a: &Track, b: &Track) -> bool {
+    if cache_key(a) == cache_key(b) {
+        return true;
+    }
+    a.title.trim().to_lowercase() == b.title.trim().to_lowercase()
+        && a.main_artist().trim().to_lowercase() == b.main_artist().trim().to_lowercase()
 }
 
 const SONG_MENU_WIDTH: f32 = 340.0;
