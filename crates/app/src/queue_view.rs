@@ -172,7 +172,9 @@ impl Surco {
                 .style(theme::secondary_text),
             ]
             .spacing(4),
-            scrollable(list.padding(iced::Padding::ZERO.right(16))).height(Length::Fill),
+            crate::smooth::smooth(
+                scrollable(list.padding(iced::Padding::ZERO.right(16))).height(Length::Fill)
+            ),
         ]
         .spacing(16)
         .into()
