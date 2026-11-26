@@ -349,7 +349,7 @@ footer .legal { max-width: 70em; margin: 0; line-height: 1.6; font-size: 13px; }
 <section class="hero">
   <div class="wrap">
     <div>
-      <a class="badge" href="https://github.com/devMathiuX/Surco/releases/latest"><b data-ver>1.0</b><span data-i18n="hero.badge">Ya salió la versión estable</span></a>
+      <a class="badge" id="badge" href="https://github.com/devMathiuX/Surco/releases/latest"><b data-ver>1.0</b><span data-i18n="hero.badge">Novedades de esta versión</span></a>
       <h1 data-i18n-html="hero.title">Tus playlists,<br><span class="accent">en tu compu.</span></h1>
       <p class="lead" data-i18n="hero.lead">Surco es un reproductor de música liviano y gratuito. Pegá el link de una playlist de Spotify o de YouTube y escuchala al toque, sin cuentas ni suscripciones.</p>
       <div class="cta">
@@ -648,7 +648,7 @@ footer .legal { max-width: 70em; margin: 0; line-height: 1.6; font-size: 13px; }
   /* ---------- Textos en inglés (el HTML trae el español) ---------- */
   var EN = {
     "nav.how": "How it works", "nav.features": "Features", "nav.themes": "Themes", "nav.download": "Download",
-    "hero.badge": "The stable release is out",
+    "hero.badge": "What's new in this version",
     "hero.title": "Your playlists,<br><span class=\"accent\">on your computer.</span>",
     "hero.lead": "Surco is a light, free music player. Paste a Spotify or YouTube playlist link and start listening right away, no accounts or subscriptions.",
     "hero.download": "Download for free", "hero.platforms": "Windows, macOS and Linux", "hero.other": "Other systems",
@@ -758,6 +758,7 @@ footer .legal { max-width: 70em; margin: 0; line-height: 1.6; font-size: 13px; }
     if (!rel || !rel.assets) return;
     var v = String(rel.tag_name || "").replace(/^v/, "");
     if (v) document.querySelectorAll("[data-ver]").forEach(function (el) { el.textContent = v; });
+    if (rel.html_url) document.getElementById("badge").href = rel.html_url;
     rel.assets.forEach(function (a) {
       for (var k in MATCH) if (MATCH[k].test(a.name)) assets[k] = a;
     });

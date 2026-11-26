@@ -34,6 +34,12 @@ if [ -n "${GITHUB_REPOSITORY:-}" ] && command -v gh >/dev/null; then
     fi
 fi
 
+# Versión y links del último Release escritos en el HTML: la página queda bien
+# aun sin JavaScript (y para buscadores). El <script> los vuelve a pisar igual.
+if [ -f "$site/release.json" ]; then
+    python3 "$here/stamp.py" "$site/index.html" "$site/release.json"
+fi
+
 # Página del repo APT en apt/ (la raíz es la landing). Solo si el repo existe.
 shopt -s nullglob
 debs=("$site"/pool/main/s/surco/*.deb)
