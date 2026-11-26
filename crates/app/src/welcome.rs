@@ -38,9 +38,7 @@ impl Surco {
 
     pub(crate) fn view_welcome(&self) -> Element<'_, Message> {
         let section = |title: &'static str| text(title).size(theme::SIZE_M);
-        let themes = row((0..theme::THEMES.len()).map(|i| self.theme_card(i)))
-            .spacing(12)
-            .wrap();
+        let themes = self.theme_cards(false);
         let switch = |label: &'static str, on: bool, f: fn(bool) -> Change| {
             toggler(on)
                 .label(label)
@@ -122,10 +120,27 @@ impl Surco {
         .into()
     }
 
+    /// Tarjetas de los temas (bienvenida y ajustes). `custom` suma la del
+    /// tema personalizado, con los colores que eligió el usuario.
+    pub(crate) fn theme_cards(&self, custom: bool) -> Element<'_, Message> {
+        let n = if custom {
+            theme::CUSTOM + 1
+        } else {
+            theme::THEMES.len()
+        };
+        row((0..n).map(|i| self.theme_card(i)))
+            .spacing(12)
+            .wrap()
+            .into()
+    }
+
     /// Tarjeta de un tema con una vista previa chiquita: fondo, panel lateral,
     /// una fila resaltada y el acento.
     fn theme_card(&self, index: usize) -> Element<'_, Message> {
-        let t = theme::THEMES[index];
+        let t = theme::THEMES
+            .get(index)
+            .copied()
+            .unwrap_or_else(|| theme::derive(self.settings.custom.0, self.settings.custom.1));
         let selected = self.settings.theme == index;
         let radius = t.radius.min(8.0);
         let block = |w: f32, h: f32, c: Color| {
@@ -225,6 +240,6 @@ fn preview_background(t: &Colors) -> Background {
                 .into(),
         ),
         Look::Glow => Background::Gradient(linear(0x09090F, 0x35247E).into()),
-        Look::Flat | Look::Brutal => t.background.into(),
+        Look::Flat | Look::Brutal | Look::Minimal => t.background.into(),
     }
 }

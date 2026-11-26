@@ -144,7 +144,7 @@ pub fn tiles(width: f32, height: f32) -> Option<Tiles> {
     let spec = match c.look {
         Look::Glass => &GLASS,
         Look::Glow => &GLOW,
-        Look::Flat | Look::Brutal => return None,
+        Look::Flat | Look::Brutal | Look::Minimal => return None,
     };
     let round = |v: f32| (v.max(1.0).ceil() as u32).div_ceil(STEP) * STEP;
     let size = (round(width), round(height));

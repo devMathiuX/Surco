@@ -1105,7 +1105,8 @@ impl Surco {
         if self.media.is_some() {
             subs.push(Subscription::run(media::events));
         }
-        if self.is_loading() {
+        // Minimal no anima los esqueletos de carga: quedan quietos.
+        if self.is_loading() && !theme::minimal() {
             subs.push(iced::time::every(Duration::from_millis(120)).map(|_| Message::Tick));
         }
         if self.drag.is_some() {

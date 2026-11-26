@@ -481,6 +481,8 @@ pub fn waves_if<'a, Message: 'a>(playing: bool) -> Element<'a, Message> {
 /// (`packaging/icons/make_icons.py`), pero sigue al tema.
 struct Logo {
     accent: Color,
+    /// Sin degradados (tema Minimal).
+    flat: bool,
 }
 
 impl Logo {
@@ -523,19 +525,27 @@ impl<Message> canvas::Program<Message> for Logo {
         let disc = Color::from_rgb8(0x10, 0x13, 0x1A);
         let label = Color::from_rgb8(0x14, 0x18, 0x20);
         let (light, dark) = self.gradient();
+        let flat = self.flat;
         let accent = |a: f32, b: f32, x: f32, y: f32| {
+            if flat {
+                return canvas::Style::Solid(self.accent);
+            }
             canvas::Style::Gradient(canvas::Gradient::Linear(
                 Linear::new(p(a, b), p(x, y))
                     .add_stop(0.0, light)
                     .add_stop(1.0, dark),
             ))
         };
-        let groove = canvas::Style::Gradient(canvas::Gradient::Linear(
-            Linear::new(p(40.0, 40.0), p(216.0, 216.0))
-                .add_stop(0.0, light.scale_alpha(0.85))
-                .add_stop(0.5, self.accent.scale_alpha(0.3))
-                .add_stop(1.0, light.scale_alpha(0.85)),
-        ));
+        let groove = if flat {
+            canvas::Style::Solid(self.accent.scale_alpha(0.5))
+        } else {
+            canvas::Style::Gradient(canvas::Gradient::Linear(
+                Linear::new(p(40.0, 40.0), p(216.0, 216.0))
+                    .add_stop(0.0, light.scale_alpha(0.85))
+                    .add_stop(0.5, self.accent.scale_alpha(0.3))
+                    .add_stop(1.0, light.scale_alpha(0.85)),
+            ))
+        };
         let min = 0.7;
         let width = |w: f32| (w * k).max(min);
 
@@ -628,6 +638,7 @@ impl<Message> canvas::Program<Message> for Logo {
 pub fn logo<'a, Message: 'a>(size: f32) -> Element<'a, Message> {
     Canvas::new(Logo {
         accent: theme::colors().accent,
+        flat: theme::minimal(),
     })
     .width(Length::Fixed(size))
     .height(Length::Fixed(size))

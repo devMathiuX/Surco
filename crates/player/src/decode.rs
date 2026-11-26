@@ -454,6 +454,7 @@ pub(crate) struct RingSource {
     spec: AudioSpec,
     channels: NonZero<u16>,
     rate: NonZero<u32>,
+    eq: crate::eq::Filters,
 }
 
 impl RingSource {
@@ -467,6 +468,7 @@ impl RingSource {
             spec,
             channels: NonZero::new(spec.channels)?,
             rate: NonZero::new(spec.rate)?,
+            eq: crate::eq::Filters::new(),
         })
     }
 
@@ -478,6 +480,8 @@ impl RingSource {
         let n = (buf.len().min(BATCH) / ch) * ch;
         self.local.clear();
         self.local.extend(buf.drain(..n));
+        drop(buf);
+        self.eq.process(&mut self.local, ch, self.spec.rate);
         self.idx = 0;
         self.shared.played.fetch_add(n as u64, Ordering::Relaxed);
         n > 0

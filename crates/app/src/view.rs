@@ -755,7 +755,7 @@ impl Surco {
         };
 
         let languages = self.languages_row();
-        let themes = self.themes_row();
+        let themes = self.theme_cards(true);
         let custom = (self.settings.theme == theme::CUSTOM).then(|| self.view_custom_theme());
 
         let precache = self.precache_row();
@@ -833,6 +833,7 @@ impl Surco {
             ]
             .push(custom)
             .spacing(10),
+            self.view_equalizer(),
             column![
                 section(
                     tr!("Portadas en la lista", "Covers in the list"),
@@ -929,37 +930,83 @@ impl Surco {
         .into()
     }
 
-    /// Botones de tema con sus dos muestras (ajustes y bienvenida).
-    pub(crate) fn themes_row(&self) -> Element<'_, Message> {
-        let sw = |c, size: u32| {
-            container(Space::new())
-                .width(size)
-                .height(size)
-                .style(theme::swatch(c))
-        };
-        // El último es el personalizado, con los colores que eligió el usuario.
-        let (custom_bg, custom_accent) = self.settings.custom;
-        let swatches = theme::THEMES
-            .iter()
-            .map(|t| (t.background, t.accent))
-            .chain([(custom_bg, custom_accent)]);
-        row(swatches.enumerate().map(|(i, (bg, accent))| {
-            button(
-                row![
-                    sw(bg, 14),
-                    sw(accent, 14),
-                    text(theme::name_of(i)).size(theme::SIZE_S)
-                ]
-                .spacing(6)
-                .align_y(Alignment::Center),
-            )
-            .on_press(Message::Setting(Change::Theme(i)))
-            .padding([6, 10])
-            .style(theme::choice_button(self.settings.theme == i))
-            .into()
+    /// Ecualizador de 10 bandas: prendido/apagado, ajustes de fábrica y un
+    /// slider vertical por banda.
+    fn view_equalizer(&self) -> Element<'_, Message> {
+        use surco_player::eq::{Preset, BANDS, MAX_GAIN};
+        let e = self.settings.equalizer;
+        let matching = Preset::matching(&e.gains);
+        let presets = row(Preset::ALL.iter().map(|&p| {
+            button(text(preset_name(p)).size(theme::SIZE_S))
+                .on_press(Message::Setting(Change::EqPreset(p)))
+                .padding([6, 10])
+                .style(theme::choice_button(matching == Some(p)))
+                .into()
+        }))
+        .push((matching.is_none()).then(|| {
+            button(text(tr!("Personalizado", "Custom")).size(theme::SIZE_S))
+                .padding([6, 10])
+                .style(theme::choice_button(true))
         }))
         .spacing(8)
-        .wrap()
+        .wrap();
+        let label = |hz: f32| {
+            if hz >= 1000.0 {
+                format!("{}k", hz / 1000.0)
+            } else {
+                format!("{hz}")
+            }
+        };
+        let bands = row(BANDS.iter().zip(e.gains).enumerate().map(|(i, (&hz, g))| {
+            column![
+                text(if g == 0.0 {
+                    "0".to_owned()
+                } else {
+                    format!("{g:+}")
+                })
+                .size(11)
+                .style(theme::secondary_text),
+                iced::widget::vertical_slider(-MAX_GAIN..=MAX_GAIN, g, move |v| {
+                    Message::Setting(Change::EqBand(i, v))
+                })
+                .step(0.5)
+                .height(120)
+                .on_release(Message::Setting(Change::EqSave))
+                .style(theme::seek_slider),
+                text(label(hz)).size(11).style(if e.enabled {
+                    theme::plain_text
+                } else {
+                    theme::secondary_text
+                }),
+            ]
+            .spacing(6)
+            .width(40)
+            .align_x(Alignment::Center)
+            .into()
+        }))
+        .spacing(4);
+        column![
+            column![
+                text(tr!("Ecualizador", "Equalizer")).size(theme::SIZE_M),
+                text(tr!(
+                    "Subí o bajá graves, medios y agudos. Se oye al instante.",
+                    "Boost or cut bass, mids and treble. You hear it right away."
+                ))
+                .size(theme::SIZE_S)
+                .style(theme::secondary_text),
+            ]
+            .spacing(2),
+            toggler(e.enabled)
+                .label(tr!("Activado", "On"))
+                .on_toggle(|v| Message::Setting(Change::EqEnabled(v)))
+                .size(20)
+                .text_size(theme::SIZE_S)
+                .spacing(10)
+                .style(theme::switch),
+            presets,
+            bands,
+        ]
+        .spacing(10)
         .into()
     }
 
@@ -1288,6 +1335,21 @@ fn fold(s: &str) -> String {
             c => c,
         })
         .collect()
+}
+
+/// Nombre de un ajuste de fábrica del ecualizador.
+fn preset_name(p: surco_player::eq::Preset) -> &'static str {
+    use surco_player::eq::Preset;
+    match p {
+        Preset::Flat => tr!("Plano", "Flat"),
+        Preset::Bass => tr!("Graves", "Bass"),
+        Preset::Treble => tr!("Agudos", "Treble"),
+        Preset::Vocal => tr!("Voces", "Vocal"),
+        Preset::Rock => tr!("Rock", "Rock"),
+        Preset::Pop => tr!("Pop", "Pop"),
+        Preset::Electronic => tr!("Electrónica", "Electronic"),
+        Preset::Acoustic => tr!("Acústica", "Acoustic"),
+    }
 }
 
 #[cfg(test)]

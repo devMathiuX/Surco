@@ -3,6 +3,7 @@
 //! biblioteca.
 
 use iced::{Color, Task};
+use surco_player::eq::{self, Equalizer, Preset};
 
 use crate::i18n::{self, Lang};
 use crate::{theme, Message, Surco};
@@ -15,6 +16,8 @@ const COVERS_IN_LIST: &str = "covers_in_list";
 const PRECACHE: &str = "precache";
 const AUTOPLAY: &str = "autoplay";
 const UI_SCALE: &str = "ui_scale";
+/// Ecualizador: "1;g1,g2,…,g10" (prendido o no y la ganancia de cada banda).
+const EQUALIZER: &str = "equalizer";
 
 /// Tamaño de la interfaz, en %: de a 10, entre estos límites.
 pub const SCALE_MIN: u32 = 70;
@@ -74,6 +77,7 @@ pub struct Settings {
     pub autoplay: bool,
     /// Tamaño de la interfaz, en % (100 = normal).
     pub ui_scale: u32,
+    pub equalizer: Equalizer,
 }
 
 impl Default for Settings {
@@ -86,6 +90,7 @@ impl Default for Settings {
             precache: Precache::Off,
             autoplay: true,
             ui_scale: 100,
+            equalizer: Equalizer::default(),
         }
     }
 }
@@ -102,6 +107,12 @@ pub enum Change {
     Autoplay(bool),
     /// Agrandar (+1) o achicar (-1) la interfaz un paso; 0 la vuelve al 100 %.
     Scale(i32),
+    EqEnabled(bool),
+    /// Ganancia de una banda, en dB (mientras se arrastra: no se guarda).
+    EqBand(usize, f32),
+    /// Se soltó un slider del ecualizador: guardar.
+    EqSave,
+    EqPreset(Preset),
 }
 
 impl Surco {
@@ -137,6 +148,10 @@ impl Surco {
         if let Some(v) = get(UI_SCALE).and_then(|v| v.parse::<u32>().ok()) {
             s.ui_scale = v.clamp(SCALE_MIN, SCALE_MAX);
         }
+        if let Some(e) = get(EQUALIZER).as_deref().and_then(parse_eq) {
+            s.equalizer = e;
+        }
+        eq::set(s.equalizer);
         self.settings = s;
         self.custom_hex = [theme::to_hex(s.custom.0), theme::to_hex(s.custom.1)];
         i18n::set(s.language);
@@ -223,8 +238,65 @@ impl Surco {
                 self.save_setting(UI_SCALE, &self.settings.ui_scale.to_string());
                 Task::none()
             }
+            Change::EqEnabled(on) => {
+                self.settings.equalizer.enabled = on;
+                self.apply_eq(true);
+                Task::none()
+            }
+            Change::EqBand(band, db) => {
+                if let Some(g) = self.settings.equalizer.gains.get_mut(band) {
+                    // De a medio dB.
+                    *g = ((db * 2.0).round() / 2.0).clamp(-eq::MAX_GAIN, eq::MAX_GAIN);
+                    // Mover una banda prende el ecualizador.
+                    self.settings.equalizer.enabled = true;
+                    self.apply_eq(false);
+                }
+                Task::none()
+            }
+            Change::EqSave => {
+                self.apply_eq(true);
+                Task::none()
+            }
+            Change::EqPreset(p) => {
+                self.settings.equalizer.gains = p.gains();
+                self.settings.equalizer.enabled = p != Preset::Flat;
+                self.apply_eq(true);
+                Task::none()
+            }
         }
     }
+
+    /// Pasa el ecualizador al motor de audio y, si `save`, lo guarda.
+    fn apply_eq(&self, save: bool) {
+        eq::set(self.settings.equalizer);
+        if save {
+            self.save_setting(EQUALIZER, &format_eq(&self.settings.equalizer));
+        }
+    }
+}
+
+fn format_eq(e: &Equalizer) -> String {
+    let gains: Vec<String> = e.gains.iter().map(|g| format!("{g:.1}")).collect();
+    format!("{};{}", u8::from(e.enabled), gains.join(","))
+}
+
+fn parse_eq(s: &str) -> Option<Equalizer> {
+    let (on, gains) = s.split_once(';')?;
+    let mut out = Equalizer {
+        enabled: on == "1",
+        gains: [0.0; 10],
+    };
+    let values: Vec<f32> = gains
+        .split(',')
+        .map(|g| g.trim().parse::<f32>().ok())
+        .collect::<Option<_>>()?;
+    if values.len() != out.gains.len() {
+        return None;
+    }
+    for (slot, v) in out.gains.iter_mut().zip(values) {
+        *slot = v.clamp(-eq::MAX_GAIN, eq::MAX_GAIN);
+    }
+    Some(out)
 }
 
 /// Un paso más grande (`dir` > 0), más chico (< 0) o el normal (0).
@@ -247,6 +319,20 @@ mod tests {
         assert_eq!(scaled(SCALE_MAX, 1), SCALE_MAX);
         assert_eq!(scaled(SCALE_MIN, -1), SCALE_MIN);
         assert_eq!(scaled(130, 0), 100);
+    }
+
+    #[test]
+    fn equalizer_round_trips() {
+        let mut e = Equalizer {
+            enabled: true,
+            gains: Preset::Rock.gains(),
+        };
+        e.gains[3] = -4.5;
+        assert_eq!(parse_eq(&format_eq(&e)), Some(e));
+        assert_eq!(parse_eq("1;1,2"), None);
+        assert_eq!(parse_eq("basura"), None);
+        let loud = parse_eq("0;99,0,0,0,0,0,0,0,0,0").map(|e| e.gains[0]);
+        assert_eq!(loud, Some(eq::MAX_GAIN));
     }
 
     #[test]
