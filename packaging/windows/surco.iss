@@ -19,6 +19,7 @@ AppPublisher=mathiux
 AppPublisherURL=https://github.com/devMathiuX/Surco
 DefaultDirName={autopf}\Surco
 DefaultGroupName=Surco
+AppCopyright=© 2026 mathiux. Licencia MIT.
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 PrivilegesRequiredOverridesAllowed=dialog
@@ -41,6 +42,8 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 [Files]
 Source: "{#SourceExe}"; DestDir: "{app}"; DestName: "surco.exe"; Flags: ignoreversion
 Source: "..\..\README.md"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\..\LICENSE"; DestDir: "{app}"; DestName: "LICENSE.txt"; Flags: ignoreversion
+Source: "..\..\THIRD_PARTY_LICENSES.html"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{autoprograms}\Surco"; Filename: "{app}\surco.exe"

@@ -3,11 +3,7 @@
 //! Sirve para "precargar": las próximas canciones se bajan antes de que
 //! suenen, así no hay que esperar ni depende de la red en ese momento. Se
 //! borran las menos usadas cuando se pasa del tope de tamaño.
-//!
-//! Los videos "fijados" (los de las playlists descargadas) no cuentan para el
-//! tope y nunca se borran solos.
 
-use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
@@ -21,8 +17,6 @@ pub const DEFAULT_LIMIT: u64 = 2 * 1024 * 1024 * 1024;
 pub struct AudioCache {
     dir: PathBuf,
     limit: u64,
-    /// Videos que no se borran solos (compartido entre las copias).
-    pinned: Arc<Mutex<HashSet<String>>>,
     /// La última canción escuchada: tampoco se borra (para retomarla al
     /// abrir la app sin esperar).
     kept: Arc<Mutex<Option<String>>>,
@@ -47,7 +41,6 @@ impl AudioCache {
         Self {
             dir: dir.into(),
             limit,
-            pinned: Arc::default(),
             kept: Arc::default(),
         }
     }
@@ -60,26 +53,12 @@ impl AudioCache {
         }
     }
 
-    /// Cambia los videos fijados (los de las playlists descargadas) y
-    /// devuelve los que estaban fijados y ya no.
-    pub fn set_pinned(&self, videos: HashSet<String>) -> Vec<String> {
-        let Ok(mut p) = self.pinned.lock() else {
-            return Vec::new();
+    /// Si el archivo es el de la canción guardada para retomar.
+    fn kept_path(&self, path: &Path) -> bool {
+        let Some(v) = path.file_stem().and_then(|s| s.to_str()) else {
+            return false;
         };
-        let old = std::mem::replace(&mut *p, videos);
-        old.into_iter().filter(|v| !p.contains(v)).collect()
-    }
-
-    pub fn is_pinned(&self, video: &str) -> bool {
-        self.pinned.lock().is_ok_and(|p| p.contains(video))
-            || self.kept.lock().is_ok_and(|k| k.as_deref() == Some(video))
-    }
-
-    /// Si el archivo es de un video fijado.
-    fn pinned_path(&self, path: &Path) -> bool {
-        path.file_stem()
-            .and_then(|s| s.to_str())
-            .is_some_and(|v| self.is_pinned(v))
+        self.kept.lock().is_ok_and(|k| k.as_deref() == Some(v))
     }
 
     pub fn dir(&self) -> &Path {
@@ -152,7 +131,7 @@ impl AudioCache {
     /// Borra las menos usadas hasta quedar debajo del tope (nunca `keep`).
     fn evict(&self, keep: Option<&Path>) {
         let mut entries = self.entries();
-        entries.retain(|(path, _, _)| !self.pinned_path(path));
+        entries.retain(|(path, _, _)| !self.kept_path(path));
         let mut total: u64 = entries.iter().map(|(_, len, _)| len).sum();
         if total <= self.limit {
             return;
@@ -189,10 +168,10 @@ impl AudioCache {
         }
     }
 
-    /// Borra todo el audio guardado menos el fijado.
+    /// Borra todo el audio guardado menos la canción para retomar.
     pub fn clear(&self) {
         for (path, _, _) in self.entries() {
-            if !self.pinned_path(&path) {
+            if !self.kept_path(&path) {
                 let _ = std::fs::remove_file(path);
             }
         }
@@ -225,27 +204,6 @@ mod tests {
         c.clear();
         assert!(!c.contains("aaaaaaaaaaa"));
         let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn pinned_are_never_evicted_nor_cleared() {
-        let dir = temp_dir("pinned");
-        let c = AudioCache::new(&dir, 15);
-        assert!(c.set_pinned(["aaaaaaaaaaa".to_owned()].into()).is_empty());
-        c.put("aaaaaaaaaaa", b"0123456789").unwrap();
-        std::thread::sleep(Duration::from_millis(20));
-        c.put("bbbbbbbbbbb", b"0123456789").unwrap();
-        std::thread::sleep(Duration::from_millis(20));
-        c.put("ccccccccccc", b"0123456789").unwrap();
-        // El fijado no cuenta para el tope: se va el más viejo de los otros.
-        assert!(c.contains("aaaaaaaaaaa"));
-        assert!(!c.contains("bbbbbbbbbbb"));
-        assert!(c.contains("ccccccccccc"));
-        c.clear();
-        assert!(c.contains("aaaaaaaaaaa"));
-        assert!(!c.contains("ccccccccccc"));
-        assert_eq!(c.set_pinned(HashSet::new()), vec!["aaaaaaaaaaa".to_owned()]);
-        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

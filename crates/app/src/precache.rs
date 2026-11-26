@@ -34,13 +34,6 @@ pub struct PrecacheState {
     paused: bool,
 }
 
-impl PrecacheState {
-    /// El audio de `video` se borró del disco.
-    pub fn forget(&mut self, video: &str) {
-        self.done.remove(video);
-    }
-}
-
 impl Surco {
     /// Cuántas canciones por delante hay que tener resueltas.
     pub(crate) fn lookahead(&self) -> usize {
@@ -100,9 +93,7 @@ impl Surco {
         if self.precache.running.is_some() {
             return Task::none();
         }
-        // Después de las próximas, las playlists descargadas.
-        let failed = &self.precache.failed;
-        let Some(track) = todo.or_else(|| self.next_offline_track(&|k| failed.contains(k))) else {
+        let Some(track) = todo else {
             return Task::none();
         };
         let key = cache_key(&track);
@@ -132,7 +123,6 @@ impl Surco {
         match result {
             Ok(m) => {
                 self.precache.done.insert(m.youtube_id.clone());
-                self.refresh_downloads();
                 let video = m.youtube_id.clone();
                 if !matches!(self.resolutions.get(&key), Some(TrackRes::Done(_))) {
                     self.persist_match(&key, &m);
@@ -164,6 +154,23 @@ impl Surco {
         self.precache_dirty = true;
     }
 
+    /// Al arrancar: borra la precarga de la vez anterior (por si la app no
+    /// se cerró bien). Solo queda la canción guardada para retomar. También
+    /// borra el audio de las "playlists descargadas" de versiones viejas.
+    pub(crate) fn drop_temporary_audio(&self) {
+        if let Some(cache) = self.provider.as_ref().and_then(|p| p.audio_cache()) {
+            let before = cache.usage();
+            cache.clear();
+            let after = cache.usage();
+            if before.files > after.files {
+                tracing::info!(
+                    files = before.files - after.files,
+                    "precarga de la vez anterior borrada"
+                );
+            }
+        }
+    }
+
     /// Vacía la caché de audio (botón de ajustes).
     pub(crate) fn clear_audio_cache(&mut self) {
         if let Some(cache) = self.provider.as_ref().and_then(|p| p.audio_cache()) {
@@ -172,7 +179,6 @@ impl Surco {
         self.precache.done.clear();
         self.precache.failed.clear();
         self.precache_dirty = true;
-        self.refresh_downloads();
     }
 }
 

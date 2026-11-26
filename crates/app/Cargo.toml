@@ -13,7 +13,8 @@ readme = "../../README.md"
 [package.metadata.deb]
 name = "surco"
 maintainer = "mathiux"
-copyright = "mathiux"
+copyright = "2026 mathiux"
+license-file = ["../../LICENSE", "0"]
 section = "sound"
 priority = "optional"
 extended-description = """\
@@ -35,6 +36,7 @@ assets = [
     ["../../packaging/icons/surco-256.png", "usr/share/icons/hicolor/256x256/apps/surco.png", "644"],
     ["../../packaging/icons/surco-512.png", "usr/share/icons/hicolor/512x512/apps/surco.png", "644"],
     ["../../README.md", "usr/share/doc/surco/README.md", "644"],
+    ["../../THIRD_PARTY_LICENSES.html", "usr/share/doc/surco/THIRD_PARTY_LICENSES.html", "644"],
 ]
 
 [[bin]]
