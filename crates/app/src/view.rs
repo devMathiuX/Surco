@@ -726,11 +726,20 @@ impl Surco {
                 col = col.push(chooser);
             }
         }
-        col.push(crate::smooth::smooth(
+        // Solo avisa cuando cambian las filas que hay que armar: rearmar
+        // toda la vista en cada cuadro del scroll lo vuelve entrecortado.
+        let range = visible_rows(self.list_view, usize::MAX);
+        col.push(crate::smooth::smooth_filtered(
             scrollable(rows)
                 .id(Id::new(LIST_SCROLL))
                 .on_scroll(|v| Message::ListScrolled(v.absolute_offset().y, v.bounds().height))
                 .height(Length::Fill),
+            move |m| match m {
+                Message::ListScrolled(offset, height) => {
+                    visible_rows((*offset, *height), usize::MAX) != range
+                }
+                _ => true,
+            },
         ))
         .into()
     }

@@ -3,8 +3,13 @@
 //! El `scrollable` de iced salta 60 px de golpe por cada paso de la rueda.
 //! [`Smooth`] envuelve un `scrollable`: se queda con esos pasos y se los va
 //! pasando de a poco, cuadro a cuadro, como desplazamientos en píxeles (lo
-//! mismo que manda un touchpad), con una curva que frena al final. Los
-//! touchpads ya mandan píxeles: esos pasan tal cual.
+//! mismo que manda un touchpad). Los touchpads ya mandan píxeles: esos pasan
+//! tal cual.
+//!
+//! El movimiento es un resorte con amortiguación crítica que persigue el
+//! destino: arranca suave, acelera, y frena sin pasarse. Cada paso nuevo de
+//! la rueda corre el destino sin cortar la velocidad que traía, así que
+//! girar la rueda seguido da un deslizamiento continuo, con inercia.
 
 use iced::advanced::layout;
 use iced::advanced::mouse;
@@ -17,10 +22,14 @@ use iced::{keyboard, window, Element, Event, Length, Rectangle, Size, Vector};
 
 /// Píxeles por paso de la rueda (lo mismo que iced).
 const LINE: f32 = 60.0;
-/// Qué tan rápido llega al destino: con 14, a los ~150 ms ya recorrió el 90 %.
-const SPEED: f32 = 14.0;
-/// Debajo de esto se termina la animación.
-const DONE: f32 = 0.5;
+/// Rigidez del resorte (1/s). Con 18, un paso recorre el 90 % en ~210 ms y
+/// termina a los ~350 ms.
+const OMEGA: f32 = 18.0;
+/// Debajo de esto (en píxeles y píxeles por segundo) se termina.
+const DONE: f32 = 1.0;
+const DONE_SPEED: f32 = 20.0;
+/// Si un cuadro tarda más que esto, se cuenta como si hubiera tardado esto.
+const MAX_DT: f32 = 0.05;
 
 /// Envuelve un `scrollable` para que la rueda lo mueva suave.
 pub fn smooth<'a, Message: 'a, Theme: 'a, Renderer: renderer::Renderer + 'a>(
@@ -28,34 +37,112 @@ pub fn smooth<'a, Message: 'a, Theme: 'a, Renderer: renderer::Renderer + 'a>(
 ) -> Element<'a, Message, Theme, Renderer> {
     Element::new(Smooth {
         content: content.into(),
+        keep: None,
     })
 }
 
+/// Como [`smooth`], pero de los mensajes del `scrollable` solo pasan los que
+/// cumplen `keep`. Cada mensaje rearma toda la vista, y `on_scroll` manda uno
+/// por cuadro: así la lista avisa solo cuando cambia algo que importa.
+pub fn smooth_filtered<'a, Message: 'a, Theme: 'a, Renderer: renderer::Renderer + 'a>(
+    content: impl Into<Element<'a, Message, Theme, Renderer>>,
+    keep: impl Fn(&Message) -> bool + 'a,
+) -> Element<'a, Message, Theme, Renderer> {
+    Element::new(Smooth {
+        content: content.into(),
+        keep: Some(Box::new(keep)),
+    })
+}
+
+/// Qué mensajes del contenido pasan (`None`: todos).
+type Keep<'a, Message> = Option<Box<dyn Fn(&Message) -> bool + 'a>>;
+
 struct Smooth<'a, Message, Theme, Renderer> {
     content: Element<'a, Message, Theme, Renderer>,
+    keep: Keep<'a, Message>,
+}
+
+/// Le pasa el evento al contenido, filtrando sus mensajes con `keep`.
+#[allow(clippy::too_many_arguments)]
+fn forward<Message, Theme, Renderer: renderer::Renderer>(
+    content: &mut Element<'_, Message, Theme, Renderer>,
+    keep: &Keep<'_, Message>,
+    tree: &mut Tree,
+    event: &Event,
+    layout: Layout<'_>,
+    cursor: mouse::Cursor,
+    renderer: &Renderer,
+    clipboard: &mut dyn Clipboard,
+    shell: &mut Shell<'_, Message>,
+    viewport: &Rectangle,
+) {
+    let Some(keep) = keep else {
+        content.as_widget_mut().update(
+            tree, event, layout, cursor, renderer, clipboard, shell, viewport,
+        );
+        return;
+    };
+    let mut messages = Vec::new();
+    let mut inner = Shell::new(&mut messages);
+    content.as_widget_mut().update(
+        tree, event, layout, cursor, renderer, clipboard, &mut inner, viewport,
+    );
+    if inner.is_event_captured() {
+        shell.capture_event();
+    }
+    shell.request_redraw_at(inner.redraw_request());
+    if inner.is_layout_invalid() {
+        shell.invalidate_layout();
+    }
+    if inner.are_widgets_invalid() {
+        shell.invalidate_widgets();
+    }
+    shell.request_input_method(inner.input_method());
+    drop(inner);
+    for m in messages {
+        if keep(&m) {
+            shell.publish(m);
+        }
+    }
 }
 
 #[derive(Default)]
 struct State {
     /// Lo que falta recorrer (positivo: hacia abajo).
     pending: f32,
+    /// Velocidad actual, en píxeles por segundo (positivo: hacia abajo).
+    velocity: f32,
     last_frame: Option<Instant>,
     shift: bool,
 }
 
-/// Cuánto avanzar en este cuadro de lo que falta (`pending`), si pasaron
-/// `dt` segundos desde el anterior.
-fn step(pending: f32, dt: f32) -> f32 {
-    if pending.abs() <= DONE {
-        return pending;
+impl State {
+    fn moving(&self) -> bool {
+        self.pending != 0.0
     }
-    let s = pending * (1.0 - (-SPEED * dt).exp());
-    // Al menos medio píxel, para no quedar arrastrándose.
-    if s.abs() < DONE {
-        DONE.copysign(pending)
-    } else {
-        s
+}
+
+/// Avanza el resorte `dt` segundos. Devuelve cuánto moverse en este cuadro
+/// y deja en `pending` y `velocity` lo que queda.
+fn step(pending: &mut f32, velocity: &mut f32, dt: f32) -> f32 {
+    // Solución exacta del resorte críticamente amortiguado, con
+    // d = posición - destino = -pending.
+    let d = -*pending;
+    let v = *velocity;
+    let e = (-OMEGA * dt).exp();
+    let k = v + OMEGA * d;
+    let d2 = (d + k * dt) * e;
+    let v2 = (v - OMEGA * k * dt) * e;
+    if d2.abs() < DONE && v2.abs() < DONE_SPEED {
+        // Llegó: lo que falta, de una.
+        let s = *pending;
+        *pending = 0.0;
+        *velocity = 0.0;
+        return s;
     }
+    *pending = -d2;
+    *velocity = v2;
+    d2 - d
 }
 
 impl<Message, Theme, Renderer> Widget<Message, Theme, Renderer>
@@ -131,11 +218,13 @@ where
                 delta: mouse::ScrollDelta::Lines { x, y },
             }) if *x == 0.0 && !state.shift && cursor.is_over(bounds) => {
                 let target = -y * LINE;
-                // Cambio de sentido: lo que faltaba del otro lado se olvida.
-                if state.pending != 0.0 && state.pending.signum() != target.signum() {
+                // Cambio de sentido: lo que faltaba del otro lado se olvida
+                // y frena en seco.
+                if state.moving() && state.pending.signum() != target.signum() {
                     state.pending = 0.0;
+                    state.velocity = 0.0;
                 }
-                if state.pending == 0.0 {
+                if !state.moving() {
                     state.last_frame = None;
                 }
                 state.pending += target;
@@ -143,19 +232,23 @@ where
                 shell.request_redraw();
                 return;
             }
-            Event::Window(window::Event::RedrawRequested(now)) if state.pending != 0.0 => {
+            // iced manda el mismo cuadro hasta 3 veces si la vista cambió
+            // (la lista avisa que se movió): solo la primera mueve, pero
+            // todas piden el cuadro siguiente (vale el pedido de la última).
+            Event::Window(window::Event::RedrawRequested(now))
+                if state.moving() && state.last_frame == Some(*now) =>
+            {
+                shell.request_redraw();
+            }
+            Event::Window(window::Event::RedrawRequested(now)) if state.moving() => {
                 let dt = state
                     .last_frame
                     .map(|t| now.saturating_duration_since(t).as_secs_f32())
                     // Primer cuadro: como si hubiera pasado uno de 60 Hz.
                     .unwrap_or(1.0 / 60.0)
-                    .min(0.1);
+                    .min(MAX_DT);
                 state.last_frame = Some(*now);
-                let s = step(state.pending, dt);
-                state.pending -= s;
-                if state.pending.abs() < f32::EPSILON {
-                    state.pending = 0.0;
-                }
+                let s = step(&mut state.pending, &mut state.velocity, dt);
                 // Al `scrollable` le llega como un desplazamiento en píxeles,
                 // con el mouse en el medio de la lista (aunque se haya ido).
                 let at = cursor
@@ -165,7 +258,9 @@ where
                 let wheel = Event::Mouse(mouse::Event::WheelScrolled {
                     delta: mouse::ScrollDelta::Pixels { x: 0.0, y: -s },
                 });
-                self.content.as_widget_mut().update(
+                forward(
+                    &mut self.content,
+                    &self.keep,
                     &mut children[0],
                     &wheel,
                     layout,
@@ -175,13 +270,15 @@ where
                     shell,
                     viewport,
                 );
-                if state.pending != 0.0 {
+                if state.moving() {
                     shell.request_redraw();
                 }
             }
             _ => {}
         }
-        self.content.as_widget_mut().update(
+        forward(
+            &mut self.content,
+            &self.keep,
             &mut tree.children[0],
             event,
             layout,
@@ -253,25 +350,50 @@ where
 mod tests {
     use super::*;
 
+    /// Simula `seconds` a `fps`. Devuelve lo recorrido en cada cuadro.
+    fn run(pending: &mut f32, velocity: &mut f32, fps: f32, frames: usize) -> Vec<f32> {
+        (0..frames)
+            .map(|_| step(pending, velocity, 1.0 / fps))
+            .collect()
+    }
+
     #[test]
-    fn eases_out_and_finishes() {
-        let mut pending = 3.0 * LINE;
-        let mut frames = 0;
-        let mut first = None;
-        while pending != 0.0 {
-            let s = step(pending, 1.0 / 60.0);
-            first.get_or_insert(s);
-            pending -= s;
-            if pending.abs() < f32::EPSILON {
-                pending = 0.0;
-            }
-            frames += 1;
-            assert!(frames < 200, "no termina");
-        }
-        // Arranca rápido (más de 30 px en el primer cuadro) y frena.
-        assert!(first.unwrap() > 30.0);
-        assert!(frames > 10, "demasiado brusco: {frames} cuadros");
-        // Hacia arriba igual.
-        assert!(step(-LINE, 1.0 / 60.0) < 0.0);
+    fn one_notch_glides_and_lands_exactly() {
+        let (mut p, mut v) = (LINE, 0.0);
+        let moves = run(&mut p, &mut v, 60.0, 60);
+        assert_eq!(p, 0.0, "no terminó en un segundo");
+        assert_eq!(v, 0.0);
+        let total: f32 = moves.iter().sum();
+        assert!((total - LINE).abs() < 1e-3, "recorrió {total}");
+        // Nunca se pasa ni vuelve para atrás.
+        assert!(moves.iter().all(|m| *m >= 0.0));
+        // Arranca suave: el primer cuadro mueve poco.
+        assert!(moves[0] < LINE * 0.1, "primer cuadro: {}", moves[0]);
+        // Dura entre 200 y 500 ms.
+        let frames = moves.iter().filter(|m| **m != 0.0).count();
+        assert!((12..=30).contains(&frames), "{frames} cuadros");
+    }
+
+    #[test]
+    fn new_notch_keeps_the_speed() {
+        let (mut p, mut v) = (LINE, 0.0);
+        run(&mut p, &mut v, 60.0, 5);
+        let before = v;
+        assert!(before > 0.0);
+        p += LINE;
+        let moves = run(&mut p, &mut v, 60.0, 1);
+        // Sigue acelerando, no frena ni salta.
+        assert!(v >= before && moves[0] > 0.0);
+        let rest: f32 = run(&mut p, &mut v, 60.0, 120).iter().sum();
+        assert_eq!(p, 0.0);
+        assert!(rest > 0.0);
+    }
+
+    #[test]
+    fn works_upwards_and_at_low_fps() {
+        let (mut p, mut v) = (-2.0 * LINE, 0.0);
+        let total: f32 = run(&mut p, &mut v, 24.0, 48).iter().sum();
+        assert_eq!(p, 0.0);
+        assert!((total + 2.0 * LINE).abs() < 1e-3);
     }
 }
