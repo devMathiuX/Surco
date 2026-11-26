@@ -345,11 +345,11 @@ impl Surco {
                 .width(Length::Fill)
                 .height(if brutal { 2 } else { 1 })
                 .style(theme::rule(theme::colors().border)),
-            column![library_header, scrollable(list).height(Length::Fill)].spacing(if brutal {
-                12
-            } else {
-                6
-            }),
+            column![
+                library_header,
+                crate::smooth::smooth(scrollable(list).height(Length::Fill))
+            ]
+            .spacing(if brutal { 12 } else { 6 }),
         ]
         .spacing(16)
         .height(Length::Fill);
@@ -764,12 +764,12 @@ impl Surco {
                 col = col.push(chooser);
             }
         }
-        col.push(
+        col.push(crate::smooth::smooth(
             scrollable(rows)
                 .id(Id::new(LIST_SCROLL))
                 .on_scroll(|v| Message::ListScrolled(v.absolute_offset().y, v.bounds().height))
                 .height(Length::Fill),
-        )
+        ))
         .into()
     }
 
@@ -958,7 +958,7 @@ impl Surco {
         .spacing(28)
         .max_width(760)
         .padding(iced::Padding::ZERO.right(16));
-        scrollable(body).height(Length::Fill).into()
+        crate::smooth::smooth(scrollable(body).height(Length::Fill))
     }
 
     /// Botones de idioma (ajustes y bienvenida).
@@ -1319,9 +1319,12 @@ impl Surco {
         ]
         .align_y(Alignment::Center);
         Some(
-            column![header, scrollable(list).height(Length::Shrink)]
-                .spacing(8)
-                .into(),
+            column![
+                header,
+                crate::smooth::smooth(scrollable(list).height(Length::Shrink))
+            ]
+            .spacing(8)
+            .into(),
         )
     }
 }

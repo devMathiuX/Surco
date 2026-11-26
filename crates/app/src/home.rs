@@ -223,9 +223,10 @@ impl Surco {
             );
         }
 
-        scrollable(col.padding(iced::Padding::ZERO.right(16)).max_width(1100))
-            .height(Length::Fill)
-            .into()
+        crate::smooth::smooth(
+            scrollable(col.padding(iced::Padding::ZERO.right(16)).max_width(1100))
+                .height(Length::Fill),
+        )
     }
 
     fn tile(&self, i: usize) -> Element<'_, Message> {

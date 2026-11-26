@@ -24,6 +24,7 @@ mod resume;
 mod search;
 mod settings;
 mod skeleton;
+mod smooth;
 mod spotify_keys;
 mod theme;
 mod tools;
