@@ -34,7 +34,7 @@ Después de crear el Release, `release.yml` llama a **`apt.yml`**, que baja el `
 
 La página de Surco vive en `web/` (un solo `index.html` sin dependencias, con las capturas en `web/img/`) y comparte la rama `gh-pages` con el repo APT:
 
-- `web/build.sh <sitio> <url-base>` copia la página sobre lo publicado sin tocar `dists/`, `pool/`, `install.sh` ni las claves, escribe `release.json` con el último Release (con `gh api`) y arma `apt/index.html`.
+- `web/build.sh <sitio> <url-base>` copia la página sobre lo publicado sin tocar `dists/`, `pool/`, `install.sh` ni las claves, escribe `release.json` con el último Release (con `gh api`), deja la versión y los links de ese Release escritos en el HTML (`web/stamp.py`) y arma `apt/index.html`.
 - **`pages.yml`** la publica cuando cambia `web/` en `main` (o a mano: Actions > **Página** > Run workflow). `apt.yml` también corre `web/build.sh` después de cada Release, así los links de descarga apuntan a la versión nueva. Los dos workflows comparten el grupo de concurrencia `apt-repo` para no pisarse.
 - La página detecta el sistema (Windows, macOS, Linux) y arma los links de descarga con `release.json`; si falta, usa la API de GitHub, y sin JavaScript manda a la página del último Release. Textos en español en el HTML y en inglés en el `<script>` (`EN`).
 - Para probarla local: `web/build.sh /tmp/sitio http://localhost:8000 && python3 -m http.server -d /tmp/sitio`.
