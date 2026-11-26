@@ -31,6 +31,12 @@ SolidCompression=yes
 WizardStyle=modern
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
+; Con la X, Surco se esconde en la bandeja y sigue abierto: el pedido de
+; cierre del Restart Manager no lo cierra y el instalador se quedaba en
+; "Cerrando aplicaciones...". Lo cerramos nosotros antes (ver [Code]) y, si
+; igual queda algo, el Restart Manager lo cierra a la fuerza.
+CloseApplications=force
+RestartApplications=no
 
 [Languages]
 Name: "spanish"; MessagesFile: "compiler:Languages\Spanish.isl"
@@ -51,3 +57,29 @@ Name: "{autodesktop}\Surco"; Filename: "{app}\surco.exe"; Tasks: desktopicon
 
 [Run]
 Filename: "{app}\surco.exe"; Description: "{cm:LaunchProgram,Surco}"; Flags: nowait postinstall skipifsilent
+
+[Code]
+// Cierra Surco si está abierto (también escondido en la bandeja). Sin /T:
+// el actualizador corre este instalador como nieto de Surco y no hay que
+// matarlo con él.
+procedure CloseSurco();
+var
+  Code: Integer;
+begin
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM surco.exe', '', SW_HIDE,
+    ewWaitUntilTerminated, Code);
+  // Que Windows suelte el archivo antes de reemplazarlo.
+  Sleep(500);
+end;
+
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+begin
+  CloseSurco();
+  Result := '';
+end;
+
+function InitializeUninstall(): Boolean;
+begin
+  CloseSurco();
+  Result := True;
+end;
