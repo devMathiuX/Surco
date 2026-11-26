@@ -201,7 +201,11 @@ En Windows, la X esconde la ventana y Surco sigue sonando en la bandeja (la flec
 
 ![Ajustes](docs/ajustes.png)
 
+![El tema Vidrio](docs/vidrio.png)
+
 La primera vez que abrís Surco aparece una pantalla de bienvenida para elegir el tema, el idioma, el tamaño y la precarga. Tocá **Empezar** y listo; todo se puede cambiar después.
+
+![Pantalla de bienvenida](docs/bienvenida.png)
 
 El engranaje de arriba a la izquierda abre los ajustes:
 
