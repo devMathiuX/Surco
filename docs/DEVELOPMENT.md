@@ -25,10 +25,19 @@ Después de crear el Release, `release.yml` llama a **`apt.yml`**, que baja el `
 
 - URL: `https://devmathiux.github.io/Surco` (suite `stable`, componente `main`, solo `amd64`).
 - Lo arma `packaging/linux/build-apt-repo.sh` con `apt-ftparchive`: parte de lo publicado en `gh-pages`, agrega el `.deb` nuevo y deja las últimas 3 versiones (`SURCO_APT_KEEP`). Firma `InRelease` y `Release.gpg`, y exporta la clave pública como `surco.gpg` y `surco.asc`.
-- También deja `install.sh` (instalador de una línea, `packaging/linux/apt/install.sh`) e `index.html` con las instrucciones.
+- También deja `install.sh` (instalador de una línea, `packaging/linux/apt/install.sh`) y `apt/index.html` con las instrucciones. La raíz del sitio es la página de Surco (ver abajo).
 - `gh-pages` se reescribe con un solo commit en cada publicación, así los `.deb` viejos no quedan en la historia. Las versiones viejas siguen en Releases.
 - Se puede publicar un Release existente a mano: Actions > **Repo APT** > Run workflow, con el tag (por ejemplo `v0.3.0`).
 - Si falta el secreto `APT_GPG_PRIVATE_KEY`, el job avisa y no publica (el Release sale igual).
+
+### Página web (`https://devmathiux.github.io/Surco`)
+
+La página de Surco vive en `web/` (un solo `index.html` sin dependencias, con las capturas en `web/img/`) y comparte la rama `gh-pages` con el repo APT:
+
+- `web/build.sh <sitio> <url-base>` copia la página sobre lo publicado sin tocar `dists/`, `pool/`, `install.sh` ni las claves, escribe `release.json` con el último Release (con `gh api`) y arma `apt/index.html`.
+- **`pages.yml`** la publica cuando cambia `web/` en `main` (o a mano: Actions > **Página** > Run workflow). `apt.yml` también corre `web/build.sh` después de cada Release, así los links de descarga apuntan a la versión nueva. Los dos workflows comparten el grupo de concurrencia `apt-repo` para no pisarse.
+- La página detecta el sistema (Windows, macOS, Linux) y arma los links de descarga con `release.json`; si falta, usa la API de GitHub, y sin JavaScript manda a la página del último Release. Textos en español en el HTML y en inglés en el `<script>` (`EN`).
+- Para probarla local: `web/build.sh /tmp/sitio http://localhost:8000 && python3 -m http.server -d /tmp/sitio`.
 
 **Configuración, una sola vez:**
 
