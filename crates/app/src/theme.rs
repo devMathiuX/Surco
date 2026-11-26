@@ -1,5 +1,5 @@
 //! Temas y estilos de Surco. Un solo acento; cada tema elige su forma
-//! ([`Look`]): plano, vidrio, neo-brutalista o brillo.
+//! ([`Look`]): plano, vidrio, neo-brutalista, brillo o minimal.
 //!
 //! El tema activo vive en un índice global ([`set`] / [`colors`]): los estilos
 //! son funciones `fn(&Theme, Status)` que iced llama al dibujar, y así todas
@@ -33,6 +33,9 @@ pub enum Look {
     Brutal,
     /// Oscuro minimalista con un brillo de color detrás.
     Glow,
+    /// Lo mínimo para dibujar: colores lisos, sin degradados, sin fondo
+    /// dibujado, sin bordes ni redondeo y sin animación de carga.
+    Minimal,
 }
 
 /// Colores de un tema.
@@ -107,26 +110,6 @@ pub const THEMES: [Colors; 8] = [
         on_accent: color!(0x000000),
         danger: color!(0xF15E6C),
         warning: color!(0xFFA42B),
-    },
-    Colors {
-        id: "pink",
-        look: Look::Flat,
-        radius: 6.0,
-        border_width: 1.0,
-        background: color!(0x170F14),
-        panel: color!(0x170F14),
-        surface: color!(0x21151C),
-        raised: color!(0x31202A),
-        hover: color!(0x2A1B24),
-        border: color!(0x3D2834),
-        rail: color!(0x4A3240),
-        text: color!(0xF8E9F0),
-        text_secondary: color!(0xAD8D9D),
-        accent: color!(0xFF6FAE),
-        accent_hover: color!(0xFF8FC1),
-        on_accent: color!(0x1A0E14),
-        danger: color!(0xFF7A7A),
-        warning: color!(0xF5C26B),
     },
     Colors {
         id: "light",
@@ -228,6 +211,26 @@ pub const THEMES: [Colors; 8] = [
         danger: color!(0xFF7A8A),
         warning: color!(0xF5C26B),
     },
+    Colors {
+        id: "minimal",
+        look: Look::Minimal,
+        radius: 0.0,
+        border_width: 0.0,
+        background: color!(0x111111),
+        panel: color!(0x1A1A1A),
+        surface: color!(0x161616),
+        raised: color!(0x262626),
+        hover: color!(0x1E1E1E),
+        border: color!(0x2A2A2A),
+        rail: color!(0x333333),
+        text: color!(0xE6E6E6),
+        text_secondary: color!(0x8C8C8C),
+        accent: color!(0xE6E6E6),
+        accent_hover: color!(0xFFFFFF),
+        on_accent: color!(0x111111),
+        danger: color!(0xF07070),
+        warning: color!(0xE5C07B),
+    },
 ];
 
 /// Índice del tema personalizado: va después de los de [`THEMES`].
@@ -279,12 +282,12 @@ pub fn name_of(index: usize) -> &'static str {
     match THEMES.get(index).map(|t| t.id) {
         Some("dark") => tr!("Oscuro", "Dark"),
         Some("green") => tr!("Verde", "Green"),
-        Some("pink") => tr!("Rosa", "Pink"),
         Some("light") => tr!("Claro", "Light"),
         Some("light-pink") => tr!("Claro rosa", "Light pink"),
         Some("glass") => tr!("Vidrio", "Glass"),
         Some("brutal") => tr!("Brutal", "Brutal"),
         Some("glow") => tr!("Brillo", "Glow"),
+        Some("minimal") => tr!("Minimal", "Minimal"),
         Some(other) => other,
         None => tr!("Personalizado", "Custom"),
     }
@@ -306,7 +309,7 @@ pub fn derive(background: Color, accent: Color) -> Colors {
     } else {
         color!(0x1A1A1A)
     };
-    let base = if dark { THEMES[0] } else { THEMES[3] };
+    let base = if dark { THEMES[0] } else { THEMES[2] };
     Colors {
         id: CUSTOM_ID,
         look: Look::Flat,
@@ -364,6 +367,11 @@ fn luminance(c: Color) -> f32 {
         }
     };
     0.2126 * lin(c.r) + 0.7152 * lin(c.g) + 0.0722 * lin(c.b)
+}
+
+/// Si el tema activo es Minimal: sin degradados ni animaciones.
+pub fn minimal() -> bool {
+    colors().look == Look::Minimal
 }
 
 /// Redondeo del tema activo.
@@ -445,12 +453,22 @@ pub fn queue_row(current: bool, target: bool, lifted: bool) -> impl Fn(&Theme) -
             button::Status::Active
         };
         let row = song_row(current)(theme, status);
+        // Cada fila como una tarjetita (si el tema no le da fondo propio).
+        let plain = row.background.is_none() || c.look == Look::Flat || c.look == Look::Minimal;
         container::Style {
-            background: row.background,
+            background: if plain && !current && !lifted {
+                Some(c.surface.into())
+            } else {
+                row.background
+            },
             border: if target {
                 border::rounded(radius())
                     .width(c.border_width.max(2.0))
                     .color(c.accent)
+            } else if plain {
+                border::rounded(radius())
+                    .width(c.border_width.min(1.0))
+                    .color(c.border)
             } else {
                 row.border
             },
@@ -471,7 +489,7 @@ pub fn input(_: &Theme, status: text_input::Status) -> text_input::Style {
     text_input::Style {
         background: match c.look {
             Look::Glass => Color::from_rgba(1.0, 1.0, 1.0, 0.10).into(),
-            Look::Flat => mix(c.background, c.raised, 0.5).into(),
+            Look::Flat | Look::Minimal => mix(c.background, c.raised, 0.5).into(),
             _ => c.surface.into(),
         },
         border: border::rounded(if c.look == Look::Glass {
@@ -553,6 +571,88 @@ pub fn ghost_button(_: &Theme, status: button::Status) -> button::Style {
             .width(colors().border_width)
             .color(c.accent),
         ..button::Style::default()
+    }
+}
+
+/// Pastilla (pestañas y filtros): redondeada, y la elegida con un tinte del
+/// acento y borde del acento.
+pub fn pill(selected: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
+    move |_, status| {
+        let c = colors();
+        let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
+        let background = if selected {
+            mix(c.raised, c.accent, 0.25)
+        } else if hovered {
+            c.hover
+        } else {
+            c.raised
+        };
+        button::Style {
+            background: Some(background.into()),
+            text_color: c.text,
+            border: border::rounded(if c.look == Look::Brutal { 0.0 } else { 999.0 })
+                .width(if selected {
+                    1.0
+                } else {
+                    c.border_width.min(1.0)
+                })
+                .color(if selected { c.accent } else { c.border }),
+            ..button::Style::default()
+        }
+    }
+}
+
+/// Tarjeta destacada (resumen del inicio, lo que suena en la cola): con un
+/// tinte del acento y borde del acento.
+pub fn highlight_card(_: &Theme) -> container::Style {
+    let c = colors();
+    container::Style {
+        background: Some(mix(c.surface, c.accent, 0.12).into()),
+        border: border::rounded(radius() + 4.0)
+            .width(1)
+            .color(c.accent.scale_alpha(0.6)),
+        ..container::Style::default()
+    }
+}
+
+/// Círculo del acento (números de pasos).
+pub fn badge_round(_: &Theme) -> container::Style {
+    container::Style {
+        background: Some(colors().accent.into()),
+        border: border::rounded(999),
+        ..container::Style::default()
+    }
+}
+
+/// Recuadro chico (atajos de teclado, avisos dentro de una tarjeta).
+pub fn chip(_: &Theme) -> container::Style {
+    let c = colors();
+    container::Style {
+        background: Some(c.raised.into()),
+        border: border::rounded(radius())
+            .width(c.border_width.min(1.0))
+            .color(c.border),
+        ..container::Style::default()
+    }
+}
+
+/// Fila dentro de una tarjeta (un poco más clara que la tarjeta).
+pub fn inset(_: &Theme) -> container::Style {
+    let c = colors();
+    container::Style {
+        background: Some(mix(c.surface, c.raised, 0.5).into()),
+        border: border::rounded(radius()),
+        ..container::Style::default()
+    }
+}
+
+/// Barra de uso (disco de la precarga, popularidad).
+pub fn meter(_: &Theme) -> iced::widget::progress_bar::Style {
+    let c = colors();
+    iced::widget::progress_bar::Style {
+        background: c.rail.into(),
+        bar: c.accent.into(),
+        border: border::rounded(999),
     }
 }
 
@@ -734,7 +834,7 @@ pub fn song_row(playing: bool) -> impl Fn(&Theme, button::Status) -> button::Sty
                     Color::TRANSPARENT
                 }),
             ),
-            Look::Flat => (
+            Look::Flat | Look::Minimal => (
                 if playing {
                     c.raised
                 } else if hovered {
@@ -767,7 +867,7 @@ pub fn row_gap() -> u32 {
         Look::Brutal => 6,
         Look::Glass => 4,
         Look::Glow => 2,
-        Look::Flat => 1,
+        Look::Flat | Look::Minimal => 1,
     }
 }
 
@@ -784,7 +884,7 @@ pub fn nav_gap() -> u32 {
 pub fn play_icon() -> Color {
     let c = colors();
     match c.look {
-        Look::Flat => c.accent,
+        Look::Flat | Look::Minimal => c.accent,
         Look::Glass => color!(0x1A1D2E),
         Look::Brutal => Color::BLACK,
         Look::Glow => Color::WHITE,
@@ -826,7 +926,7 @@ pub fn tile_play(_: &Theme, status: button::Status) -> button::Style {
                 .width(1)
                 .color(Color::from_rgba(1.0, 1.0, 1.0, 0.35)),
         ),
-        Look::Flat => (c.accent.scale_alpha(k).into(), border::rounded(999)),
+        Look::Flat | Look::Minimal => (c.accent.scale_alpha(k).into(), border::rounded(999)),
     };
     button::Style {
         background: Some(background),
@@ -841,7 +941,7 @@ pub fn tile_play_icon() -> Color {
     match c.look {
         Look::Brutal => Color::BLACK,
         Look::Glass | Look::Glow => Color::WHITE,
-        Look::Flat => c.on_accent,
+        Look::Flat | Look::Minimal => c.on_accent,
     }
 }
 
@@ -937,7 +1037,7 @@ pub fn divider() -> Option<(Color, f32)> {
     let c = colors();
     match c.look {
         Look::Brutal => Some((c.accent, 3.0)),
-        Look::Flat | Look::Glow => Some((c.border, 1.0)),
+        Look::Flat | Look::Glow | Look::Minimal => Some((c.border, 1.0)),
         Look::Glass => None,
     }
 }
@@ -997,7 +1097,7 @@ pub fn play_button(_: &Theme, status: button::Status) -> button::Style {
     let k = if hovered { 0.85 } else { 1.0 };
     let (background, border): (iced::Background, iced::Border) = match c.look {
         // Por defecto: acento suave con borde del acento.
-        Look::Flat => (
+        Look::Flat | Look::Minimal => (
             c.accent
                 .scale_alpha(if hovered { 0.30 } else { 0.20 })
                 .into(),
@@ -1116,7 +1216,7 @@ pub fn tile(_: &Theme, status: button::Status) -> button::Style {
                 .width(1)
                 .color(Color::from_rgba(1.0, 1.0, 1.0, 0.14)),
         ),
-        Look::Flat => (
+        Look::Flat | Look::Minimal => (
             if hovered {
                 c.accent.scale_alpha(0.16)
             } else {

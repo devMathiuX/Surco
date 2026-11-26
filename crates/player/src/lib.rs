@@ -7,6 +7,7 @@
 pub use surco_core as core;
 
 mod decode;
+pub mod eq;
 pub mod queue;
 
 pub use queue::Queue;

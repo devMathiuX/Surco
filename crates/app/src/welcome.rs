@@ -38,9 +38,7 @@ impl Surco {
 
     pub(crate) fn view_welcome(&self) -> Element<'_, Message> {
         let section = |title: &'static str| text(title).size(theme::SIZE_M);
-        let themes = row((0..theme::THEMES.len()).map(|i| self.theme_card(i)))
-            .spacing(12)
-            .wrap();
+        let themes = self.theme_cards(false, false);
         let switch = |label: &'static str, on: bool, f: fn(bool) -> Change| {
             toggler(on)
                 .label(label)
@@ -122,10 +120,29 @@ impl Surco {
         .into()
     }
 
+    /// Tarjetas de los temas (bienvenida y ajustes). `custom` suma la del
+    /// tema personalizado, con los colores que eligió el usuario.
+    /// `compact`: tarjetas más chicas, con una vista previa simplificada
+    /// (ajustes).
+    pub(crate) fn theme_cards(&self, custom: bool, compact: bool) -> Element<'_, Message> {
+        let n = if custom {
+            theme::CUSTOM + 1
+        } else {
+            theme::THEMES.len()
+        };
+        row((0..n).map(|i| self.theme_card(i, compact)))
+            .spacing(if compact { 10 } else { 12 })
+            .wrap()
+            .into()
+    }
+
     /// Tarjeta de un tema con una vista previa chiquita: fondo, panel lateral,
     /// una fila resaltada y el acento.
-    fn theme_card(&self, index: usize) -> Element<'_, Message> {
-        let t = theme::THEMES[index];
+    fn theme_card(&self, index: usize, compact: bool) -> Element<'_, Message> {
+        let t = theme::THEMES
+            .get(index)
+            .copied()
+            .unwrap_or_else(|| theme::derive(self.settings.custom.0, self.settings.custom.1));
         let selected = self.settings.theme == index;
         let radius = t.radius.min(8.0);
         let block = |w: f32, h: f32, c: Color| {
@@ -178,19 +195,89 @@ impl Surco {
         .spacing(7)
         .padding(10)
         .width(Length::Fill);
-        let preview = container(row![side, content])
-            .width(170)
-            .height(104)
+        let (width, height) = if compact {
+            (118.0, 68.0)
+        } else {
+            (170.0, 104.0)
+        };
+        let inner: Element<'_, Message> = if compact {
+            // Una ventanita con el acento y dos renglones.
+            let window = container(
+                row![
+                    block(20.0, 20.0, t.accent).style(move |_: &iced::Theme| container::Style {
+                        background: Some(t.accent.into()),
+                        border: iced::border::rounded(999),
+                        ..container::Style::default()
+                    }),
+                    column![block(46.0, 5.0, t.text), block(32.0, 4.0, t.text_secondary)]
+                        .spacing(5),
+                ]
+                .spacing(8)
+                .align_y(Alignment::Center),
+            )
+            .padding(9)
+            .style(move |_: &iced::Theme| container::Style {
+                background: Some(t.raised.into()),
+                border: if t.look == Look::Brutal {
+                    iced::border::rounded(0).width(1.5).color(t.accent)
+                } else {
+                    iced::border::rounded(radius.min(6.0))
+                },
+                ..container::Style::default()
+            });
+            container(window).center(Length::Fill).into()
+        } else {
+            row![side, content].into()
+        };
+        let preview = container(inner)
+            .width(width)
+            .height(height)
             .clip(true)
             .style(move |_: &iced::Theme| container::Style {
                 background: Some(preview_background(&t)),
                 border: iced::border::rounded(radius).width(1).color(t.border),
                 ..container::Style::default()
             });
+        let accent = t.accent;
+        // Tilde arriba a la derecha del tema elegido.
+        let check: Element<'_, Message> = if selected {
+            container(
+                container(text("✓").size(11).color(t.on_accent))
+                    .center(18)
+                    .style(move |_: &iced::Theme| container::Style {
+                        background: Some(accent.into()),
+                        border: iced::border::rounded(999),
+                        ..container::Style::default()
+                    }),
+            )
+            .padding(6)
+            .align_right(width)
+            .into()
+        } else {
+            Space::new().into()
+        };
+        // Puntito de opción: lleno con el acento del tema si es el elegido.
+        let dot = container(Space::new())
+            .width(12)
+            .height(12)
+            .style(move |_: &iced::Theme| {
+                let c = theme::colors();
+                container::Style {
+                    background: Some(if selected { c.accent } else { accent }.into()),
+                    border: iced::border::rounded(999)
+                        .width(if selected { 3 } else { 0 })
+                        .color(c.raised),
+                    ..container::Style::default()
+                }
+            });
         button(
-            column![preview, text(theme::name_of(index)).size(theme::SIZE_S)]
-                .spacing(8)
-                .align_x(Alignment::Center),
+            column![
+                iced::widget::stack![preview, check],
+                row![dot, text(theme::name_of(index)).size(theme::SIZE_S)]
+                    .spacing(8)
+                    .align_y(Alignment::Center),
+            ]
+            .spacing(10),
         )
         .on_press(Message::Setting(Change::Theme(index)))
         .padding(8)
@@ -198,11 +285,9 @@ impl Surco {
             let c = theme::colors();
             let mut st = theme::list_button(false)(th, status);
             st.text_color = c.text;
-            if selected {
-                st.border = iced::border::rounded(theme::radius() + 4.0)
-                    .width(2)
-                    .color(c.accent);
-            }
+            st.border = iced::border::rounded(theme::radius() + 4.0)
+                .width(if selected { 2.0 } else { 1.0 })
+                .color(if selected { c.accent } else { c.border });
             st
         })
         .into()
@@ -225,6 +310,6 @@ fn preview_background(t: &Colors) -> Background {
                 .into(),
         ),
         Look::Glow => Background::Gradient(linear(0x09090F, 0x35247E).into()),
-        Look::Flat | Look::Brutal => t.background.into(),
+        Look::Flat | Look::Brutal | Look::Minimal => t.background.into(),
     }
 }

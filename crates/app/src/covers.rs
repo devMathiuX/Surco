@@ -1,5 +1,5 @@
 //! Portadas: la miniatura del video de YouTube, recortada al cuadrado,
-//! redimensionada a 64 y 256 px y cacheada en disco.
+//! redimensionada a 64 y 360 px y cacheada en disco.
 //!
 //! Las playlists importadas sin credenciales no traen la portada del álbum,
 //! así que usamos la miniatura del video, que siempre existe.
@@ -12,7 +12,7 @@ use image::{DynamicImage, ImageFormat};
 
 /// Tamaños que se guardan.
 pub const SMALL: u32 = 64;
-pub const LARGE: u32 = 256;
+pub const LARGE: u32 = 360;
 
 /// Carpeta de caché de portadas.
 pub fn cache_dir() -> Option<PathBuf> {
@@ -72,6 +72,24 @@ pub async fn load(client: surco_provider::HttpClient, video: String) -> Result<H
             }
         }
         handle.ok_or_else(|| "sin portada".to_owned())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Portada grande (360 px) de `video`, para mostrarla en grande (lo que
+/// suena, el mejor resultado). Si no está en disco, baja la miniatura.
+pub async fn load_large(
+    client: surco_provider::HttpClient,
+    video: String,
+) -> Result<Handle, String> {
+    let dir = cache_dir().ok_or("no hay carpeta de caché")?;
+    let large = path_for(&dir, &video, LARGE);
+    if !large.is_file() {
+        load(client, video).await?;
+    }
+    tokio::task::spawn_blocking(move || {
+        decode_rgba(&std::fs::read(large).map_err(|e| e.to_string())?)
     })
     .await
     .map_err(|e| e.to_string())?

@@ -95,6 +95,12 @@ impl Surco {
     /// Crea una playlist vacía (o con una canción), la abre y deja el nombre
     /// listo para cambiarlo.
     pub(crate) fn new_playlist(&mut self, first: Option<Track>) -> Task<Message> {
+        self.new_playlist_with(first.into_iter().collect())
+    }
+
+    /// Crea una playlist propia con estas canciones (puede ir vacía), la
+    /// abre y deja el nombre listo para cambiarlo.
+    pub(crate) fn new_playlist_with(&mut self, tracks: Vec<Track>) -> Task<Message> {
         let names: Vec<&str> = self
             .playlists
             .iter()
@@ -103,7 +109,7 @@ impl Surco {
         let playlist = Playlist {
             id: new_id(),
             name: free_name(&names),
-            tracks: first.into_iter().collect(),
+            tracks,
         };
         self.persist_playlist(&playlist, OWN_SOURCE);
         self.playlists.push((playlist, OWN_SOURCE.into()));

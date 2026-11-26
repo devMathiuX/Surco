@@ -18,7 +18,8 @@ Funciona en **Linux**, **Windows** y **macOS** (Intel y Apple Silicon).
 - **Editar la cola**: agregá, quitá y reordená canciones arrastrándolas.
 - **Elegir otro video** si Surco encontró una versión equivocada de una canción (en vivo, cover, etc.).
 - **Usar las teclas multimedia** del teclado y los controles de música del sistema.
-- **Cambiar el tema**: oscuro, verde, rosa, claro, claro rosa, **vidrio** (fondo de colores con paneles translúcidos), **brutal** (bordes duros y acento lima), **brillo** (oscuro con resplandor violeta) o uno **personalizado** con tus dos colores.
+- **Cambiar el tema**: oscuro, verde, claro, claro rosa, **vidrio** (fondo de colores con paneles translúcidos), **brutal** (bordes duros y acento lima), **brillo** (oscuro con resplandor violeta), **minimal** (colores lisos, sin degradados ni efectos: el más liviano) o uno **personalizado** con tus dos colores.
+- **Ecualizar** el sonido con 10 bandas y ajustes de fábrica (graves, agudos, voces, rock, pop, electrónica, acústica) en Ajustes.
 - **Español o inglés**: elegí el idioma en los ajustes (de entrada usa el de tu computadora).
 
 Todo lo que importás queda guardado en tu computadora: playlists, videos elegidos, historial y ajustes. La pantalla de **Inicio** te muestra tus playlists y lo último que escuchaste.
