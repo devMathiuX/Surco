@@ -14,7 +14,8 @@
 #   dists/stable/{Release,InRelease,Release.gpg}
 #   dists/stable/main/binary-amd64/Packages{,.gz}
 #   pool/main/s/surco/surco_<v>-1_amd64.deb
-#   surco.gpg, surco.asc, install.sh, index.html
+#   surco.gpg, surco.asc, install.sh, apt/index.html
+# (la raíz del sitio es la página de Surco, que arma web/build.sh)
 set -euo pipefail
 
 new_debs=$1
@@ -79,7 +80,8 @@ gpg --batch --yes --armor --export -o "$site/surco.asc" "$key"
 # Instalador y página.
 latest=$(dpkg-deb -f "${all[0]}" Version)
 sed "s|@BASE_URL@|$base_url|g" "$here/apt/install.sh" > "$site/install.sh"
-sed -e "s|@BASE_URL@|$base_url|g" -e "s|@VERSION@|$latest|g" "$here/apt/index.html" > "$site/index.html"
+mkdir -p "$site/apt"
+sed -e "s|@BASE_URL@|$base_url|g" -e "s|@VERSION@|$latest|g" "$here/apt/index.html" > "$site/apt/index.html"
 touch "$site/.nojekyll"
 
 echo "Repo APT listo en $site (última versión: $latest)"

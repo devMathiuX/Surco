@@ -1,0 +1,73 @@
+name: Página
+
+# Publica la página de Surco (carpeta web/) en GitHub Pages, rama gh-pages
+# (https://<usuario>.github.io/<repo>). Esa rama también tiene el repo APT
+# (apt.yml): este workflow lo conserva tal cual y solo cambia la página.
+#
+# - Corre cuando cambia web/ en main, o a mano (Actions > Página > Run workflow).
+# - Después de cada Release, apt.yml vuelve a armar la página con los links nuevos.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "web/**"
+      - "packaging/linux/apt/index.html"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+# Comparte grupo con apt.yml: las dos escriben gh-pages y no se pueden pisar.
+concurrency:
+  group: apt-repo
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pages: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Traer lo publicado (rama gh-pages)
+        run: |
+          mkdir -p site
+          if git ls-remote --exit-code --heads origin gh-pages >/dev/null; then
+            git fetch --depth=1 origin gh-pages
+            git --work-tree=site checkout FETCH_HEAD -- .
+          fi
+          rm -rf site/.git
+
+      - name: Armar la página
+        run: |
+          owner=$(echo "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')
+          repo=${GITHUB_REPOSITORY#*/}
+          web/build.sh site "https://$owner.github.io/$repo"
+
+      - name: Publicar en gh-pages
+        run: |
+          # Un solo commit, sin historia (igual que apt.yml).
+          cd site
+          git init -q -b gh-pages
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -q -m "Página: ${GITHUB_SHA::7}"
+          git push --force "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" gh-pages
+
+      - name: Activar GitHub Pages (si todavía no está)
+        continue-on-error: true
+        run: |
+          if gh api "repos/$GITHUB_REPOSITORY/pages" >/dev/null 2>&1; then
+            echo "Pages ya está activo."
+          else
+            gh api -X POST "repos/$GITHUB_REPOSITORY/pages" \
+              -f 'source[branch]=gh-pages' -f 'source[path]=/' \
+              || echo "::warning::No pude activar Pages solo: activalo en Settings > Pages (rama gh-pages, carpeta /)."
+          fi

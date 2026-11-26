@@ -2,6 +2,8 @@ name: Repo APT
 
 # Publica el .deb de un Release en el repositorio APT de Surco, servido por
 # GitHub Pages desde la rama gh-pages (https://<usuario>.github.io/<repo>).
+# La raíz del sitio es la página de Surco (web/, ver pages.yml): también se
+# vuelve a armar acá, con los links al Release nuevo.
 #
 # - Lo llama release.yml después de crear el Release de un tag v*.
 # - También se puede correr a mano (Actions > Repo APT > Run workflow) con un
@@ -93,6 +95,15 @@ jobs:
           owner=$(echo "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')
           repo=${GITHUB_REPOSITORY#*/}
           packaging/linux/build-apt-repo.sh new-debs site "https://$owner.github.io/$repo"
+
+      # La raíz del sitio es la página de Surco (web/), y el repo APT vive al lado:
+      # se vuelve a armar acá para que esta publicación no la pise.
+      - name: Página de Surco
+        if: steps.key.outputs.ok == 'true'
+        run: |
+          owner=$(echo "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')
+          repo=${GITHUB_REPOSITORY#*/}
+          web/build.sh site "https://$owner.github.io/$repo"
 
       - name: Publicar en gh-pages
         if: steps.key.outputs.ok == 'true'
