@@ -869,7 +869,6 @@ impl Surco {
                 ),
             ]
             .spacing(10),
-            self.view_spotify_keys(),
             text(match &self.ytdlp {
                 crate::YtDlpState::Found(p) => format!("yt-dlp: {}", p.display()),
                 _ => tr!("yt-dlp: no encontrado", "yt-dlp: not found").to_owned(),
@@ -1058,71 +1057,6 @@ impl Surco {
         ]
         .spacing(8)
         .into()
-    }
-
-    /// Claves de Spotify: cuáles se usan y cargar las propias.
-    fn view_spotify_keys(&self) -> Element<'_, Message> {
-        use crate::spotify_keys::{msg, KeySource, KeysMsg};
-        let status = match self.spotify_source {
-            KeySource::Own => tr!("Usando tus claves.", "Using your keys."),
-            KeySource::Config => tr!(
-                "Usando las claves de config.toml.",
-                "Using the keys from config.toml."
-            ),
-            KeySource::Builtin => tr!(
-                "Usando las claves incluidas en Surco.",
-                "Using the keys built into Surco."
-            ),
-            KeySource::None => tr!(
-                "Sin claves propias (no hacen falta).",
-                "No keys of your own (they aren't needed)."
-            ),
-        };
-        let form = row![
-            text_input("Client ID", &self.keys_form.id)
-                .on_input(|s| msg(KeysMsg::Id(s)))
-                .padding(8)
-                .size(theme::SIZE_S)
-                .style(theme::input),
-            text_input("Client Secret", &self.keys_form.secret)
-                .on_input(|s| msg(KeysMsg::Secret(s)))
-                .on_submit(msg(KeysMsg::Save))
-                .secure(true)
-                .padding(8)
-                .size(theme::SIZE_S)
-                .style(theme::input),
-            button(text(tr!("Guardar", "Save")).size(theme::SIZE_S))
-                .on_press_maybe(
-                    (!self.keys_form.id.trim().is_empty()
-                        && !self.keys_form.secret.trim().is_empty())
-                    .then(|| msg(KeysMsg::Save)),
-                )
-                .padding([6, 12])
-                .style(theme::primary_button),
-        ]
-        .spacing(8)
-        .align_y(Alignment::Center);
-        let mut col = column![
-            column![
-                text("Spotify").size(theme::SIZE_M),
-                text(tr!("Surco lee las playlists enteras igual que la web de Spotify, sin cuenta, Premium ni claves. Las claves de la Web API son opcionales: solo se usan si eso falla (y Spotify pide Premium para crearlas en developer.spotify.com).", "Surco reads whole playlists the same way the Spotify website does, with no account, Premium or keys. Web API keys are optional: they're only used if that fails (and Spotify requires Premium to create them at developer.spotify.com)."))
-                    .size(theme::SIZE_S)
-                    .style(theme::secondary_text),
-            ]
-            .spacing(2),
-            text(status).size(theme::SIZE_S),
-            form,
-        ]
-        .spacing(10);
-        if self.spotify_source == KeySource::Own {
-            col = col.push(
-                button(text(tr!("Borrar mis claves", "Delete my keys")).size(theme::SIZE_S))
-                    .on_press(msg(KeysMsg::Clear))
-                    .padding([4, 10])
-                    .style(theme::ghost_button),
-            );
-        }
-        col.into()
     }
 
     /// Selector de video arriba de la lista de la playlist.

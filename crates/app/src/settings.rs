@@ -143,6 +143,24 @@ impl Surco {
         self.theme = theme::set(s.theme, s.custom);
     }
 
+    /// Borra las claves de la Web API de Spotify que guardaban las versiones
+    /// anteriores (desde la 1.0 no se usan).
+    pub(crate) fn forget_spotify_keys(&self) {
+        let Some(store) = &self.store else {
+            return;
+        };
+        for key in ["spotify_client_id", "spotify_client_secret"] {
+            if store
+                .setting(key)
+                .ok()
+                .flatten()
+                .is_some_and(|v| !v.is_empty())
+            {
+                self.save_setting(key, "");
+            }
+        }
+    }
+
     pub(crate) fn save_setting(&self, key: &str, value: &str) {
         if let Some(store) = &self.store {
             if let Err(e) = store.set_setting(key, value) {

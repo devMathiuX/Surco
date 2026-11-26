@@ -10,11 +10,6 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  # Claves de la Web API de Spotify que trae el build oficial (ver
-  # crates/app/src/spotify_keys.rs). Si los secretos no están, el build sale
-  # sin claves y la importación usa la página pública.
-  SURCO_SPOTIFY_CLIENT_ID: ${{ secrets.SPOTIFY_CLIENT_ID }}
-  SURCO_SPOTIFY_CLIENT_SECRET: ${{ secrets.SPOTIFY_CLIENT_SECRET }}
 
 defaults:
   run:

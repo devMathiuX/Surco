@@ -7,7 +7,6 @@
 mod i18n;
 mod backdrop;
 mod bar;
-mod config;
 mod covers;
 mod home;
 mod icons;
@@ -24,7 +23,6 @@ mod resume;
 mod search;
 mod settings;
 mod skeleton;
-mod spotify_keys;
 mod theme;
 mod tools;
 mod tray;
@@ -45,7 +43,7 @@ use surco_core::{PlayerState, Playlist, RepeatMode};
 use surco_player::{Command, PlayerHandle, Source, Status};
 use surco_provider::{AudioCache, HttpClient, Provider, YtDlp, AUDIO_CACHE_LIMIT};
 use surco_resolver::{Match, Resolver};
-use surco_spotify::{Credentials, Importer};
+use surco_spotify::Importer;
 use surco_storage::Store;
 
 use playback::{Active, CoverJobs, TrackRes};
@@ -211,9 +209,6 @@ struct Surco {
     seeking: Option<f32>,
     fatal: Option<String>,
     deno: DenoState,
-    spotify_creds: Option<Credentials>,
-    spotify_source: spotify_keys::KeySource,
-    keys_form: spotify_keys::KeysForm,
     http: HttpClient,
     /// Playlists importadas en esta sesión (se guardan en disco en la Fase 6),
     /// con la estrategia que funcionó.
@@ -457,7 +452,6 @@ enum Message {
     /// Paso del latido de los esqueletos de carga.
     Tick,
     Search(search::SearchMsg),
-    Keys(spotify_keys::KeysMsg),
     OpenFilter,
     FilterChanged(String),
     CloseFilter,
@@ -529,9 +523,6 @@ impl Surco {
             seeking: None,
             fatal,
             deno: DenoState::Ok,
-            spotify_creds: None,
-            spotify_source: spotify_keys::KeySource::None,
-            keys_form: spotify_keys::KeysForm::default(),
             http: surco_provider::stream_client(),
             playlists: Vec::new(),
             selected: None,
@@ -590,7 +581,7 @@ impl Surco {
         state.restore();
         state.load_settings();
         state.maybe_welcome();
-        state.load_spotify_keys();
+        state.forget_spotify_keys();
         let resume = state.restore_resume();
         state.drop_temporary_audio();
         state.check_js_runtime();
@@ -874,7 +865,6 @@ impl Surco {
                 }
             }
             Message::Search(msg) => return self.on_search(msg),
-            Message::Keys(msg) => self.on_keys(msg),
             Message::OpenFilter => {
                 if self.selected.is_some() {
                     self.filter.get_or_insert_with(String::new);
@@ -1054,7 +1044,6 @@ impl Surco {
         }
         self.importing = true;
         self.notice = None;
-        let creds = self.spotify_creds.clone();
         let client = self.http.clone();
         let job = rt.spawn(async move {
             let result = match csv {
@@ -1063,7 +1052,7 @@ impl Surco {
                         .await
                         .map_err(|e| e.to_string())?
                 }
-                None => Importer::standard(client, creds).import_link(&input).await,
+                None => Importer::standard(client).import_link(&input).await,
             };
             result.map_err(|e| e.to_string())
         });

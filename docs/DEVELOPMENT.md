@@ -90,12 +90,11 @@ En la pantalla **Importar** (o con **Ctrl+L**), pegá cualquiera de estos y Ente
 - `spotify:playlist:{id}`
 - la ruta a un `.csv` exportado con [Exportify](https://exportify.net)
 
-Surco prueba cuatro estrategias en cascada (trait `PlaylistSource` en `crates/spotify`):
+Surco prueba tres estrategias en cascada (trait `PlaylistSource` en `crates/spotify`):
 
 1. **Reproductor web sin sesión** (`webplayer.rs`, ver "Spotify sin claves" más abajo). Playlist entera, con álbum, sin cuenta ni claves. Es la vía normal.
-2. **Web API de Spotify** con Client Credentials, solo si hay claves (Ajustes, `config.toml` o las del build). `config.toml` está en `~/.config/surco/config.toml` en Linux y `%APPDATA%\Surco\config\config.toml` en Windows; se crea una plantilla en el primer arranque. Paginación completa y manejo de 429 con `Retry-After`. **Ojo:** desde febrero de 2026 las apps en *Development Mode* tienen restricciones (endpoint `/playlists/{id}/items`, y para playlists ajenas puede devolver solo los metadatos), y crear una app pide Spotify Premium. Si falla, sigue la estrategia 3.
-3. **Página embed pública** (`open.spotify.com/embed/playlist/{id}`), sin credenciales. Lee el JSON que trae embebido (`__NEXT_DATA__`). Trae título, artistas y duración, pero **no** álbum ni ISRC, y **solo las primeras 100 canciones** (la app lo avisa). No es una API pública: puede romperse si Spotify cambia el HTML.
-4. **CSV** (Exportify, formato viejo y nuevo, o uno hecho a mano con `title,artist,album,duration`). Trae la playlist completa con álbum e ISRC. Sirve si las otras fallan.
+2. **Página embed pública** (`open.spotify.com/embed/playlist/{id}`), sin credenciales. Lee el JSON que trae embebido (`__NEXT_DATA__`). Trae título, artistas y duración, pero **no** álbum ni ISRC, y **solo las primeras 100 canciones** (la app lo avisa). No es una API pública: puede romperse si Spotify cambia el HTML.
+3. **CSV** (Exportify, formato viejo y nuevo, o uno hecho a mano con `title,artist,album,duration`). Trae la playlist completa con álbum e ISRC. Sirve si las otras fallan.
 
 Si una estrategia dice que la playlist no existe (404 de la embed o `NotFound` del reproductor web), la cascada corta ahí.
 
@@ -259,15 +258,9 @@ Desde 2026 Spotify pide Premium para usar la Web API, así que Surco lee las pla
 
 No es una API pública: puede romperse sin aviso, y el resto de la cascada está para eso.
 
-### Claves propias (opcional)
+### Sin claves de la Web API
 
-Con claves de la Web API (Client Credentials) la playlist también se importa entera, de a 100 por página. Se usan solo si falla el reproductor web. Las claves se eligen en este orden:
-
-1. Las que el usuario carga en **Ajustes → Spotify**.
-2. Las de `config.toml`.
-3. Las que trae el build oficial: el workflow Release las inyecta al compilar desde los secretos del repo `SPOTIFY_CLIENT_ID` y `SPOTIFY_CLIENT_SECRET` (variables `SURCO_SPOTIFY_CLIENT_ID` / `SURCO_SPOTIFY_CLIENT_SECRET`, leídas con `option_env!`). No están en el código. Un build local sin esas variables sale sin claves.
-
-Si la API falla (403 o 404, como con las playlists editoriales de Spotify para apps nuevas, o 429), la importación sigue con la página embed y, si hace falta, con un CSV de Exportify. Las claves incluidas en un programa que se distribuye se pueden extraer: solo dan acceso a datos públicos, y si se abusa de ellas se cambian.
+Hasta la 0.6 Surco aceptaba claves de la Web API (Client Credentials) en Ajustes, `config.toml` o el build. Desde la 1.0 no: Spotify pide Premium para crear una app y el reproductor web sin sesión alcanza. Al arrancar se borran las claves que hayan quedado guardadas en los ajustes (`forget_spotify_keys`).
 
 ## Inicio, playlists propias y recomendadas
 
@@ -353,9 +346,9 @@ Medido en la Fase 2 (Linux, Xvfb, reproduciendo un m4a de 3 min por HTTP): **~23
 - Tests: parser de la salida de yt-dlp, caché con TTL, `HttpStream` contra un servidor HTTP local (seek antes de terminar la descarga, 403), y el motor de punta a punta con salida nula (sonar, pausar, seek, fin, errores). Hay un test con un yt-dlp falso que primero devuelve una URL vencida.
 - Los archivos de prueba (`crates/player/tests/fixtures/*.m4a`) son tonos generados con ffmpeg (`padded.m4a`: 1,5 s mudos, 2 s de tono y 3 s mudos, para probar que se saltea el silencio). Los de 8 s: `ffmpeg -f lavfi -i sine=frequency=440:duration=8 -ac 2 -c:a aac -b:a 64k tone.m4a` (y `-movflags +dash+global_sidx` para la versión fragmentada, como las de YouTube).
 - `unwrap()` está prohibido por lint (`clippy::unwrap_used = "deny"`) en todo el workspace.
-- Spotify: parser de links (todas las variantes), CSV (comillas, saltos de línea, BOM, formatos de Exportify), página embed, el reproductor web (token anónimo, 250 canciones paginadas, hash vencido que se busca en el JavaScript, `NotFound` que corta la cascada, caída a la embed) y la Web API contra un servidor local que imita a Spotify (token, 250 canciones en 3 páginas, 429 con `Retry-After`, formato viejo `tracks` y nuevo `items`, y la cascada cayendo a la embed cuando la API esconde las canciones). `crates/spotify/tests/fixtures/exportify_sample.csv` es un CSV de ejemplo de 120 canciones.
+- Spotify: parser de links (todas las variantes), CSV (comillas, saltos de línea, BOM, formatos de Exportify), página embed, el reproductor web (token anónimo, 250 canciones paginadas, hash vencido que se busca en el JavaScript, `NotFound` que corta la cascada, caída a la embed). `crates/spotify/tests/fixtures/exportify_sample.csv` es un CSV de ejemplo de 120 canciones.
 - Pruebas contra la red real, ignoradas por defecto:
-  - `cargo test -p surco-spotify --test import -- --ignored --nocapture` (reproductor web real con "All Out 80s", 150 canciones, y una de usuario con 1837; embed real; con `SPOTIFY_CLIENT_ID`/`SPOTIFY_CLIENT_SECRET` también la Web API)
+  - `cargo test -p surco-spotify --test import -- --ignored --nocapture` (reproductor web real con "All Out 80s", 150 canciones, y una de usuario con 1837; embed real)
   - `cargo test -p surco-player --test network -- --ignored --nocapture` (streaming HTTPS real con pausa y seek; con `SURCO_TEST_YOUTUBE=<id>` también YouTube)
 - CI en GitHub Actions (Linux): fmt, clippy, tests y build release. Windows y macOS se compilan en el workflow Release.
 

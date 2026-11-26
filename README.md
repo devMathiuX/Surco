@@ -208,7 +208,6 @@ El engranaje de arriba a la izquierda abre los ajustes:
 - **Tema** de colores. Con **Personalizado** elegís el fondo y el acento: tocá una muestra o escribí el color (`#1E2A3A`). Los demás colores salen solos de esos dos.
 - **Portadas en la lista** de canciones.
 - **Precargar canciones:** baja de antemano las próximas 5 canciones, o toda la playlist, para que no haya que esperar ni dependan de la conexión. Usa hasta 2 GB de disco y dura lo que dura la sesión: se borra al cerrar Surco. **Vaciar** la borra en el momento.
-- **Spotify:** claves propias de la Web API, opcionales (ver abajo).
 
 ### Atajos de teclado
 
@@ -241,7 +240,7 @@ Hacé clic en **Descargar yt-dlp**. Si falla, instalalo a mano siguiendo las [in
 Usá **Cambiar video** y elegí la correcta (ver [Si suena la versión equivocada](#si-suena-la-versión-equivocada)).
 
 **De una playlist de Spotify solo se importaron 100 canciones**
-Pasa si Spotify no respondió a la lectura completa. Esperá un rato y volvé a importarla (pegá el mismo link). Si sigue igual, importala como CSV desde [Exportify](https://exportify.net) o, si tenés Spotify Premium, cargá tus claves en **Ajustes > Spotify**.
+Pasa si Spotify no respondió a la lectura completa. Esperá un rato y volvé a importarla (pegá el mismo link). Si sigue igual, importala como CSV desde [Exportify](https://exportify.net).
 
 **Algunas playlists de Spotify no se importan**
 Las playlists privadas y los mixes personales (como "Daily Mix" o "Descubrimiento semanal") no se pueden leer sin tu cuenta. Copiá las canciones a una playlist pública tuya y probá con esa, o usá Exportify.
@@ -267,8 +266,8 @@ Sí, es gratis, y no necesitás cuenta de Spotify, YouTube ni de nada.
 **¿De dónde sale el audio?**
 De YouTube. Spotify solo se usa para leer la lista de canciones de una playlist.
 
-**¿Necesito claves de Spotify?**
-No. Surco importa las playlists públicas enteras sin claves. Las claves de la Web API quedan como respaldo opcional, pero Spotify ahora pide **Premium** para crear una app de desarrollador. Si tenés Premium y querés usarlas: entrá al [panel de desarrolladores de Spotify](https://developer.spotify.com/dashboard), creá una app (cualquier nombre, y como Redirect URI `http://127.0.0.1:8888/callback`), y copiá el **Client ID** y el **Client secret** en **Ajustes > Spotify > Guardar**.
+**¿Necesito claves o cuenta de Spotify?**
+No. Surco importa las playlists públicas enteras sin cuenta ni claves.
 
 **¿Cómo desinstalo Surco en Linux si lo instalé con la línea de `curl`?**
 `sudo apt remove surco`. Si además querés sacar el repositorio: `sudo rm /etc/apt/sources.list.d/surco.sources /etc/apt/keyrings/surco.gpg`.
