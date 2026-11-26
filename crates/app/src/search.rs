@@ -304,12 +304,13 @@ impl Surco {
                 if q == self.search.query.trim() {
                     let covers: Vec<String> = results.songs.iter().map(|r| r.id.clone()).collect();
                     self.search.results = Some((q, results));
-                    return Task::batch(
-                        covers
-                            .iter()
-                            .map(|v| self.queue_cover(v))
-                            .collect::<Vec<_>>(),
-                    );
+                    let mut tasks: Vec<Task<Message>> =
+                        covers.iter().map(|v| self.queue_cover(v)).collect();
+                    // El mejor resultado va en grande.
+                    if let Some(first) = covers.first() {
+                        tasks.push(self.fetch_large_cover(first));
+                    }
+                    return Task::batch(tasks);
                 }
             }
             SearchMsg::PlaySong(i) => {
@@ -983,7 +984,7 @@ impl Surco {
         }
         container(
             row![
-                crate::home::cover(self, video, 72.0),
+                crate::home::big_cover(self, video, 72.0),
                 column![
                     text(s.title.clone())
                         .size(theme::SIZE_L)

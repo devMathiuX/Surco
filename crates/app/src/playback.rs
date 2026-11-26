@@ -110,6 +110,9 @@ impl Active {
     }
 }
 
+/// Portadas grandes que se guardan en memoria.
+const LARGE_COVERS: usize = 6;
+
 impl Surco {
     pub(crate) fn track(&self, (p, i): (usize, usize)) -> Option<&Track> {
         self.playlists.get(p)?.0.tracks.get(i)
@@ -486,7 +489,43 @@ impl Surco {
 
     /// Portada de lo que suena: va primera en la cola de portadas.
     pub(crate) fn fetch_cover(&mut self, video: &str) -> Task<Message> {
-        self.enqueue_cover(video, true)
+        Task::batch([
+            self.enqueue_cover(video, true),
+            self.fetch_large_cover(video),
+        ])
+    }
+
+    /// Portada grande (para mostrarla en grande). Se guardan pocas: cada una
+    /// ocupa unos 500 KB en memoria.
+    pub(crate) fn fetch_large_cover(&mut self, video: &str) -> Task<Message> {
+        if self.large_covers.contains_key(video) {
+            return Task::none();
+        }
+        let Some(rt) = RUNTIME.get() else {
+            return Task::none();
+        };
+        let id = video.to_owned();
+        let job = rt.spawn(covers::load_large(self.http.clone(), id.clone()));
+        Task::perform(
+            async move { job.await.unwrap_or_else(|e| Err(e.to_string())) },
+            move |r| Message::LargeCover(id.clone(), r),
+        )
+    }
+
+    pub(crate) fn on_large_cover(
+        &mut self,
+        id: String,
+        result: Result<iced::widget::image::Handle, String>,
+    ) {
+        match result {
+            Ok(h) => {
+                if self.large_covers.len() >= LARGE_COVERS {
+                    self.large_covers.clear();
+                }
+                self.large_covers.insert(id, h);
+            }
+            Err(e) => tracing::debug!(error = %e, "sin portada grande"),
+        }
     }
 
     /// Portada para la lista (se baja cuando haya lugar).

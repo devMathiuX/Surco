@@ -365,7 +365,7 @@ impl Surco {
         let c = theme::colors();
         container(
             row![
-                crate::home::cover(self, self.video_of_track(t), 96.0),
+                crate::home::big_cover(self, self.video_of_track(t), 96.0),
                 column![
                     text(tr!("Sonando ahora", "Now playing"))
                         .size(theme::SIZE_S)

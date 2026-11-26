@@ -250,6 +250,8 @@ struct Surco {
     settings: Settings,
     /// Lo que se escribe en los campos de color del tema personalizado.
     custom_hex: [String; 2],
+    /// Portadas grandes (360 px) de lo que se muestra en grande.
+    large_covers: HashMap<String, image::Handle>,
     settings_tab: settings_view::Tab,
     /// Lo escrito en "Buscar en la cola".
     queue_filter: String,
@@ -404,6 +406,8 @@ enum Message {
     ToggleShuffle,
     CycleRepeat,
     Cover(String, Result<image::Handle, String>),
+    /// Llegó la portada grande de un video.
+    LargeCover(String, Result<image::Handle, String>),
     /// Mostrar u ocultar la pantalla de ajustes.
     ToggleSettings,
     Setting(settings::Change),
@@ -568,6 +572,7 @@ impl Surco {
             recorded: None,
             settings: Settings::default(),
             custom_hex: Default::default(),
+            large_covers: HashMap::new(),
             settings_tab: settings_view::Tab::default(),
             settings_query: String::new(),
             queue_filter: String::new(),
@@ -790,6 +795,7 @@ impl Surco {
             Message::ToggleShuffle => return self.toggle_shuffle(),
             Message::CycleRepeat => return self.cycle_repeat(),
             Message::Cover(id, result) => return self.on_cover(id, result),
+            Message::LargeCover(id, result) => self.on_large_cover(id, result),
             Message::ToggleSettings => {
                 if self.screen == Screen::Settings {
                     return self.go_home();

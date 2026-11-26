@@ -561,7 +561,7 @@ impl Surco {
             col = col.push(
                 container(
                     column![
-                        cover(self, video, SIDE - 32.0),
+                        big_cover(self, video, SIDE - 32.0),
                         column![
                             text(&t.title)
                                 .size(theme::SIZE_M + 1)
@@ -772,5 +772,17 @@ pub fn cover<'a>(app: &'a Surco, video: Option<&str>, size: f32) -> Element<'a, 
             .height(size)
             .style(theme::cover_placeholder)
             .into(),
+    }
+}
+
+/// Como [`cover`], pero con la portada grande si ya está (si no, la chica).
+pub fn big_cover<'a>(app: &'a Surco, video: Option<&str>, size: f32) -> Element<'a, Message> {
+    match video.and_then(|v| app.large_covers.get(v)) {
+        Some(h) => image(h.clone())
+            .width(size)
+            .height(size)
+            .border_radius(8.0)
+            .into(),
+        None => cover(app, video, size),
     }
 }
