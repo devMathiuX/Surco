@@ -31,16 +31,45 @@ pub fn large_path(video: &str) -> Option<PathBuf> {
 
 /// Portada chica de `video`: desde la caché, o la baja y la guarda.
 pub async fn load(client: surco_provider::HttpClient, video: String) -> Result<Handle, String> {
-    let dir = cache_dir().ok_or("no hay carpeta de caché")?;
-    let small = path_for(&dir, &video, SMALL);
-    if small.is_file() {
-        return tokio::task::spawn_blocking(move || {
-            decode_rgba(&std::fs::read(small).map_err(|e| e.to_string())?)
-        })
-        .await
-        .map_err(|e| e.to_string())?;
-    }
+    load_size(client, video, SMALL).await
+}
 
+/// Portada grande (360 px) de `video`, para mostrarla en grande (lo que
+/// suena, el mejor resultado).
+pub async fn load_large(
+    client: surco_provider::HttpClient,
+    video: String,
+) -> Result<Handle, String> {
+    load_size(client, video, LARGE).await
+}
+
+/// Portada de `size` px desde la caché. Si ese tamaño no está (por ejemplo,
+/// la caché es de una versión con otro tamaño grande), baja la miniatura y
+/// guarda los dos tamaños.
+async fn load_size(
+    client: surco_provider::HttpClient,
+    video: String,
+    size: u32,
+) -> Result<Handle, String> {
+    let dir = cache_dir().ok_or("no hay carpeta de caché")?;
+    let path = path_for(&dir, &video, size);
+    if !path.is_file() {
+        download(&client, &dir, &video).await?;
+    }
+    tokio::task::spawn_blocking(move || {
+        decode_rgba(&std::fs::read(path).map_err(|e| e.to_string())?)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Baja la miniatura del video, la recorta al cuadrado y guarda los dos
+/// tamaños.
+async fn download(
+    client: &surco_provider::HttpClient,
+    dir: &Path,
+    video: &str,
+) -> Result<(), String> {
     // hqdefault (480×360) siempre existe; mqdefault a veces es más chica.
     let url = format!("https://i.ytimg.com/vi/{video}/hqdefault.jpg");
     let bytes = client
@@ -52,44 +81,21 @@ pub async fn load(client: surco_provider::HttpClient, video: String) -> Result<H
         .bytes()
         .await
         .map_err(|e| e.to_string())?;
-
+    let dir = dir.to_owned();
+    let video = video.to_owned();
     tokio::task::spawn_blocking(move || {
         let img = image::load_from_memory_with_format(&bytes, ImageFormat::Jpeg)
             .map_err(|e| e.to_string())?;
         let square = crop_square(img);
         std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-        let mut handle = None;
         for size in [SMALL, LARGE] {
-            let resized = square
-                .resize_exact(size, size, FilterType::Triangle)
-                .to_rgb8();
-            resized
+            square
+                .resize_exact(size, size, FilterType::CatmullRom)
+                .to_rgb8()
                 .save_with_format(path_for(&dir, &video, size), ImageFormat::Jpeg)
                 .map_err(|e| e.to_string())?;
-            if size == SMALL {
-                let rgba = DynamicImage::ImageRgb8(resized).to_rgba8();
-                handle = Some(Handle::from_rgba(size, size, rgba.into_raw()));
-            }
         }
-        handle.ok_or_else(|| "sin portada".to_owned())
-    })
-    .await
-    .map_err(|e| e.to_string())?
-}
-
-/// Portada grande (360 px) de `video`, para mostrarla en grande (lo que
-/// suena, el mejor resultado). Si no está en disco, baja la miniatura.
-pub async fn load_large(
-    client: surco_provider::HttpClient,
-    video: String,
-) -> Result<Handle, String> {
-    let dir = cache_dir().ok_or("no hay carpeta de caché")?;
-    let large = path_for(&dir, &video, LARGE);
-    if !large.is_file() {
-        load(client, video).await?;
-    }
-    tokio::task::spawn_blocking(move || {
-        decode_rgba(&std::fs::read(large).map_err(|e| e.to_string())?)
+        Ok(())
     })
     .await
     .map_err(|e| e.to_string())?
