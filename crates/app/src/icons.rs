@@ -37,8 +37,6 @@ pub enum Kind {
     Muted,
     /// Editar (lápiz).
     Edit,
-    /// Descargar (flecha hacia abajo con una raya).
-    Download,
     /// Cambiar el video (pantalla con flechas de cambio alrededor).
     SwapVideo,
 }
@@ -165,20 +163,6 @@ impl<Message> canvas::Program<Message> for Icon {
                 );
                 frame.stroke(&Path::line(p(15.0, 9.5), p(20.0, 14.5)), line(1.8));
                 frame.stroke(&Path::line(p(20.0, 9.5), p(15.0, 14.5)), line(1.8));
-            }
-            Kind::Download => {
-                frame.stroke(
-                    &Path::new(|b| {
-                        b.move_to(p(12.0, 4.0));
-                        b.line_to(p(12.0, 15.5));
-                        b.move_to(p(7.0, 10.5));
-                        b.line_to(p(12.0, 15.5));
-                        b.line_to(p(17.0, 10.5));
-                        b.move_to(p(6.0, 19.5));
-                        b.line_to(p(18.0, 19.5));
-                    }),
-                    line(2.0),
-                );
             }
             Kind::SwapVideo => {
                 // Pantalla con un triángulo de play.

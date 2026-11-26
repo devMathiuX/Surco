@@ -22,6 +22,8 @@ lipo -create \
   -output "$APP/Contents/MacOS/surco"
 chmod 755 "$APP/Contents/MacOS/surco"
 cp "$ROOT/packaging/icons/surco.icns" "$APP/Contents/Resources/surco.icns"
+# Licencia de Surco y de sus dependencias (ver about.toml).
+cp "$ROOT/LICENSE" "$ROOT/THIRD_PARTY_LICENSES.html" "$APP/Contents/Resources/"
 sed "s/@VERSION@/$VERSION/g" "$ROOT/packaging/macos/Info.plist" > "$APP/Contents/Info.plist"
 printf 'APPL????' > "$APP/Contents/PkgInfo"
 
@@ -39,6 +41,7 @@ STAGE="$WORK/dmg"
 mkdir -p "$STAGE"
 cp -R "$APP" "$STAGE/"
 ln -s /Applications "$STAGE/Applications"
+cp "$ROOT/LICENSE" "$ROOT/THIRD_PARTY_LICENSES.html" "$STAGE/"
 hdiutil create -volname "Surco" -srcfolder "$STAGE" -ov -format UDZO \
   "$OUT/Surco-$VERSION-macos-universal.dmg"
 echo "listo: $OUT/Surco-$VERSION-macos-universal.dmg"

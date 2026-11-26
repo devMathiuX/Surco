@@ -10,11 +10,6 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  # Claves de la Web API de Spotify que trae el build oficial (ver
-  # crates/app/src/spotify_keys.rs). Si los secretos no están, el build sale
-  # sin claves y la importación usa la página pública.
-  SURCO_SPOTIFY_CLIENT_ID: ${{ secrets.SPOTIFY_CLIENT_ID }}
-  SURCO_SPOTIFY_CLIENT_SECRET: ${{ secrets.SPOTIFY_CLIENT_SECRET }}
 
 defaults:
   run:
@@ -32,11 +27,13 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libasound2-dev
       - uses: taiki-e/install-action@v2
         with:
-          tool: cargo-deb
+          tool: cargo-deb,cargo-about
       - name: Versión
         id: v
         run: echo "version=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)" >> "$GITHUB_OUTPUT"
       - run: cargo build --release -p surco
+      - name: Licencias de terceros
+        run: cargo about generate --locked about.hbs -o THIRD_PARTY_LICENSES.html
       - name: .deb
         run: |
           cargo deb -p surco --no-build
@@ -53,7 +50,8 @@ jobs:
       - name: .tar.gz portable
         run: |
           mkdir -p "pkg/surco-${{ steps.v.outputs.version }}"
-          cp target/release/surco README.md packaging/linux/surco.desktop packaging/icons/surco-256.png \
+          cp target/release/surco README.md LICENSE THIRD_PARTY_LICENSES.html \
+            packaging/linux/surco.desktop packaging/icons/surco-256.png \
             "pkg/surco-${{ steps.v.outputs.version }}/"
           tar -C pkg -czf "dist/surco-${{ steps.v.outputs.version }}-linux-x86_64.tar.gz" \
             "surco-${{ steps.v.outputs.version }}"
@@ -74,11 +72,16 @@ jobs:
         id: v
         run: echo "version=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)" >> "$GITHUB_OUTPUT"
       - run: cargo build --release -p surco
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-about
+      - name: Licencias de terceros
+        run: cargo about generate --locked about.hbs -o THIRD_PARTY_LICENSES.html
       - name: .zip portable
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force dist | Out-Null
-          Compress-Archive -Path target/release/surco.exe, README.md `
+          Compress-Archive -Path target/release/surco.exe, README.md, LICENSE, THIRD_PARTY_LICENSES.html `
             -DestinationPath "dist/Surco-${{ steps.v.outputs.version }}-windows-x64-portable.zip"
       - name: Instalador (Inno Setup)
         shell: pwsh
@@ -115,6 +118,11 @@ jobs:
         run: echo "version=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)" >> "$GITHUB_OUTPUT"
       - run: cargo build --release -p surco --target aarch64-apple-darwin
       - run: cargo build --release -p surco --target x86_64-apple-darwin
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-about
+      - name: Licencias de terceros
+        run: cargo about generate --locked about.hbs -o THIRD_PARTY_LICENSES.html
       - name: Surco.app y .dmg
         run: packaging/macos/build-app.sh "${{ steps.v.outputs.version }}" dist
       - name: Tamaños

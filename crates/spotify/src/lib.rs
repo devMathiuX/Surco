@@ -3,9 +3,8 @@
 //! Estrategias, probadas en cascada por [`Importer`]:
 //! 1. [`WebPlayer`]: como open.spotify.com sin sesión (token anónimo y la API
 //!    interna del reproductor web). Playlist entera, sin claves ni Premium.
-//! 2. [`WebApi`]: Web API oficial con Client Credentials (si hay credenciales).
-//! 3. [`Embed`]: página embed pública, sin credenciales (hasta 100 canciones).
-//! 4. CSV de Exportify ([`import_csv_file`]), que no depende de la red.
+//! 2. [`Embed`]: página embed pública, sin credenciales (hasta 100 canciones).
+//! 3. CSV de Exportify ([`import_csv_file`]), que no depende de la red.
 //!
 //! Todo se normaliza a [`surco_core::Track`].
 
@@ -14,7 +13,6 @@ pub use surco_core as core;
 mod csv;
 mod embed;
 mod link;
-mod webapi;
 mod webplayer;
 
 use std::future::Future;
@@ -26,7 +24,6 @@ use surco_core::Playlist;
 pub use csv::{import_csv, import_csv_file};
 pub use embed::{parse_embed_html, Embed, EMBED_LIMIT};
 pub use link::parse_playlist_id;
-pub use webapi::{Credentials, WebApi};
 pub use webplayer::{parse_token, WebPlayer};
 
 /// Errores de este crate.
@@ -36,9 +33,7 @@ pub enum Error {
     InvalidLink,
     #[error("la playlist no existe o es privada")]
     NotFound,
-    #[error("client_id o client_secret de Spotify inválidos")]
-    BadCredentials,
-    #[error("Spotify no devuelve las canciones de esta playlist con credenciales de app")]
+    #[error("Spotify no devolvió las canciones de esta playlist")]
     NoTracks,
     #[error("Spotify limitó las consultas (reintentar en {0:?})")]
     RateLimited(Duration),
@@ -100,16 +95,12 @@ impl Importer {
         Self { sources }
     }
 
-    /// Cascada estándar: reproductor web sin sesión, Web API (solo si hay
-    /// credenciales) y después embed.
-    pub fn standard(client: reqwest::Client, creds: Option<Credentials>) -> Self {
-        let mut sources: Vec<Box<dyn PlaylistSource>> =
-            vec![Box::new(WebPlayer::new(client.clone()))];
-        if let Some(creds) = creds {
-            sources.push(Box::new(WebApi::new(client.clone(), creds)));
-        }
-        sources.push(Box::new(Embed::new(client)));
-        Self::new(sources)
+    /// Cascada estándar: reproductor web sin sesión y después embed.
+    pub fn standard(client: reqwest::Client) -> Self {
+        Self::new(vec![
+            Box::new(WebPlayer::new(client.clone())),
+            Box::new(Embed::new(client)),
+        ])
     }
 
     /// Importa desde un link, URI o ID de playlist.

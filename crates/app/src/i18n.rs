@@ -98,24 +98,6 @@ pub fn songs(n: usize) -> String {
     }
 }
 
-pub fn deleted_downloads(files: usize, bytes: u64, name: &str) -> String {
-    let size = crate::view::format_bytes(bytes);
-    if files == 0 {
-        return trf!(
-            "«{name}» ya no se descarga.",
-            "“{name}” is no longer downloaded."
-        );
-    }
-    if en() {
-        format!(
-            "Deleted {} downloaded from “{name}” ({size}).",
-            songs(files)
-        )
-    } else {
-        format!("Borré {} descargadas de «{name}» ({size}).", songs(files))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

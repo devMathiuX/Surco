@@ -107,8 +107,6 @@ impl Surco {
             Some(self.view_song_menu(menu))
         } else if let Some(i) = self.playlist_menu {
             Some(self.view_playlist_menu(i))
-        } else if let Some(i) = self.download_menu {
-            Some(self.view_download_menu(i))
         } else {
             self.view_volume_popup()
         };
@@ -525,43 +523,7 @@ impl Surco {
             )
             .into()
         };
-        // Flechita: descargar la playlist; si ya está, en acento y abre el
-        // menú para borrar las descargas.
-        let offline = self.is_offline(index);
-        let download = button(icons::icon(
-            Kind::Download,
-            if offline {
-                theme::colors().accent
-            } else {
-                theme::colors().text_secondary
-            },
-            18.0,
-        ))
-        .on_press(if offline {
-            Message::DownloadMenu(Some(index))
-        } else {
-            Message::StartOffline(index)
-        })
-        .padding(6)
-        .style(theme::icon_button);
         let mut actions = row![].spacing(4).align_y(Alignment::Center);
-        if let Some((done, total)) = self.offline_progress(index) {
-            if done < total {
-                actions = actions.push(
-                    text(format!("{done}/{total}"))
-                        .size(theme::SIZE_S)
-                        .style(theme::secondary_text),
-                );
-            }
-        }
-        actions = actions.push(tip(
-            download.into(),
-            if offline {
-                tr!("Descargada", "Downloaded")
-            } else {
-                tr!("Descargar", "Download")
-            },
-        ));
         actions = actions.push(tip(
             button(icons::icon(
                 Kind::Close,
@@ -794,29 +756,6 @@ impl Surco {
             .and_then(|p| p.audio_cache())
             .map(|c| c.usage())
             .unwrap_or_default();
-        let mut per_playlist = Column::new().spacing(4);
-        for (i, (p, _)) in self.playlists.iter().enumerate() {
-            let Some((files, bytes)) = self.downloads.get(&p.id) else {
-                continue;
-            };
-            per_playlist = per_playlist.push(
-                row![
-                    text(&p.name)
-                        .size(theme::SIZE_S)
-                        .wrapping(text::Wrapping::None)
-                        .width(Length::Fill),
-                    text(format!("{}, {}", songs(*files), format_bytes(*bytes)))
-                        .size(theme::SIZE_S)
-                        .style(theme::secondary_text),
-                    button(text(tr!("Borrar", "Delete")).size(theme::SIZE_S))
-                        .on_press(Message::DeleteDownloads(i))
-                        .padding([4, 10])
-                        .style(theme::ghost_button),
-                ]
-                .spacing(12)
-                .align_y(Alignment::Center),
-            );
-        }
         let cache_row = row![
             text(if i18n::en() {
                 format!(
@@ -840,22 +779,6 @@ impl Surco {
         ]
         .spacing(12)
         .align_y(Alignment::Center);
-        let downloads: Element<'_, Message> = if self.downloads.is_empty() {
-            Space::new().into()
-        } else {
-            column![
-                text(tr!(
-                    "Descargas por playlist (una canción puede estar en varias)",
-                    "Downloads per playlist (a song can be in several)"
-                ))
-                .size(theme::SIZE_S)
-                .style(theme::secondary_text),
-                container(per_playlist).max_width(560),
-            ]
-            .spacing(8)
-            .into()
-        };
-
         let switch = |label: &'static str, on: bool, f: fn(bool) -> Change| {
             toggler(on)
                 .label(label)
@@ -920,13 +843,12 @@ impl Surco {
                 section(
                     tr!("Precargar canciones", "Preload songs"),
                     tr!(
-                        "Baja el audio antes de que suene, así no hay que esperar a que cargue. La siguiente siempre se prepara en memoria para que no haya cortes. Vaciar no borra las playlists descargadas con la flecha.",
-                        "Downloads the audio before it plays, so you don't wait for it to load. The next song is always prepared in memory so there are no gaps. Clear doesn't delete playlists downloaded with the arrow."
+                        "Baja el audio antes de que suene, así no hay que esperar a que cargue. La siguiente siempre se prepara en memoria para que no haya cortes.",
+                        "Downloads the audio before it plays, so you don't wait for it to load. The next song is always prepared in memory so there are no gaps."
                     )
                 ),
                 precache,
                 cache_row,
-                downloads,
             ]
             .spacing(10),
             column![
@@ -947,13 +869,37 @@ impl Surco {
                 ),
             ]
             .spacing(10),
-            self.view_spotify_keys(),
             text(match &self.ytdlp {
                 crate::YtDlpState::Found(p) => format!("yt-dlp: {}", p.display()),
                 _ => tr!("yt-dlp: no encontrado", "yt-dlp: not found").to_owned(),
             })
             .size(theme::SIZE_S)
             .style(theme::secondary_text),
+            column![
+                section(
+                    tr!("Acerca de", "About"),
+                    tr!(
+                        "Surco no está afiliado a YouTube, Google ni Spotify. Sus marcas son de sus dueños.",
+                        "Surco isn't affiliated with YouTube, Google or Spotify. Their trademarks belong to their owners."
+                    )
+                ),
+                row![
+                    text(trf!(
+                        "Surco {} · © 2026 mathiux · Licencia MIT",
+                        "Surco {} · © 2026 mathiux · MIT License",
+                        env!("CARGO_PKG_VERSION")
+                    ))
+                    .size(theme::SIZE_S)
+                    .style(theme::secondary_text),
+                    button(text(tr!("Licencias", "Licenses")).size(theme::SIZE_S))
+                        .on_press(Message::OpenLicenses)
+                        .padding([4, 10])
+                        .style(theme::ghost_button),
+                ]
+                .spacing(12)
+                .align_y(Alignment::Center),
+            ]
+            .spacing(10),
         ]
         .spacing(28)
         .max_width(760)
@@ -1113,71 +1059,6 @@ impl Surco {
         .into()
     }
 
-    /// Claves de Spotify: cuáles se usan y cargar las propias.
-    fn view_spotify_keys(&self) -> Element<'_, Message> {
-        use crate::spotify_keys::{msg, KeySource, KeysMsg};
-        let status = match self.spotify_source {
-            KeySource::Own => tr!("Usando tus claves.", "Using your keys."),
-            KeySource::Config => tr!(
-                "Usando las claves de config.toml.",
-                "Using the keys from config.toml."
-            ),
-            KeySource::Builtin => tr!(
-                "Usando las claves incluidas en Surco.",
-                "Using the keys built into Surco."
-            ),
-            KeySource::None => tr!(
-                "Sin claves propias (no hacen falta).",
-                "No keys of your own (they aren't needed)."
-            ),
-        };
-        let form = row![
-            text_input("Client ID", &self.keys_form.id)
-                .on_input(|s| msg(KeysMsg::Id(s)))
-                .padding(8)
-                .size(theme::SIZE_S)
-                .style(theme::input),
-            text_input("Client Secret", &self.keys_form.secret)
-                .on_input(|s| msg(KeysMsg::Secret(s)))
-                .on_submit(msg(KeysMsg::Save))
-                .secure(true)
-                .padding(8)
-                .size(theme::SIZE_S)
-                .style(theme::input),
-            button(text(tr!("Guardar", "Save")).size(theme::SIZE_S))
-                .on_press_maybe(
-                    (!self.keys_form.id.trim().is_empty()
-                        && !self.keys_form.secret.trim().is_empty())
-                    .then(|| msg(KeysMsg::Save)),
-                )
-                .padding([6, 12])
-                .style(theme::primary_button),
-        ]
-        .spacing(8)
-        .align_y(Alignment::Center);
-        let mut col = column![
-            column![
-                text("Spotify").size(theme::SIZE_M),
-                text(tr!("Surco lee las playlists enteras igual que la web de Spotify, sin cuenta, Premium ni claves. Las claves de la Web API son opcionales: solo se usan si eso falla (y Spotify pide Premium para crearlas en developer.spotify.com).", "Surco reads whole playlists the same way the Spotify website does, with no account, Premium or keys. Web API keys are optional: they're only used if that fails (and Spotify requires Premium to create them at developer.spotify.com)."))
-                    .size(theme::SIZE_S)
-                    .style(theme::secondary_text),
-            ]
-            .spacing(2),
-            text(status).size(theme::SIZE_S),
-            form,
-        ]
-        .spacing(10);
-        if self.spotify_source == KeySource::Own {
-            col = col.push(
-                button(text(tr!("Borrar mis claves", "Delete my keys")).size(theme::SIZE_S))
-                    .on_press(msg(KeysMsg::Clear))
-                    .padding([4, 10])
-                    .style(theme::ghost_button),
-            );
-        }
-        col.into()
-    }
-
     /// Selector de video arriba de la lista de la playlist.
     pub(crate) fn view_chooser(&self, playlist: usize) -> Option<Element<'_, Message>> {
         let at = self.choosing.filter(|(p, _)| *p == playlist)?;
@@ -1219,8 +1100,8 @@ impl Surco {
             column![
                 text(trf!("¿Quitar «{}»?", "Remove “{}”?", name)).size(theme::SIZE_M),
                 text(tr!(
-                    "Se borra de tu biblioteca junto con sus descargas. No se puede deshacer.",
-                    "It's removed from your library along with its downloads. This can't be undone."
+                    "Se borra de tu biblioteca. No se puede deshacer.",
+                    "It's removed from your library. This can't be undone."
                 ))
                 .size(theme::SIZE_S)
                 .style(theme::secondary_text),

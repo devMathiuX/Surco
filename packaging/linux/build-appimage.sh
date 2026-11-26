@@ -20,6 +20,10 @@ mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/share/applications" \
 install -m 755 "$ROOT/target/release/surco" "$APPDIR/usr/bin/surco"
 install -m 644 "$ROOT/packaging/linux/surco.desktop" "$APPDIR/usr/share/applications/surco.desktop"
 install -m 644 "$ROOT/packaging/icons/surco-256.png" "$APPDIR/usr/share/icons/hicolor/256x256/apps/surco.png"
+# Licencia de Surco y de sus dependencias (THIRD_PARTY_LICENSES.html lo arma
+# `cargo about`, ver about.toml).
+mkdir -p "$APPDIR/usr/share/doc/surco"
+install -m 644 "$ROOT/LICENSE" "$ROOT/THIRD_PARTY_LICENSES.html" "$APPDIR/usr/share/doc/surco/"
 # appimagetool quiere el .desktop y el ícono en la raíz, y un AppRun.
 cp "$APPDIR/usr/share/applications/surco.desktop" "$APPDIR/surco.desktop"
 cp "$ROOT/packaging/icons/surco-256.png" "$APPDIR/surco.png"

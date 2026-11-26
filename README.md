@@ -18,7 +18,6 @@ Funciona en **Linux**, **Windows** y **macOS** (Intel y Apple Silicon).
 - **Editar la cola**: agregá, quitá y reordená canciones arrastrándolas.
 - **Elegir otro video** si Surco encontró una versión equivocada de una canción (en vivo, cover, etc.).
 - **Usar las teclas multimedia** del teclado y los controles de música del sistema.
-- **Escuchar sin conexión**: la flechita de una playlist baja todas sus canciones y las deja guardadas.
 - **Cambiar el tema**: oscuro, verde, rosa, claro, claro rosa, **vidrio** (fondo de colores con paneles translúcidos), **brutal** (bordes duros y acento lima), **brillo** (oscuro con resplandor violeta) o uno **personalizado** con tus dos colores.
 - **Español o inglés**: elegí el idioma en los ajustes (de entrada usa el de tu computadora).
 
@@ -167,9 +166,8 @@ Al abrir Surco, la última canción que escuchaste queda cargada en pausa, en el
 - **Quitar una canción:** el **+** de la canción dentro de la playlist, y **Quitar de…**.
 - **Cambiar el nombre:** el lápiz al lado del nombre, o clic derecho sobre la playlist en la barra lateral > **Renombrar**. También sirve para guardar una radio: con nombre deja de reemplazarse por la próxima.
 - **Cambiar el orden:** arrastrá la playlist en la barra lateral.
-- **Descargarla para escucharla sin conexión:** la **flechita** de arriba a la derecha de la playlist. Se pone del color de acento y baja las canciones de a una (al lado ves cuántas van). Si la tocás de nuevo, te deja **borrar las descargas**.
-- **Quitarla:** la **×** de arriba a la derecha. Las canciones descargadas que no estén en otra playlist descargada se borran del disco.
-- **Más opciones:** clic derecho sobre una playlist en la barra lateral para renombrarla, borrar sus descargas o quitarla. Los menús se abren al lado del mouse.
+- **Quitarla:** la **×** de arriba a la derecha.
+- **Más opciones:** clic derecho sobre una playlist en la barra lateral para renombrarla o quitarla. Los menús se abren al lado del mouse.
 - **Buscar dentro de una playlist:** el buscador de arriba de la lista (Ctrl+F te lleva ahí).
 - **Recomendadas:** al final de cada playlist hay canciones parecidas. **Agregar** la suma a la playlist, un clic la escucha, y **Otras** trae más.
 
@@ -209,8 +207,7 @@ El engranaje de arriba a la izquierda abre los ajustes:
 - **Tamaño de la interfaz:** de 70 % a 160 %, para agrandar o achicar todo.
 - **Tema** de colores. Con **Personalizado** elegís el fondo y el acento: tocá una muestra o escribí el color (`#1E2A3A`). Los demás colores salen solos de esos dos.
 - **Portadas en la lista** de canciones.
-- **Precargar canciones:** baja de antemano las próximas 5 canciones, o toda la playlist, para que no haya que esperar ni dependan de la conexión. Usa hasta 2 GB de disco y dura lo que dura la sesión: se borra al cerrar Surco. **Vaciar** la borra en el momento. Lo único que queda guardado de una vez para otra son las playlists descargadas con la flechita, hasta que borres sus descargas, quites la playlist o saques la canción de ella.
-- **Spotify:** claves propias de la Web API, opcionales (ver abajo).
+- **Precargar canciones:** baja de antemano las próximas 5 canciones, o toda la playlist, para que no haya que esperar ni dependan de la conexión. Usa hasta 2 GB de disco y dura lo que dura la sesión: se borra al cerrar Surco. **Vaciar** la borra en el momento.
 
 ### Atajos de teclado
 
@@ -243,7 +240,7 @@ Hacé clic en **Descargar yt-dlp**. Si falla, instalalo a mano siguiendo las [in
 Usá **Cambiar video** y elegí la correcta (ver [Si suena la versión equivocada](#si-suena-la-versión-equivocada)).
 
 **De una playlist de Spotify solo se importaron 100 canciones**
-Pasa si Spotify no respondió a la lectura completa. Esperá un rato y volvé a importarla (pegá el mismo link). Si sigue igual, importala como CSV desde [Exportify](https://exportify.net) o, si tenés Spotify Premium, cargá tus claves en **Ajustes > Spotify**.
+Pasa si Spotify no respondió a la lectura completa. Esperá un rato y volvé a importarla (pegá el mismo link). Si sigue igual, importala como CSV desde [Exportify](https://exportify.net).
 
 **Algunas playlists de Spotify no se importan**
 Las playlists privadas y los mixes personales (como "Daily Mix" o "Descubrimiento semanal") no se pueden leer sin tu cuenta. Copiá las canciones a una playlist pública tuya y probá con esa, o usá Exportify.
@@ -269,8 +266,8 @@ Sí, es gratis, y no necesitás cuenta de Spotify, YouTube ni de nada.
 **¿De dónde sale el audio?**
 De YouTube. Spotify solo se usa para leer la lista de canciones de una playlist.
 
-**¿Necesito claves de Spotify?**
-No. Surco importa las playlists públicas enteras sin claves. Las claves de la Web API quedan como respaldo opcional, pero Spotify ahora pide **Premium** para crear una app de desarrollador. Si tenés Premium y querés usarlas: entrá al [panel de desarrolladores de Spotify](https://developer.spotify.com/dashboard), creá una app (cualquier nombre, y como Redirect URI `http://127.0.0.1:8888/callback`), y copiá el **Client ID** y el **Client secret** en **Ajustes > Spotify > Guardar**.
+**¿Necesito claves o cuenta de Spotify?**
+No. Surco importa las playlists públicas enteras sin cuenta ni claves.
 
 **¿Cómo desinstalo Surco en Linux si lo instalé con la línea de `curl`?**
 `sudo apt remove surco`. Si además querés sacar el repositorio: `sudo rm /etc/apt/sources.list.d/surco.sources /etc/apt/keyrings/surco.gpg`.
@@ -282,6 +279,12 @@ Solo con las canciones que ya precargaste (ver Ajustes).
 
 Cómo compilar Surco, cómo está armado por dentro y las decisiones técnicas: [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
+## Licencia
+
+Surco es software libre bajo la [licencia MIT](LICENSE). Usa bibliotecas de terceros con sus propias licencias (MIT, Apache 2.0, BSD, MPL 2.0 y otras compatibles): la lista completa, con el texto de cada licencia, va en el archivo `THIRD_PARTY_LICENSES.html` de cada descarga. yt-dlp y deno no vienen con Surco: se bajan de sus páginas oficiales y tienen sus propias licencias.
+
 ## Aviso legal
 
-El uso de contenido de YouTube y de Spotify queda bajo responsabilidad de cada usuario y de los términos de servicio de cada plataforma. Surco no aloja ni redistribuye contenido.
+Surco no está afiliado, asociado ni respaldado por YouTube, Google ni Spotify. YouTube, YouTube Music y Spotify son marcas de sus respectivos dueños y se nombran solo para indicar con qué servicios funciona Surco.
+
+El uso de contenido de YouTube y de Spotify queda bajo responsabilidad de cada usuario y de los términos de servicio de cada plataforma. Surco no aloja ni redistribuye contenido, y no guarda música para escucharla sin conexión: la precarga es temporal y se borra al cerrar la app.

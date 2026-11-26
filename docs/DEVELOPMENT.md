@@ -90,12 +90,11 @@ En la pantalla **Importar** (o con **Ctrl+L**), pegá cualquiera de estos y Ente
 - `spotify:playlist:{id}`
 - la ruta a un `.csv` exportado con [Exportify](https://exportify.net)
 
-Surco prueba cuatro estrategias en cascada (trait `PlaylistSource` en `crates/spotify`):
+Surco prueba tres estrategias en cascada (trait `PlaylistSource` en `crates/spotify`):
 
 1. **Reproductor web sin sesión** (`webplayer.rs`, ver "Spotify sin claves" más abajo). Playlist entera, con álbum, sin cuenta ni claves. Es la vía normal.
-2. **Web API de Spotify** con Client Credentials, solo si hay claves (Ajustes, `config.toml` o las del build). `config.toml` está en `~/.config/surco/config.toml` en Linux y `%APPDATA%\Surco\config\config.toml` en Windows; se crea una plantilla en el primer arranque. Paginación completa y manejo de 429 con `Retry-After`. **Ojo:** desde febrero de 2026 las apps en *Development Mode* tienen restricciones (endpoint `/playlists/{id}/items`, y para playlists ajenas puede devolver solo los metadatos), y crear una app pide Spotify Premium. Si falla, sigue la estrategia 3.
-3. **Página embed pública** (`open.spotify.com/embed/playlist/{id}`), sin credenciales. Lee el JSON que trae embebido (`__NEXT_DATA__`). Trae título, artistas y duración, pero **no** álbum ni ISRC, y **solo las primeras 100 canciones** (la app lo avisa). No es una API pública: puede romperse si Spotify cambia el HTML.
-4. **CSV** (Exportify, formato viejo y nuevo, o uno hecho a mano con `title,artist,album,duration`). Trae la playlist completa con álbum e ISRC. Sirve si las otras fallan.
+2. **Página embed pública** (`open.spotify.com/embed/playlist/{id}`), sin credenciales. Lee el JSON que trae embebido (`__NEXT_DATA__`). Trae título, artistas y duración, pero **no** álbum ni ISRC, y **solo las primeras 100 canciones** (la app lo avisa). No es una API pública: puede romperse si Spotify cambia el HTML.
+3. **CSV** (Exportify, formato viejo y nuevo, o uno hecho a mano con `title,artist,album,duration`). Trae la playlist completa con álbum e ISRC. Sirve si las otras fallan.
 
 Si una estrategia dice que la playlist no existe (404 de la embed o `NotFound` del reproductor web), la cascada corta ahí.
 
@@ -195,6 +194,7 @@ packaging/
 
 - El `.exe` lleva el ícono y los datos de versión embebidos (`crates/app/build.rs` con `winresource`) y no abre consola.
 - La ventana usa el ícono en Linux y Windows; en macOS lo pone el `.app`.
+- **Licencias:** Surco es MIT (`LICENSE`). Cada paquete lleva `LICENSE` y `THIRD_PARTY_LICENSES.html`, la lista de dependencias con el texto de cada licencia, que arma `cargo about generate --locked about.hbs -o THIRD_PARTY_LICENSES.html` en el workflow de release (`about.toml` lista las licencias aceptadas; si entra una dependencia con otra licencia, el paso falla). No se versiona (`.gitignore`): para correr `cargo deb` o los scripts de empaquetado a mano, generalo antes (`cargo install cargo-about --locked --features cli`). El botón **Ajustes > Acerca de > Licencias** (`crates/app/src/licenses.rs`) lo busca al lado del ejecutable, en `../share/doc/surco/` (.deb, AppImage) o en `../Resources/` (macOS), y si no está abre la sección Licencia del README.
 - El `.deb` depende solo de `libasound2` y `libxkbcommon0`, y *sugiere* `yt-dlp` y `deno`. No los pide como dependencia porque el yt-dlp de las distros suele estar viejo y YouTube lo rompe.
 
 Medido en la Fase 7 (Linux, Xvfb, binario release con la biblioteca de 100 canciones guardada):
@@ -220,12 +220,12 @@ El engranaje de arriba a la izquierda abre los ajustes. Todo se guarda en la bib
 - **Idioma** (`crates/app/src/i18n.rs`): español o inglés, en un `AtomicBool` global como el tema. Los textos se eligen con `tr!("es", "en")` y `trf!("formato es", "formato en", args)`. Por defecto sale de `sys-locale`: español si empieza con `es`, inglés si no; se guarda como `language`. Los errores que vienen de los crates (importador, yt-dlp) siguen en español.
 - **Portadas en la lista:** muestra la miniatura al lado de cada canción ya encontrada en YouTube (las demás, un cuadro vacío hasta que se buscan). Se bajan de a 4 y quedan en la caché de portadas.
 - **Sin cortes entre canciones:** además de pre-cargar la siguiente en memoria, el decodificador se saltea el silencio del principio (hasta 10 s) y del final de cada video, que en YouTube suele sonar como un hueco entre canciones. El silencio del medio de una canción se respeta (test `skips_leading_and_trailing_silence`).
-- **Precargar canciones:** "Las próximas 5" o "Toda la playlist" bajan el audio a disco antes de que suene, de a una canción por vez, así no hay que esperar a que cargue ni depende de la red en ese momento. Van a `~/.cache/surco/audio/` (`%LOCALAPPDATA%\Surco\cache\audio\`, `~/Library/Caches/Surco/audio/`), con un tope de 2 GB: al pasarse se borran las menos escuchadas. "Vaciar" borra todo menos lo fijado por las playlists descargadas. Por defecto está apagado.
-- **Playlists descargadas** (`crates/app/src/offline.rs`): la flechita guarda el ID de la playlist en el ajuste `offline_playlists` (uno por línea). Los videos de esas playlists quedan **fijados** en `AudioCache` (`set_pinned`): no cuentan para el tope de 2 GB, no se desalojan y `clear()` no los borra. La precarga, cuando no tiene nada de la cola para bajar, sigue con la próxima canción sin bajar de alguna playlist descargada (`next_offline_track`). Al borrar las descargas o quitar la playlist, se borran del disco solo los videos que no están en otra playlist descargada. `update_pins` borra además los videos que dejan de estar fijados (una canción que sale de la playlist, o a la que se le elige otro video). La precarga no fijada dura lo que la sesión: se borra al cerrar (después de `iced::application(...).run()`, con la caché guardada en `AUDIO_CACHE`) y, por si Surco se cerró de golpe, también al arrancar (`drop_temporary_audio`, después de cargar la biblioteca y fijar los videos).
+- **Precargar canciones:** "Las próximas 5" o "Toda la playlist" bajan el audio a disco antes de que suene, de a una canción por vez, así no hay que esperar a que cargue ni depende de la red en ese momento. Van a `~/.cache/surco/audio/` (`%LOCALAPPDATA%\Surco\cache\audio\`, `~/Library/Caches/Surco/audio/`), con un tope de 2 GB: al pasarse se borran las menos escuchadas. "Vaciar" borra todo menos la canción guardada para retomar. Por defecto está apagado.
+- **Sin descargas permanentes:** desde la 1.0 no hay playlists descargadas para escuchar sin conexión (se sacaron por los términos de YouTube). La precarga dura lo que la sesión: se borra al cerrar (después de `iced::application(...).run()`, con la caché guardada en `AUDIO_CACHE`) y, por si Surco se cerró de golpe, también al arrancar (`drop_temporary_audio` en `precache.rs`, que además borra el audio que hayan dejado las playlists descargadas de versiones anteriores). Lo único que sobrevive es la última canción escuchada (`AudioCache::keep`), para retomarla.
 - **Plan B ante un 403:** si YouTube sigue rechazando la URL después de re-resolverla, el reproductor y la precarga le piden a yt-dlp que baje la canción entera (`Provider::download_with_ytdlp`, `-f bestaudio[ext=m4a] --print after_move:filepath`) y la guardan en la caché de audio. yt-dlp arma los pedidos como el cliente de YouTube que eligió, así que suele pasar donde nuestro pedido directo no.
 - **deno:** al arrancar se busca un runtime de JavaScript (`surco_provider::js_runtime`). Si no hay, el Inicio muestra un aviso con el botón **Instalar deno**: baja el zip del release oficial (`denoland/deno`, `deno-<target>.zip`, ~40 MB), saca el binario (`deno.rs` lee el zip con `flate2`) y lo deja en la carpeta de datos, al lado de yt-dlp. Esa carpeta se agrega al `PATH` de yt-dlp (`set_tools_dir`). Sin deno, YouTube rechaza el audio (403) en cuanto exige resolver sus desafíos.
 - **IPv4 para el audio:** las URLs de googlevideo quedan atadas a la IP que las pidió (`ip=`). yt-dlp corre con `--force-ipv4` y las descargas usan `surco_provider::stream_client()` (enlazado a `0.0.0.0`), así salen por la misma dirección. Sin esto, en Windows con IPv6 (direcciones temporales que rotan) yt-dlp y la descarga podían salir por direcciones distintas y YouTube contestaba 403.
-- **403 de YouTube:** yt-dlp imprime también `%(http_headers)j` y las descargas mandan ese `User-Agent` (si no coincide con el del cliente que usó yt-dlp, googlevideo puede contestar 403). Ante un 403 el reproductor vuelve a pedir la URL hasta 2 veces (`EXPIRED_RETRIES`), y la precarga se pausa 2 minutos en vez de pasar a la siguiente canción, así no compite con lo que suena. Así, lo único que queda guardado de una vez para otra es lo que está en alguna playlist descargada.
+- **403 de YouTube:** yt-dlp imprime también `%(http_headers)j` y las descargas mandan ese `User-Agent` (si no coincide con el del cliente que usó yt-dlp, googlevideo puede contestar 403). Ante un 403 el reproductor vuelve a pedir la URL hasta 2 veces (`EXPIRED_RETRIES`), y la precarga se pausa 2 minutos en vez de pasar a la siguiente canción, así no compite con lo que suena.
 - **Más rápido (0.6.3):**
   - **Búsqueda directa** (`surco_provider::innertube`): `YtDlp::search`, `search_channels` y `search_playlists` primero le preguntan a la API interna de YouTube (`POST youtubei/v1/search`, cliente `WEB`, filtros `EgIQAQ==`/`EgIQAg==`/`EgIQAw==`): ~0,6 s en vez de ~1,5 s. Si falla, sigue yt-dlp; tras 3 fallos seguidos se deja de usar en la sesión. Lo usan el buscador, el resolver (Spotify → YouTube) y las recomendaciones.
   - **Audio directo** (`Provider::with_direct_player`, solo en la app): la URL del audio se pide a `youtubei/v1/player` con el cliente `ANDROID_VR` (no necesita resolver el desafío de JavaScript), por IPv4 y mandando su `User-Agent`. Si falla o YouTube rechaza esa URL (403), sigue yt-dlp como antes; tras 3 fallos se apaga en la sesión. `SURCO_NO_DIRECT=1` lo desactiva. Desde servidores YouTube pide verificar que no sos un bot, así que esto solo se puede probar desde una conexión hogareña.
@@ -258,15 +258,9 @@ Desde 2026 Spotify pide Premium para usar la Web API, así que Surco lee las pla
 
 No es una API pública: puede romperse sin aviso, y el resto de la cascada está para eso.
 
-### Claves propias (opcional)
+### Sin claves de la Web API
 
-Con claves de la Web API (Client Credentials) la playlist también se importa entera, de a 100 por página. Se usan solo si falla el reproductor web. Las claves se eligen en este orden:
-
-1. Las que el usuario carga en **Ajustes → Spotify**.
-2. Las de `config.toml`.
-3. Las que trae el build oficial: el workflow Release las inyecta al compilar desde los secretos del repo `SPOTIFY_CLIENT_ID` y `SPOTIFY_CLIENT_SECRET` (variables `SURCO_SPOTIFY_CLIENT_ID` / `SURCO_SPOTIFY_CLIENT_SECRET`, leídas con `option_env!`). No están en el código. Un build local sin esas variables sale sin claves.
-
-Si la API falla (403 o 404, como con las playlists editoriales de Spotify para apps nuevas, o 429), la importación sigue con la página embed y, si hace falta, con un CSV de Exportify. Las claves incluidas en un programa que se distribuye se pueden extraer: solo dan acceso a datos públicos, y si se abusa de ellas se cambian.
+Hasta la 0.6 Surco aceptaba claves de la Web API (Client Credentials) en Ajustes, `config.toml` o el build. Desde la 1.0 no: Spotify pide Premium para crear una app y el reproductor web sin sesión alcanza. Al arrancar se borran las claves que hayan quedado guardadas en los ajustes (`forget_spotify_keys`).
 
 ## Inicio, playlists propias y recomendadas
 
@@ -352,9 +346,9 @@ Medido en la Fase 2 (Linux, Xvfb, reproduciendo un m4a de 3 min por HTTP): **~23
 - Tests: parser de la salida de yt-dlp, caché con TTL, `HttpStream` contra un servidor HTTP local (seek antes de terminar la descarga, 403), y el motor de punta a punta con salida nula (sonar, pausar, seek, fin, errores). Hay un test con un yt-dlp falso que primero devuelve una URL vencida.
 - Los archivos de prueba (`crates/player/tests/fixtures/*.m4a`) son tonos generados con ffmpeg (`padded.m4a`: 1,5 s mudos, 2 s de tono y 3 s mudos, para probar que se saltea el silencio). Los de 8 s: `ffmpeg -f lavfi -i sine=frequency=440:duration=8 -ac 2 -c:a aac -b:a 64k tone.m4a` (y `-movflags +dash+global_sidx` para la versión fragmentada, como las de YouTube).
 - `unwrap()` está prohibido por lint (`clippy::unwrap_used = "deny"`) en todo el workspace.
-- Spotify: parser de links (todas las variantes), CSV (comillas, saltos de línea, BOM, formatos de Exportify), página embed, el reproductor web (token anónimo, 250 canciones paginadas, hash vencido que se busca en el JavaScript, `NotFound` que corta la cascada, caída a la embed) y la Web API contra un servidor local que imita a Spotify (token, 250 canciones en 3 páginas, 429 con `Retry-After`, formato viejo `tracks` y nuevo `items`, y la cascada cayendo a la embed cuando la API esconde las canciones). `crates/spotify/tests/fixtures/exportify_sample.csv` es un CSV de ejemplo de 120 canciones.
+- Spotify: parser de links (todas las variantes), CSV (comillas, saltos de línea, BOM, formatos de Exportify), página embed, el reproductor web (token anónimo, 250 canciones paginadas, hash vencido que se busca en el JavaScript, `NotFound` que corta la cascada, caída a la embed). `crates/spotify/tests/fixtures/exportify_sample.csv` es un CSV de ejemplo de 120 canciones.
 - Pruebas contra la red real, ignoradas por defecto:
-  - `cargo test -p surco-spotify --test import -- --ignored --nocapture` (reproductor web real con "All Out 80s", 150 canciones, y una de usuario con 1837; embed real; con `SPOTIFY_CLIENT_ID`/`SPOTIFY_CLIENT_SECRET` también la Web API)
+  - `cargo test -p surco-spotify --test import -- --ignored --nocapture` (reproductor web real con "All Out 80s", 150 canciones, y una de usuario con 1837; embed real)
   - `cargo test -p surco-player --test network -- --ignored --nocapture` (streaming HTTPS real con pausa y seek; con `SURCO_TEST_YOUTUBE=<id>` también YouTube)
 - CI en GitHub Actions (Linux): fmt, clippy, tests y build release. Windows y macOS se compilan en el workflow Release.
 
@@ -375,4 +369,4 @@ Medido en la Fase 2 (Linux, Xvfb, reproduciendo un m4a de 3 min por HTTP): **~23
 
 ## Aviso legal
 
-El uso de contenido de YouTube y de Spotify queda bajo responsabilidad de cada usuario y de los términos de servicio de cada plataforma. Surco no aloja ni redistribuye contenido.
+Surco no está afiliado, asociado ni respaldado por YouTube, Google ni Spotify. El uso de contenido de YouTube y de Spotify queda bajo responsabilidad de cada usuario y de los términos de servicio de cada plataforma. Surco no aloja ni redistribuye contenido y no guarda música de forma permanente (por eso, desde la 1.0, no hay playlists descargadas para escuchar sin conexión). yt-dlp y deno no se incluyen en los paquetes: Surco los baja de sus páginas oficiales; si algún día se empaquetan, hay que sumar sus licencias (los ejecutables de yt-dlp traen partes GPLv3+).

@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>Surco: licencias de terceros</title>
+<style>
+body { font-family: system-ui, sans-serif; max-width: 52rem; margin: 2rem auto; padding: 0 1rem; line-height: 1.5; color: #222; background: #fff; }
+pre { white-space: pre-wrap; background: #f4f4f4; padding: 1rem; font-size: 0.85rem; }
+li { margin: 0.2rem 0; }
+@media (prefers-color-scheme: dark) { body { color: #ddd; background: #161616; } pre { background: #222; } a { color: #8ab4f8; } }
+</style>
+</head>
+<body>
+<h1>Licencias de terceros</h1>
+<p>Surco (licencia MIT, © 2026 mathiux) incluye las bibliotecas de abajo, cada una con su licencia.
+Las que usan MPL-2.0 (por ejemplo, symphonia) van sin cambios; su código fuente está en
+<a href="https://crates.io">crates.io</a> y en el repositorio de cada una.</p>
+<p>yt-dlp y deno no vienen con Surco: Surco los baja de sus páginas oficiales y tienen sus propias licencias.</p>
+<h2>Resumen</h2>
+<ul>
+{{#each overview}}
+<li><a href="#{{id}}">{{name}}</a> ({{count}})</li>
+{{/each}}
+</ul>
+<h2>Licencias</h2>
+{{#each licenses}}
+<h3 id="{{id}}">{{name}}</h3>
+<p>Usada por:</p>
+<ul>
+{{#each used_by}}
+<li><a href="{{#if crate.repository}}{{crate.repository}}{{else}}https://crates.io/crates/{{crate.name}}{{/if}}">{{crate.name}} {{crate.version}}</a></li>
+{{/each}}
+</ul>
+<pre>{{text}}</pre>
+{{/each}}
+</body>
+</html>

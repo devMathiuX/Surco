@@ -1,9 +1,6 @@
 //! Playlists propias y cambios a las de la biblioteca: crear, renombrar,
 //! agregar y quitar canciones, cambiar el orden (arrastrando en la barra
-//! lateral), borrar lo descargado de una playlist y las canciones
-//! recomendadas que aparecen al final de cada una.
-
-use std::collections::HashMap;
+//! lateral) y las canciones recomendadas que aparecen al final de cada una.
 
 use iced::widget::{
     button, column, container, mouse_area, opaque, operation, row, scrollable, stack, text, Column,
@@ -56,9 +53,6 @@ pub enum AddTarget {
     /// Quitarla de la playlist de donde se abrió el menú.
     Remove,
 }
-
-/// Bytes y canciones descargadas por playlist (ID).
-pub type Downloads = HashMap<String, (usize, u64)>;
 
 /// Nueva posición del elemento que estaba en `i` después de mover `from` a `to`.
 pub fn moved_index(i: usize, from: usize, to: usize) -> usize {
@@ -226,7 +220,6 @@ impl Surco {
             text: trf!("Agregada a «{name}».", "Added to “{name}”."),
         });
         self.update_preload();
-        self.refresh_downloads();
     }
 
     /// Quita la canción `i` de la playlist `p`.
@@ -247,7 +240,6 @@ impl Surco {
         if self.choosing.is_some_and(|(cp, _)| cp == p) {
             self.choosing = None;
         }
-        self.refresh_downloads();
     }
 
     /// Mueve una playlist de la barra lateral de `from` a `to`.
@@ -274,42 +266,6 @@ impl Surco {
                 tracing::warn!(error = %e, "guardar el orden de las playlists");
             }
         }
-    }
-
-    // ── Descargas ──────────────────────────────────────────────────────────
-
-    /// Recalcula cuánto hay descargado de cada playlist descargada.
-    pub(crate) fn refresh_downloads(&mut self) {
-        let Some(cache) = self.provider.as_ref().and_then(|p| p.audio_cache()) else {
-            self.downloads.clear();
-            return;
-        };
-        let mut out = Downloads::new();
-        for (p, _) in self
-            .playlists
-            .iter()
-            .filter(|(p, _)| self.offline.contains(&p.id))
-        {
-            let mut seen = std::collections::HashSet::new();
-            let (mut files, mut bytes) = (0, 0);
-            for t in &p.tracks {
-                let Some(v) = self.video_of_track(t) else {
-                    continue;
-                };
-                if !seen.insert(v) {
-                    continue;
-                }
-                if let Some(len) = cache.size_of(v) {
-                    files += 1;
-                    bytes += len;
-                }
-            }
-            if files > 0 {
-                out.insert(p.id.clone(), (files, bytes));
-            }
-        }
-        self.downloads = out;
-        self.update_pins();
     }
 
     // ── Recomendadas ───────────────────────────────────────────────────────
@@ -604,18 +560,6 @@ impl Surco {
             false
         )]
         .spacing(2);
-        if let Some((files, bytes)) = self.downloads.get(&p.id) {
-            options = options.push(option(
-                trf!(
-                    "Borrar descargas ({}, {})",
-                    "Delete downloads ({}, {})",
-                    crate::view::songs(*files),
-                    crate::view::format_bytes(*bytes)
-                ),
-                Message::DeleteDownloads(index),
-                false,
-            ));
-        }
         options = options.push(option(
             tr!("Quitar playlist", "Remove playlist").into(),
             Message::AskRemovePlaylist(Some(index)),
@@ -637,8 +581,7 @@ impl Surco {
         .padding(14)
         .width(PLAYLIST_MENU_WIDTH)
         .style(theme::dialog);
-        let rows = 2 + usize::from(self.downloads.contains_key(&p.id));
-        let size = Size::new(PLAYLIST_MENU_WIDTH, 64.0 + rows as f32 * 37.0);
+        let size = Size::new(PLAYLIST_MENU_WIDTH, 64.0 + 2.0 * 37.0);
         self.anchored(card, size, Message::PlaylistMenu(None))
     }
 
@@ -773,56 +716,6 @@ impl Surco {
             row![Space::new().width(pos.x), opaque(card)],
         ];
         opaque(stack![backdrop, placed])
-    }
-
-    /// Menú de la flechita de una playlist descargada.
-    pub(crate) fn view_download_menu(&self, index: usize) -> Element<'_, Message> {
-        let Some((p, _)) = self.playlists.get(index) else {
-            return Space::new().into();
-        };
-        let detail = match self.downloads.get(&p.id) {
-            Some((files, bytes)) => {
-                let (n, size) = (
-                    crate::view::songs(*files),
-                    crate::view::format_bytes(*bytes),
-                );
-                tr!(
-                    format!("{n} descargadas ({size})."),
-                    format!("{n} downloaded ({size}).")
-                )
-            }
-            None => tr!("Todavía no se bajó nada.", "Nothing downloaded yet.").to_owned(),
-        };
-        let card = container(
-            column![
-                column![
-                    text(tr!("Descargada", "Downloaded")).size(theme::SIZE_M),
-                    text(detail)
-                        .size(theme::SIZE_S)
-                        .style(theme::secondary_text),
-                ]
-                .spacing(2)
-                .padding([0, 10]),
-                button(
-                    text(tr!("Borrar las descargas", "Delete the downloads"))
-                        .size(theme::SIZE_S)
-                        .style(theme::error_text)
-                )
-                .on_press(Message::DeleteDownloads(index))
-                .width(Length::Fill)
-                .padding([8, 10])
-                .style(theme::list_button(false)),
-            ]
-            .spacing(10),
-        )
-        .padding(14)
-        .width(PLAYLIST_MENU_WIDTH)
-        .style(theme::dialog);
-        self.anchored(
-            card,
-            Size::new(PLAYLIST_MENU_WIDTH, 120.0),
-            Message::DownloadMenu(None),
-        )
     }
 }
 

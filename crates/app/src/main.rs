@@ -7,13 +7,12 @@
 mod i18n;
 mod backdrop;
 mod bar;
-mod config;
 mod covers;
 mod home;
 mod icons;
 mod library;
+mod licenses;
 mod media;
-mod offline;
 mod playback;
 mod playlists;
 mod pointer;
@@ -25,7 +24,6 @@ mod search;
 mod settings;
 mod skeleton;
 mod smooth;
-mod spotify_keys;
 mod theme;
 mod tools;
 mod tray;
@@ -46,7 +44,7 @@ use surco_core::{PlayerState, Playlist, RepeatMode};
 use surco_player::{Command, PlayerHandle, Source, Status};
 use surco_provider::{AudioCache, HttpClient, Provider, YtDlp, AUDIO_CACHE_LIMIT};
 use surco_resolver::{Match, Resolver};
-use surco_spotify::{Credentials, Importer};
+use surco_spotify::Importer;
 use surco_storage::Store;
 
 use playback::{Active, CoverJobs, TrackRes};
@@ -96,8 +94,8 @@ fn main() -> anyhow::Result<()> {
         .run()?;
 
     // La precarga dura lo que dura la sesión: al cerrar se borra todo menos
-    // las playlists descargadas (al abrir se vuelve a limpiar, por si Surco
-    // se cerró de golpe).
+    // la canción para retomar (al abrir se vuelve a limpiar, por si Surco se
+    // cerró de golpe).
     if let Some(cache) = AUDIO_CACHE.lock().ok().and_then(|c| c.clone()) {
         cache.clear();
         tracing::info!("precarga de la sesión borrada");
@@ -212,9 +210,6 @@ struct Surco {
     seeking: Option<f32>,
     fatal: Option<String>,
     deno: DenoState,
-    spotify_creds: Option<Credentials>,
-    spotify_source: spotify_keys::KeySource,
-    keys_form: spotify_keys::KeysForm,
     http: HttpClient,
     /// Playlists importadas en esta sesión (se guardan en disco en la Fase 6),
     /// con la estrategia que funcionó.
@@ -262,8 +257,6 @@ struct Surco {
     precache: PrecacheState,
     /// Hay que revisar qué precargar (cambió la cola, una resolución o un ajuste).
     precache_dirty: bool,
-    /// IDs de las playlists descargadas (ver `offline`).
-    offline: std::collections::HashSet<String>,
     radio_loading: bool,
     cover_jobs: CoverJobs,
     /// Pidiendo parecidas para la cola sin fin.
@@ -287,8 +280,6 @@ struct Surco {
     /// El selector de video se abrió desde la barra de abajo: flota sobre
     /// el botón en vez de ir arriba de la lista.
     chooser_popup: bool,
-    /// Menú de la flechita de una playlist descargada (borrar descargas).
-    download_menu: Option<usize>,
     /// Último clic (y tamaño de la ventana), para abrir menús al lado.
     pointer: (iced::Point, iced::Size),
     /// Dónde se abrió el menú que está abierto.
@@ -301,8 +292,6 @@ struct Surco {
     renaming: Option<(usize, String)>,
     /// Recomendadas por playlist (ID).
     recs: HashMap<String, playlists::Recs>,
-    /// Descargado por playlist (ID).
-    downloads: playlists::Downloads,
     /// Búsqueda de fondo de las canciones de la playlist abierta (portadas).
     background: playback::Background,
     /// Se pidió una radio con el botón y todavía no llegó.
@@ -450,8 +439,6 @@ enum Message {
     SongMenuPick(playlists::AddTarget),
     /// Menú de clic derecho de una playlist de la barra lateral.
     PlaylistMenu(Option<usize>),
-    /// Menú de la flechita de una playlist descargada.
-    DownloadMenu(Option<usize>),
     /// Clic en (posición, tamaño de la ventana).
     Pointer(iced::Point, iced::Size),
     VolumeUi(bar::VolumeMsg),
@@ -461,14 +448,11 @@ enum Message {
     RecsRefresh(usize),
     RecAdd(usize, usize),
     RecPlay(usize, usize),
-    /// Dejar de descargar una playlist y borrar su audio.
-    DeleteDownloads(usize),
-    /// Flechita: descargar la playlist.
-    StartOffline(usize),
+    /// Botón "Licencias" de Ajustes.
+    OpenLicenses,
     /// Paso del latido de los esqueletos de carga.
     Tick,
     Search(search::SearchMsg),
-    Keys(spotify_keys::KeysMsg),
     OpenFilter,
     FilterChanged(String),
     CloseFilter,
@@ -540,9 +524,6 @@ impl Surco {
             seeking: None,
             fatal,
             deno: DenoState::Ok,
-            spotify_creds: None,
-            spotify_source: spotify_keys::KeySource::None,
-            keys_form: spotify_keys::KeysForm::default(),
             http: surco_provider::stream_client(),
             playlists: Vec::new(),
             selected: None,
@@ -570,7 +551,6 @@ impl Surco {
             provider,
             precache: PrecacheState::default(),
             precache_dirty: false,
-            offline: Default::default(),
             radio_loading: false,
             cover_jobs: CoverJobs::default(),
             extending: false,
@@ -584,14 +564,12 @@ impl Surco {
             confirm_remove: None,
             tools_popup: false,
             chooser_popup: false,
-            download_menu: None,
             pointer: Default::default(),
             menu_at: Default::default(),
             repaint: 0,
             volume_ui: bar::VolumeUi::default(),
             renaming: None,
             recs: HashMap::new(),
-            downloads: playlists::Downloads::new(),
             background: playback::Background::default(),
             radio_waiting: false,
             pulse: 0,
@@ -604,8 +582,7 @@ impl Surco {
         state.restore();
         state.load_settings();
         state.maybe_welcome();
-        state.load_spotify_keys();
-        state.refresh_downloads();
+        state.forget_spotify_keys();
         let resume = state.restore_resume();
         state.drop_temporary_audio();
         state.check_js_runtime();
@@ -755,7 +732,6 @@ impl Surco {
             Message::RemovePlaylist(i) => {
                 self.playlist_menu = None;
                 self.confirm_remove = None;
-                self.forget_offline(i);
                 self.remove_playlist(i);
             }
             Message::FocusImport | Message::OpenImport => {
@@ -787,7 +763,6 @@ impl Surco {
                 }
                 self.screen = Screen::Settings;
                 self.filter = None;
-                self.refresh_downloads();
             }
             Message::Setting(change) => return self.change_setting(change),
             Message::ClearAudioCache => self.clear_audio_cache(),
@@ -864,17 +839,10 @@ impl Surco {
                 self.menu_at = self.pointer;
                 self.song_menu = menu.map(|m| *m);
             }
-            Message::DownloadMenu(menu) => {
-                self.menu_at = self.pointer;
-                self.download_menu = menu;
-            }
             Message::VolumeUi(msg) => return self.on_volume_ui(msg),
             Message::PlaylistMenu(menu) => {
                 self.menu_at = self.pointer;
                 self.playlist_menu = menu;
-                if menu.is_some() {
-                    self.refresh_downloads();
-                }
             }
             Message::RenameFromMenu(i) => {
                 self.playlist_menu = None;
@@ -887,12 +855,7 @@ impl Surco {
             Message::RecsRefresh(p) => return self.load_recs(p, true),
             Message::RecAdd(p, i) => self.add_rec(p, i),
             Message::RecPlay(p, i) => return self.play_rec(p, i),
-            Message::DeleteDownloads(p) => {
-                self.playlist_menu = None;
-                self.download_menu = None;
-                self.stop_offline(p);
-            }
-            Message::StartOffline(p) => self.start_offline(p),
+            Message::OpenLicenses => licenses::open(),
             Message::Tick => self.pulse = self.pulse.wrapping_add(1),
             Message::ListScrolled(offset, height) => {
                 let before = view::visible_rows(self.list_view, usize::MAX);
@@ -903,7 +866,6 @@ impl Surco {
                 }
             }
             Message::Search(msg) => return self.on_search(msg),
-            Message::Keys(msg) => self.on_keys(msg),
             Message::OpenFilter => {
                 if self.selected.is_some() {
                     self.filter.get_or_insert_with(String::new);
@@ -917,7 +879,6 @@ impl Surco {
                 self.renaming = None;
                 self.song_menu = None;
                 self.playlist_menu = None;
-                self.download_menu = None;
             }
             Message::WindowHandle(hwnd) => {
                 if self.media.is_none() && std::env::var_os("SURCO_NO_MEDIA_KEYS").is_none() {
@@ -1019,7 +980,6 @@ impl Surco {
 
     /// Se abrió una playlist: portadas, búsqueda de fondo y recomendadas.
     fn on_playlist_opened(&mut self) -> Task<Message> {
-        self.refresh_downloads();
         let covers = self.queue_list_covers();
         let background = self.resolve_in_background();
         let recs = self.maybe_load_recs();
@@ -1085,7 +1045,6 @@ impl Surco {
         }
         self.importing = true;
         self.notice = None;
-        let creds = self.spotify_creds.clone();
         let client = self.http.clone();
         let job = rt.spawn(async move {
             let result = match csv {
@@ -1094,7 +1053,7 @@ impl Surco {
                         .await
                         .map_err(|e| e.to_string())?
                 }
-                None => Importer::standard(client, creds).import_link(&input).await,
+                None => Importer::standard(client).import_link(&input).await,
             };
             result.map_err(|e| e.to_string())
         });
@@ -1172,8 +1131,7 @@ impl Surco {
             || self.playlist_menu.is_some()
             || self.confirm_remove.is_some()
             || self.tools_popup
-            || self.chooser_popup
-            || self.download_menu.is_some();
+            || self.chooser_popup;
         (self.screen, self.selected, dialog)
     }
 
