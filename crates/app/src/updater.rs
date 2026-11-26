@@ -40,6 +40,18 @@ pub enum UpdateMsg {
     OpenPage,
     /// Copiar el comando de instalación (Linux sin pkexec).
     CopyCommand,
+    /// "Buscar actualizaciones" en Acerca de.
+    CheckNow,
+}
+
+/// Estado de la búsqueda pedida a mano desde Acerca de.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ManualCheck {
+    Idle,
+    Checking,
+    UpToDate,
+    Found,
+    Failed,
 }
 
 /// Consulta, al rato de abrir, si hay una versión nueva.
@@ -62,14 +74,29 @@ pub fn check() -> Task<Message> {
 impl Surco {
     pub(crate) fn on_update(&mut self, msg: UpdateMsg) -> Task<Message> {
         match msg {
+            UpdateMsg::CheckNow => {
+                self.update_check = ManualCheck::Checking;
+                return check();
+            }
             UpdateMsg::Checked(Ok(Some(r))) => {
                 tracing::info!(version = %r.version, "hay una versión nueva");
                 self.update = Update::Available(r);
+                if self.update_check == ManualCheck::Checking {
+                    self.update_check = ManualCheck::Found;
+                }
             }
-            UpdateMsg::Checked(Ok(None)) => tracing::debug!("Surco está al día"),
+            UpdateMsg::Checked(Ok(None)) => {
+                tracing::debug!("Surco está al día");
+                if self.update_check == ManualCheck::Checking {
+                    self.update_check = ManualCheck::UpToDate;
+                }
+            }
             // Sin internet o GitHub no responde: no molestar.
             UpdateMsg::Checked(Err(e)) => {
-                tracing::info!(error = %e, "no se pudo buscar actualizaciones")
+                tracing::info!(error = %e, "no se pudo buscar actualizaciones");
+                if self.update_check == ManualCheck::Checking {
+                    self.update_check = ManualCheck::Failed;
+                }
             }
             UpdateMsg::Dismiss => self.update = Update::None,
             UpdateMsg::OpenPage => {

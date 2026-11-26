@@ -3,7 +3,7 @@
 
 use iced::widget::{
     button, column, container, image, mouse_area, row, scrollable, stack, text, text_input,
-    toggler, tooltip, Column, Id, Space,
+    tooltip, Column, Id, Space,
 };
 use iced::{mouse, Alignment, Color, Element, Length};
 use surco_core::{format_duration, Playlist, Track};
@@ -369,59 +369,264 @@ impl Surco {
             .into()
     }
 
-    /// Pantalla "Importar": pegar un link o elegir un CSV.
+    /// Pantalla "Importar": pegar un link o elegir un CSV, con una tarjeta
+    /// por origen, las últimas importadas y una guía rápida.
     pub(crate) fn view_import(&self) -> Element<'_, Message> {
+        let c = theme::colors();
+        let hint = |t: &'static str| text(t).size(theme::SIZE_S).style(theme::secondary_text);
+        let header = column![
+            text(tr!("Importar tus playlists", "Import your playlists")).size(theme::SIZE_L + 6),
+            hint(tr!(
+                "Traé tus playlists de Spotify, YouTube o YouTube Music pegando el link, o subiendo un archivo.",
+                "Bring your playlists from Spotify, YouTube or YouTube Music by pasting the link, or from a file."
+            )),
+            container(
+                row![
+                    hint(tr!("O presioná", "Or press")),
+                    container(text("Ctrl+L").size(12).font(iced::Font::MONOSPACE))
+                        .padding([1, 6])
+                        .style(theme::chip),
+                    hint(tr!("desde cualquier lugar", "from anywhere")),
+                ]
+                .spacing(6)
+                .align_y(Alignment::Center),
+            )
+            .padding([4, 8])
+            .style(theme::inset),
+        ]
+        .spacing(8);
+
         let input = text_input(
-            tr!("Pegá el link de la playlist", "Paste the playlist link"),
+            tr!(
+                "Pegá el link de la playlist de Spotify, YouTube, etc.",
+                "Paste the Spotify, YouTube… playlist link"
+            ),
             &self.import_input,
         )
         .id(Id::new(IMPORT_INPUT))
         .on_input(Message::ImportInputChanged)
         .on_submit(Message::Import)
-        .padding(10)
+        .padding(12)
         .size(theme::SIZE_M)
         .style(theme::input);
-        let import = button(text(tr!("Importar", "Import")).size(theme::SIZE_S))
-            .on_press_maybe((!self.importing).then_some(Message::Import))
-            .padding([10, 16])
-            .style(theme::primary_button);
-        let pick_csv = button(text(tr!("Elegir CSV…", "Choose CSV…")).size(theme::SIZE_S))
-            .on_press_maybe((!self.importing).then_some(Message::PickCsv))
-            .padding([6, 12])
-            .style(theme::ghost_button);
-        let hint = |t: &'static str| text(t).size(theme::SIZE_S).style(theme::secondary_text);
-        let mut col = column![
-            column![
-                text(tr!("Importar", "Import")).size(theme::SIZE_L),
-                hint(tr!("Traé tus playlists de Spotify, YouTube o YouTube Music pegando el link (Ctrl+L).", "Bring your playlists from Spotify, YouTube or YouTube Music by pasting the link (Ctrl+L).")),
+        let import = button(
+            row![
+                icons::icon(Kind::Import, c.on_accent, 16.0),
+                text(tr!("Importar playlist", "Import playlist")).size(theme::SIZE_S),
             ]
-            .spacing(4),
-            row![input, import].spacing(8).align_y(Alignment::Center),
-            column![
-                hint(tr!("• Spotify: Compartir > Copiar enlace a la playlist.", "• Spotify: Share > Copy link to playlist.")),
-                hint(tr!("• YouTube y YouTube Music: el link de la playlist, o un video que esté dentro de una.", "• YouTube and YouTube Music: the playlist link, or a video that's inside one.")),
-                hint(tr!("• Un archivo CSV, por ejemplo exportado desde exportify.net.", "• A CSV file, for example exported from exportify.net.")),
-            ]
-            .spacing(4),
-            pick_csv,
-        ]
-        .spacing(16)
-        .max_width(760);
+            .spacing(8)
+            .align_y(Alignment::Center),
+        )
+        .on_press_maybe((!self.importing).then_some(Message::Import))
+        .padding([12, 18])
+        .style(theme::primary_button);
+        let mut field =
+            column![row![input, import].spacing(12).align_y(Alignment::Center)].spacing(12);
         if let Some(n) = self.notice.as_ref().filter(|n| n.error) {
-            col = col.push(text(&n.text).size(theme::SIZE_S).style(theme::error_text));
+            field = field.push(text(&n.text).size(theme::SIZE_S).style(theme::error_text));
         }
         if self.importing {
-            col = col.push(
+            field = field.push(
                 column![
-                    text(tr!("Importando…", "Importing…"))
-                        .size(theme::SIZE_S)
-                        .style(theme::secondary_text),
-                    skeleton::song_rows(6, self.pulse),
+                    hint(tr!("Importando…", "Importing…")),
+                    skeleton::song_rows(4, self.pulse),
                 ]
                 .spacing(10),
             );
         }
-        col.into()
+        let field = container(field)
+            .padding(20)
+            .width(Length::Fill)
+            .style(theme::card);
+
+        // Una tarjeta por origen.
+        let source = |kind: Kind,
+                      title: &'static str,
+                      sub: &'static str,
+                      tip: &'static str,
+                      action: Element<'static, Message>| {
+            container(
+                column![
+                    container(icons::icon(kind, c.accent, 22.0))
+                        .padding(8)
+                        .style(theme::chip),
+                    column![text(title).size(theme::SIZE_M + 1), hint(sub)].spacing(2),
+                    container(Space::new())
+                        .width(Length::Fill)
+                        .height(1)
+                        .style(theme::rule(c.border)),
+                    row![hint(tip).width(Length::Fill), action]
+                        .spacing(10)
+                        .align_y(Alignment::Center),
+                ]
+                .spacing(12),
+            )
+            .padding(18)
+            .width(Length::Fill)
+            .style(theme::card)
+        };
+        let small = |label: &'static str, msg: Option<Message>| -> Element<'static, Message> {
+            button(text(label).size(theme::SIZE_S))
+                .on_press_maybe(msg)
+                .padding([6, 12])
+                .style(theme::ghost_button)
+                .into()
+        };
+        let busy = self.importing;
+        let cards = row![
+            source(
+                Kind::Queue,
+                "Spotify",
+                tr!(
+                    "Compartir > Copiar enlace a la playlist",
+                    "Share > Copy link to playlist"
+                ),
+                tr!(
+                    "Playlists públicas, sin cuenta ni claves.",
+                    "Public playlists, no account or keys."
+                ),
+                small(
+                    tr!("Pegar enlace", "Paste link"),
+                    (!busy).then_some(Message::ImportPaste)
+                ),
+            ),
+            source(
+                Kind::Play,
+                "YouTube / YouTube Music",
+                tr!(
+                    "Enlace de la playlist o de un video de la lista",
+                    "Playlist link, or a video in the list"
+                ),
+                tr!("También mixes y álbumes.", "Mixes and albums too."),
+                small(
+                    tr!("Pegar enlace", "Paste link"),
+                    (!busy).then_some(Message::ImportPaste)
+                ),
+            ),
+            source(
+                Kind::Import,
+                tr!("Archivo CSV", "CSV file"),
+                tr!(
+                    "Exportado desde exportify.net, TuneMyMusic, etc.",
+                    "Exported from exportify.net, TuneMyMusic, etc."
+                ),
+                tr!(
+                    "Con columnas de título y artista.",
+                    "With title and artist columns."
+                ),
+                small(
+                    tr!("Elegir archivo…", "Choose file…"),
+                    (!busy).then_some(Message::PickCsv)
+                ),
+            ),
+        ]
+        .spacing(16);
+
+        // Últimas importadas (las más nuevas primero).
+        let imported: Vec<usize> = (0..self.playlists.len())
+            .rev()
+            .filter(|&i| {
+                let src = self.playlists[i].1.as_str();
+                src != OWN_SOURCE && src != "radio"
+            })
+            .take(4)
+            .collect();
+        let history: Element<'_, Message> = if imported.is_empty() {
+            hint(tr!(
+                "Todavía no importaste ninguna playlist.",
+                "You haven't imported any playlist yet."
+            ))
+            .into()
+        } else {
+            Column::with_children(imported.into_iter().map(|i| {
+                let (p, src) = &self.playlists[i];
+                button(
+                    row![
+                        crate::home::cover(self, self.playlist_cover(i), 40.0),
+                        column![
+                            text(&p.name)
+                                .size(theme::SIZE_M)
+                                .wrapping(text::Wrapping::None),
+                            text(format!("{} · {}", source_name(src), songs(p.tracks.len())))
+                                .size(theme::SIZE_S)
+                                .style(theme::secondary_text),
+                        ]
+                        .spacing(2)
+                        .width(Length::Fill)
+                        .clip(true),
+                        container(
+                            text(tr!("✓ Importada", "✓ Imported"))
+                                .size(12)
+                                .style(theme::accent_text),
+                        )
+                        .padding([3, 10])
+                        .style(theme::chip),
+                    ]
+                    .spacing(12)
+                    .align_y(Alignment::Center),
+                )
+                .on_press(Message::SelectPlaylist(Some(i)))
+                .padding([6, 8])
+                .width(Length::Fill)
+                .style(theme::song_row(false))
+                .into()
+            }))
+            .spacing(4)
+            .into()
+        };
+        let step = |n: &'static str, label: &'static str| {
+            row![
+                container(text(n).size(12).color(c.on_accent))
+                    .center(22)
+                    .style(theme::badge_round),
+                text(label).size(theme::SIZE_S),
+            ]
+            .spacing(10)
+            .align_y(Alignment::Center)
+        };
+        let bottom = row![
+            container(
+                column![
+                    text(tr!("Últimas importaciones", "Recent imports")).size(theme::SIZE_M + 1),
+                    history
+                ]
+                .spacing(12)
+            )
+            .padding(18)
+            .width(Length::FillPortion(2))
+            .style(theme::card),
+            container(
+                column![
+                    text(tr!("Guía rápida", "Quick guide")).size(theme::SIZE_M + 1),
+                    step(
+                        "1",
+                        tr!("Copiá el enlace de tu app", "Copy the link from your app")
+                    ),
+                    step("2", tr!("Pegalo acá arriba", "Paste it up here")),
+                    step(
+                        "3",
+                        tr!(
+                            "¡Listo! Surco busca cada canción en YouTube",
+                            "Done! Surco finds each song on YouTube"
+                        )
+                    ),
+                ]
+                .spacing(14)
+            )
+            .padding(18)
+            .width(Length::FillPortion(1))
+            .style(theme::card),
+        ]
+        .spacing(16);
+
+        crate::smooth::smooth(
+            scrollable(
+                column![header, field, cards, bottom]
+                    .spacing(22)
+                    .padding(iced::Padding::ZERO.right(16)),
+            )
+            .height(Length::Fill),
+        )
     }
 
     pub(crate) fn view_playlist<'a>(
@@ -744,179 +949,6 @@ impl Surco {
         .into()
     }
 
-    /// Pantalla de ajustes: idioma, tema, portadas, precarga y radio automática.
-    pub(crate) fn view_settings(&self) -> Element<'_, Message> {
-        let section = |title: &'static str, hint: &'static str| {
-            column![
-                text(title).size(theme::SIZE_M),
-                text(hint).size(theme::SIZE_S).style(theme::secondary_text),
-            ]
-            .spacing(2)
-        };
-
-        let languages = self.languages_row();
-        let themes = self.theme_cards(true);
-        let custom = (self.settings.theme == theme::CUSTOM).then(|| self.view_custom_theme());
-
-        let precache = self.precache_row();
-        let usage = self
-            .provider
-            .as_ref()
-            .and_then(|p| p.audio_cache())
-            .map(|c| c.usage())
-            .unwrap_or_default();
-        let cache_row = row![
-            text(if i18n::en() {
-                format!(
-                    "On disk: {}, {}",
-                    songs(usage.files),
-                    format_bytes(usage.bytes)
-                )
-            } else {
-                format!(
-                    "En disco: {}, {}",
-                    songs(usage.files),
-                    format_bytes(usage.bytes)
-                )
-            })
-            .size(theme::SIZE_S)
-            .style(theme::secondary_text),
-            button(text(tr!("Vaciar", "Clear")).size(theme::SIZE_S))
-                .on_press_maybe((usage.files > 0).then_some(Message::ClearAudioCache))
-                .padding([4, 10])
-                .style(theme::ghost_button),
-        ]
-        .spacing(12)
-        .align_y(Alignment::Center);
-        let switch = |label: &'static str, on: bool, f: fn(bool) -> Change| {
-            toggler(on)
-                .label(label)
-                .on_toggle(move |v| Message::Setting(f(v)))
-                .size(20)
-                .text_size(theme::SIZE_S)
-                .spacing(10)
-                .style(theme::switch)
-        };
-
-        let scale = self.scale_row();
-
-        let body = column![
-            text(tr!("Ajustes", "Settings")).size(theme::SIZE_L),
-            column![
-                section(
-                    tr!("Idioma", "Language"),
-                    tr!(
-                        "Por defecto, el del sistema.",
-                        "Defaults to your system language."
-                    )
-                ),
-                languages,
-            ]
-            .spacing(10),
-            column![
-                section(
-                    tr!("Tamaño de la interfaz", "Interface size"),
-                    tr!(
-                        "También con Ctrl + y Ctrl − (Ctrl 0 vuelve al normal).",
-                        "Also with Ctrl + and Ctrl − (Ctrl 0 resets it)."
-                    )
-                ),
-                scale,
-            ]
-            .spacing(10),
-            column![
-                section(
-                    tr!("Tema", "Theme"),
-                    tr!("Cómo se ve Surco.", "How Surco looks.")
-                ),
-                themes,
-            ]
-            .push(custom)
-            .spacing(10),
-            self.view_equalizer(),
-            column![
-                section(
-                    tr!("Portadas en la lista", "Covers in the list"),
-                    tr!(
-                        "Muestra la portada al lado de cada canción ya encontrada en YouTube.",
-                        "Shows the cover next to each song already found on YouTube."
-                    )
-                ),
-                switch(
-                    tr!("Mostrar portadas", "Show covers"),
-                    self.settings.covers_in_list,
-                    Change::CoversInList
-                ),
-            ]
-            .spacing(10),
-            column![
-                section(
-                    tr!("Precargar canciones", "Preload songs"),
-                    tr!(
-                        "Baja el audio antes de que suene, así no hay que esperar a que cargue. La siguiente siempre se prepara en memoria para que no haya cortes.",
-                        "Downloads the audio before it plays, so you don't wait for it to load. The next song is always prepared in memory so there are no gaps."
-                    )
-                ),
-                precache,
-                cache_row,
-            ]
-            .spacing(10),
-            column![
-                section(
-                    tr!("Canciones parecidas", "Similar songs"),
-                    tr!(
-                        "Con el botón de radio de la barra de abajo armás una lista de canciones parecidas a la que suena.",
-                        "The radio button in the bottom bar builds a list of songs similar to the one playing."
-                    )
-                ),
-                switch(
-                    tr!(
-                        "Al terminar, seguir con canciones parecidas",
-                        "When the queue ends, keep playing similar songs"
-                    ),
-                    self.settings.autoplay,
-                    Change::Autoplay
-                ),
-            ]
-            .spacing(10),
-            text(match &self.ytdlp {
-                crate::YtDlpState::Found(p) => format!("yt-dlp: {}", p.display()),
-                _ => tr!("yt-dlp: no encontrado", "yt-dlp: not found").to_owned(),
-            })
-            .size(theme::SIZE_S)
-            .style(theme::secondary_text),
-            column![
-                section(
-                    tr!("Acerca de", "About"),
-                    tr!(
-                        "Surco no está afiliado a YouTube, Google ni Spotify. Sus marcas son de sus dueños.",
-                        "Surco isn't affiliated with YouTube, Google or Spotify. Their trademarks belong to their owners."
-                    )
-                ),
-                row![
-                    text(trf!(
-                        "Surco {} · © 2026 mathiux · Licencia MIT",
-                        "Surco {} · © 2026 mathiux · MIT License",
-                        env!("CARGO_PKG_VERSION")
-                    ))
-                    .size(theme::SIZE_S)
-                    .style(theme::secondary_text),
-                    button(text(tr!("Licencias", "Licenses")).size(theme::SIZE_S))
-                        .on_press(Message::OpenLicenses)
-                        .padding([4, 10])
-                        .style(theme::ghost_button),
-                ]
-                .spacing(12)
-                .align_y(Alignment::Center),
-            ]
-            .spacing(10),
-        ]
-        .spacing(28)
-        .max_width(760)
-        .padding(iced::Padding::ZERO.right(16));
-        crate::smooth::smooth(scrollable(body).height(Length::Fill))
-    }
-
     /// Botones de idioma (ajustes y bienvenida).
     pub(crate) fn languages_row(&self) -> Element<'_, Message> {
         row(Lang::ALL.iter().map(|&l| {
@@ -927,86 +959,6 @@ impl Surco {
                 .into()
         }))
         .spacing(8)
-        .into()
-    }
-
-    /// Ecualizador de 10 bandas: prendido/apagado, ajustes de fábrica y un
-    /// slider vertical por banda.
-    fn view_equalizer(&self) -> Element<'_, Message> {
-        use surco_player::eq::{Preset, BANDS, MAX_GAIN};
-        let e = self.settings.equalizer;
-        let matching = Preset::matching(&e.gains);
-        let presets = row(Preset::ALL.iter().map(|&p| {
-            button(text(preset_name(p)).size(theme::SIZE_S))
-                .on_press(Message::Setting(Change::EqPreset(p)))
-                .padding([6, 10])
-                .style(theme::choice_button(matching == Some(p)))
-                .into()
-        }))
-        .push((matching.is_none()).then(|| {
-            button(text(tr!("Personalizado", "Custom")).size(theme::SIZE_S))
-                .padding([6, 10])
-                .style(theme::choice_button(true))
-        }))
-        .spacing(8)
-        .wrap();
-        let label = |hz: f32| {
-            if hz >= 1000.0 {
-                format!("{}k", hz / 1000.0)
-            } else {
-                format!("{hz}")
-            }
-        };
-        let bands = row(BANDS.iter().zip(e.gains).enumerate().map(|(i, (&hz, g))| {
-            column![
-                text(if g == 0.0 {
-                    "0".to_owned()
-                } else {
-                    format!("{g:+}")
-                })
-                .size(11)
-                .style(theme::secondary_text),
-                iced::widget::vertical_slider(-MAX_GAIN..=MAX_GAIN, g, move |v| {
-                    Message::Setting(Change::EqBand(i, v))
-                })
-                .step(0.5)
-                .height(120)
-                .on_release(Message::Setting(Change::EqSave))
-                .style(theme::seek_slider),
-                text(label(hz)).size(11).style(if e.enabled {
-                    theme::plain_text
-                } else {
-                    theme::secondary_text
-                }),
-            ]
-            .spacing(6)
-            .width(40)
-            .align_x(Alignment::Center)
-            .into()
-        }))
-        .spacing(4);
-        column![
-            column![
-                text(tr!("Ecualizador", "Equalizer")).size(theme::SIZE_M),
-                text(tr!(
-                    "Subí o bajá graves, medios y agudos. Se oye al instante.",
-                    "Boost or cut bass, mids and treble. You hear it right away."
-                ))
-                .size(theme::SIZE_S)
-                .style(theme::secondary_text),
-            ]
-            .spacing(2),
-            toggler(e.enabled)
-                .label(tr!("Activado", "On"))
-                .on_toggle(|v| Message::Setting(Change::EqEnabled(v)))
-                .size(20)
-                .text_size(theme::SIZE_S)
-                .spacing(10)
-                .style(theme::switch),
-            presets,
-            bands,
-        ]
-        .spacing(10)
         .into()
     }
 
@@ -1058,7 +1010,7 @@ impl Surco {
 
     /// Tema personalizado: el fondo y el acento, con un campo `#RRGGBB` y
     /// unas muestras para elegir rápido.
-    fn view_custom_theme(&self) -> Element<'_, Message> {
+    pub(crate) fn view_custom_theme(&self) -> Element<'_, Message> {
         const BACKGROUNDS: [u32; 9] = [
             0x0E0E10, 0x14161C, 0x1B2030, 0x201A28, 0x10201A, 0x2A1C16, 0xF7F4EE, 0xEEF2F7,
             0xFFFFFF,
@@ -1337,18 +1289,17 @@ fn fold(s: &str) -> String {
         .collect()
 }
 
-/// Nombre de un ajuste de fábrica del ecualizador.
-fn preset_name(p: surco_player::eq::Preset) -> &'static str {
-    use surco_player::eq::Preset;
-    match p {
-        Preset::Flat => tr!("Plano", "Flat"),
-        Preset::Bass => tr!("Graves", "Bass"),
-        Preset::Treble => tr!("Agudos", "Treble"),
-        Preset::Vocal => tr!("Voces", "Vocal"),
-        Preset::Rock => tr!("Rock", "Rock"),
-        Preset::Pop => tr!("Pop", "Pop"),
-        Preset::Electronic => tr!("Electrónica", "Electronic"),
-        Preset::Acoustic => tr!("Acústica", "Acoustic"),
+/// Nombre corto del origen de una playlist importada.
+fn source_name(src: &str) -> &str {
+    let lower = src.to_lowercase();
+    if lower.contains("spotify") {
+        "Spotify"
+    } else if lower.contains("youtube") {
+        "YouTube"
+    } else if lower.contains("csv") {
+        "CSV"
+    } else {
+        src
     }
 }
 

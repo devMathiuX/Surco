@@ -6,7 +6,10 @@
 //! cualquier lado (evento global) la mueve (`DragEnd`). Apretar y soltar
 //! sobre la misma fila es un clic: salta a esa canción.
 
-use iced::widget::{button, column, container, mouse_area, row, scrollable, text, Column, Space};
+use iced::widget::{
+    button, column, container, mouse_area, responsive, row, scrollable, text, text_input, Column,
+    Space,
+};
 use iced::{mouse, Alignment, Element, Length, Task};
 use surco_core::{format_duration, Track};
 
@@ -60,6 +63,34 @@ impl Surco {
         self.update_preload();
     }
 
+    /// Saca todo lo que viene después de la que suena.
+    pub(crate) fn queue_clear(&mut self) {
+        if let Some(a) = &mut self.active {
+            let pos = a.queue.pos();
+            while a.queue.order().len() > pos + 1 {
+                if a.queue.remove_at(pos + 1).is_none() {
+                    break;
+                }
+            }
+        }
+        self.update_preload();
+    }
+
+    /// Guarda la cola (de la que suena en adelante) como playlist propia.
+    pub(crate) fn queue_save(&mut self) -> Task<Message> {
+        let Some(a) = &self.active else {
+            return Task::none();
+        };
+        let tracks: Vec<Track> = a.queue.order()[a.queue.pos().min(a.queue.order().len())..]
+            .iter()
+            .filter_map(|&i| a.tracks.get(i).cloned())
+            .collect();
+        if tracks.is_empty() {
+            return Task::none();
+        }
+        self.new_playlist_with(tracks)
+    }
+
     pub(crate) fn queue_jump(&mut self, pos: usize) -> Task<Message> {
         let Some(a) = &mut self.active else {
             return Task::none();
@@ -100,7 +131,7 @@ impl Surco {
     pub(crate) fn view_queue(&self) -> Element<'_, Message> {
         let Some(a) = &self.active else {
             return column![
-                text(tr!("Cola", "Queue")).size(theme::SIZE_L),
+                text(tr!("Cola de reproducción", "Play queue")).size(theme::SIZE_L + 6),
                 text(tr!("No hay nada sonando. Elegí una canción de una playlist o del buscador; con el + de cada canción la agregás a la cola.", "Nothing is playing. Pick a song from a playlist or from search; the + on each song adds it to the queue."))
                     .size(theme::SIZE_S)
                     .style(theme::secondary_text),
@@ -118,20 +149,182 @@ impl Surco {
             .map(|t| t.duration_ms)
             .sum();
 
-        let mut list = Column::new().spacing(theme::row_gap());
-        for (p, &i) in order.iter().enumerate().skip(pos) {
-            let Some(t) = a.tracks.get(i) else { continue };
-            if p == pos + 1 {
-                list = list.push(
-                    container(
-                        text(tr!("A continuación", "Up next"))
-                            .size(theme::SIZE_S)
-                            .style(theme::secondary_text),
-                    )
-                    .padding([10, 8]),
-                );
+        let mut info = trf!(
+            "{upcoming} por sonar · {}",
+            "{upcoming} up next · {}",
+            format_duration(total_ms)
+        );
+        if played > 0 {
+            info.push_str(&trf!(
+                " · {played} ya sonaron",
+                " · {played} already played"
+            ));
+        }
+        let c = theme::colors();
+        let action = |kind: Kind, label: &'static str, msg: Option<Message>, on: bool| {
+            button(
+                row![
+                    icons::icon(kind, c.text_secondary, 14.0),
+                    text(label).size(theme::SIZE_S)
+                ]
+                .spacing(8)
+                .align_y(Alignment::Center),
+            )
+            .on_press_maybe(msg)
+            .padding([7, 12])
+            .style(theme::pill(on))
+        };
+        let actions = row![
+            action(
+                Kind::Close,
+                tr!("Vaciar cola", "Clear queue"),
+                (upcoming > 0).then_some(Message::QueueClear),
+                false
+            ),
+            action(
+                Kind::Add,
+                tr!("Guardar como playlist", "Save as playlist"),
+                Some(Message::QueueSave),
+                false
+            ),
+            action(
+                Kind::Shuffle,
+                tr!("Mezclar", "Shuffle"),
+                Some(Message::ToggleShuffle),
+                a.queue.shuffle()
+            ),
+            container(
+                text_input(
+                    tr!("Buscar en la cola…", "Search the queue…"),
+                    &self.queue_filter
+                )
+                .on_input(Message::QueueFilter)
+                .padding(7)
+                .size(theme::SIZE_S)
+                .style(theme::input)
+            )
+            .width(200),
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center)
+        .wrap();
+        let header = row![
+            column![
+                text(tr!("Cola de reproducción", "Play queue")).size(theme::SIZE_L + 6),
+                text(info).size(theme::SIZE_S).style(theme::secondary_text),
+            ]
+            .spacing(4)
+            .width(Length::Shrink),
+            Space::new().width(Length::Fill),
+            actions,
+        ]
+        .spacing(16)
+        .align_y(Alignment::Center);
+        let tip = container(
+            row![
+                icons::glyph(Kind::Grip, c.text_secondary, 13.0),
+                text(tr!(
+                    "Arrastrá una canción para cambiarle el lugar. Clic para escucharla.",
+                    "Drag a song to move it. Click to play it."
+                ))
+                .size(theme::SIZE_S)
+                .style(theme::secondary_text),
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center),
+        )
+        .padding([5, 10])
+        .style(theme::inset);
+
+        // Las que ya sonaron, la última primero.
+        let history: Vec<usize> = (0..pos.min(order.len())).rev().take(30).collect();
+        let body = responsive(move |size| {
+            let main = self.queue_main();
+            if size.width < 900.0 {
+                return main;
             }
-            list = list.push(self.queue_row(p, p == pos, t));
+            let rows = history.iter().filter_map(|&p| {
+                let t = order.get(p).and_then(|&i| a.tracks.get(i))?;
+                Some(
+                    button(
+                        row![
+                            crate::home::cover(self, self.video_of_track(t), 36.0),
+                            column![
+                                text(&t.title)
+                                    .size(theme::SIZE_S + 1)
+                                    .wrapping(text::Wrapping::None),
+                                text(t.artists.join(", "))
+                                    .size(theme::SIZE_S)
+                                    .style(theme::secondary_text)
+                                    .wrapping(text::Wrapping::None),
+                            ]
+                            .spacing(2)
+                            .width(Length::Fill)
+                            .clip(true),
+                        ]
+                        .spacing(10)
+                        .align_y(Alignment::Center),
+                    )
+                    .on_press(Message::QueueJump(p))
+                    .padding([5, 8])
+                    .width(Length::Fill)
+                    .style(theme::song_row(false))
+                    .into(),
+                )
+            });
+            let panel = container(
+                column![
+                    text(tr!("Ya sonaron", "Already played")).size(theme::SIZE_M + 1),
+                    if history.is_empty() {
+                        Element::from(
+                            text(tr!("Todavía nada.", "Nothing yet."))
+                                .size(theme::SIZE_S)
+                                .style(theme::secondary_text),
+                        )
+                    } else {
+                        crate::smooth::smooth(scrollable(Column::with_children(rows).spacing(2)))
+                    },
+                ]
+                .spacing(12),
+            )
+            .padding(16)
+            .width(300)
+            .style(theme::card);
+            row![main, column![panel]].spacing(20).into()
+        });
+        column![header, tip, body].spacing(16).into()
+    }
+
+    /// Lo que suena y lo que sigue (filtrado por "Buscar en la cola").
+    fn queue_main(&self) -> Element<'_, Message> {
+        let Some(a) = &self.active else {
+            return Space::new().into();
+        };
+        let order = a.queue.order();
+        let pos = a.queue.pos();
+        let upcoming = order.len().saturating_sub(pos + 1);
+        let filter = crate::settings_view::fold(self.queue_filter.trim());
+        let keep = |t: &Track| {
+            filter.is_empty()
+                || crate::settings_view::fold(&t.title).contains(&filter)
+                || crate::settings_view::fold(&t.artists.join(" ")).contains(&filter)
+        };
+        let mut list = Column::new().spacing(6);
+        let mut shown = 0;
+        for (p, &i) in order.iter().enumerate().skip(pos + 1) {
+            let Some(t) = a.tracks.get(i) else { continue };
+            if !keep(t) {
+                continue;
+            }
+            list = list.push(self.queue_row(p, false, t));
+            shown += 1;
+        }
+        if shown == 0 && upcoming > 0 {
+            list = list.push(
+                text(tr!("Nada coincide con lo buscado.", "Nothing matches."))
+                    .size(theme::SIZE_S)
+                    .style(theme::secondary_text),
+            );
         }
         if self.extending {
             list = list.push(crate::skeleton::song_rows(3, self.pulse));
@@ -149,34 +342,69 @@ impl Surco {
             );
         }
 
-        let mut info = trf!(
-            "{upcoming} por sonar · {}",
-            "{upcoming} up next · {}",
-            format_duration(total_ms)
-        );
-        if played > 0 {
-            info.push_str(&trf!(
-                " · {played} ya sonaron",
-                " · {played} already played"
-            ));
-        }
-        column![
-            column![
-                text(tr!("Cola", "Queue")).size(theme::SIZE_L),
-                text(info).size(theme::SIZE_S).style(theme::secondary_text),
-                text(tr!(
-                    "Arrastrá una canción para cambiarle el lugar. Clic para escucharla.",
-                    "Drag a song to move it. Click to play it."
-                ))
-                .size(theme::SIZE_S)
-                .style(theme::secondary_text),
+        let now = order
+            .get(pos)
+            .and_then(|&i| a.tracks.get(i))
+            .map(|t| self.queue_now(t));
+        column![]
+            .push(now)
+            .push(
+                text(tr!("A continuación", "Up next"))
+                    .size(theme::SIZE_S)
+                    .style(theme::secondary_text),
+            )
+            .push(crate::smooth::smooth(
+                scrollable(list.padding(iced::Padding::ZERO.right(16))).height(Length::Fill),
+            ))
+            .spacing(12)
+            .into()
+    }
+
+    /// Tarjeta de lo que suena: portada grande, título y "Siguiente".
+    fn queue_now<'a>(&'a self, t: &'a Track) -> Element<'a, Message> {
+        let c = theme::colors();
+        container(
+            row![
+                crate::home::cover(self, self.video_of_track(t), 96.0),
+                column![
+                    text(tr!("Sonando ahora", "Now playing"))
+                        .size(theme::SIZE_S)
+                        .style(theme::secondary_text),
+                    text(&t.title)
+                        .size(theme::SIZE_L)
+                        .wrapping(text::Wrapping::None),
+                    text(t.artists.join(", "))
+                        .size(theme::SIZE_S)
+                        .style(theme::secondary_text)
+                        .wrapping(text::Wrapping::None),
+                    row![
+                        button(
+                            row![
+                                icons::icon(Kind::Next, c.text, 13.0),
+                                text(tr!("Siguiente", "Next")).size(theme::SIZE_S)
+                            ]
+                            .spacing(8)
+                            .align_y(Alignment::Center),
+                        )
+                        .on_press(Message::Skip(1))
+                        .padding([6, 12])
+                        .style(theme::pill(false)),
+                        crate::search::add_button(t, None),
+                    ]
+                    .spacing(10)
+                    .align_y(Alignment::Center),
+                ]
+                .spacing(4)
+                .width(Length::Fill)
+                .clip(true),
+                icons::waves(),
             ]
-            .spacing(4),
-            crate::smooth::smooth(
-                scrollable(list.padding(iced::Padding::ZERO.right(16))).height(Length::Fill)
-            ),
-        ]
-        .spacing(16)
+            .spacing(18)
+            .align_y(Alignment::Center),
+        )
+        .padding(16)
+        .width(Length::Fill)
+        .style(theme::highlight_card)
         .into()
     }
 

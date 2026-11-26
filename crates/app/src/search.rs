@@ -69,6 +69,40 @@ pub struct SearchState {
     pub suggestions: Option<(String, Vec<String>)>,
     /// Búsquedas recientes, la más nueva al final.
     pub recent: std::collections::VecDeque<(String, Results)>,
+    /// Qué mostrar de los resultados.
+    pub filter: Filter,
+}
+
+/// Filtro de los resultados.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Filter {
+    #[default]
+    All,
+    Artists,
+    Songs,
+    Playlists,
+}
+
+impl Filter {
+    const ALL: [Filter; 4] = [
+        Filter::All,
+        Filter::Artists,
+        Filter::Songs,
+        Filter::Playlists,
+    ];
+
+    fn label(self) -> &'static str {
+        match self {
+            Filter::All => tr!("Todo", "All"),
+            Filter::Artists => tr!("Artistas", "Artists"),
+            Filter::Songs => tr!("Canciones", "Songs"),
+            Filter::Playlists => "Playlists",
+        }
+    }
+
+    fn shows(self, other: Filter) -> bool {
+        self == Filter::All || self == other
+    }
 }
 
 impl SearchState {
@@ -114,6 +148,10 @@ pub enum SearchMsg {
     /// Reproducir la lista abierta desde la canción `i`.
     PlayPreview(usize),
     SavePreview,
+    /// Mostrar solo artistas, canciones o playlists.
+    Filter(Filter),
+    /// La X del buscador: borrar lo escrito.
+    Clear,
     /// Llegó una playlist importada desde un link de YouTube.
     Imported(Result<(String, String, Vec<SearchResult>), String>),
 }
@@ -381,6 +419,13 @@ impl Surco {
                 }
             }
             SearchMsg::ClosePreview => self.search.preview = None,
+            SearchMsg::Filter(f) => self.search.filter = f,
+            SearchMsg::Clear => {
+                self.search.query.clear();
+                self.search.suggestions = None;
+                self.search.preview = None;
+                return operation::focus(Id::new(SEARCH_INPUT));
+            }
             SearchMsg::PlayPreview(i) => {
                 if let Some(p) = &self.search.preview {
                     let tracks = p.tracks.clone();
@@ -590,6 +635,18 @@ impl Surco {
     }
 
     pub(crate) fn view_search(&self) -> Element<'_, Message> {
+        // La X va siempre (deshabilitada si no hay nada): si apareciera y
+        // desapareciera, iced perdería el foco del campo.
+        let clear = button(icons::glyph(
+            Kind::Close,
+            theme::colors().text_secondary,
+            16.0,
+        ))
+        .on_press_maybe(
+            (!self.search.query.is_empty()).then_some(Message::Search(SearchMsg::Clear)),
+        )
+        .padding([6, 10])
+        .style(theme::icon_button);
         let input = row![
             icons::icon(Kind::Search, theme::colors().text_secondary, 18.0),
             text_input(
@@ -602,9 +659,10 @@ impl Surco {
             .id(Id::new(SEARCH_INPUT))
             .on_input(|q| Message::Search(SearchMsg::Input(q)))
             .on_submit(Message::Search(SearchMsg::Submit))
-            .padding(10)
+            .padding(12)
             .size(theme::SIZE_M)
             .style(theme::input),
+            clear,
         ]
         .spacing(10)
         .align_y(Alignment::Center);
@@ -667,10 +725,14 @@ impl Surco {
         column![input, body].spacing(20).into()
     }
 
+    /// Fila de la tabla de canciones: número (u ondas si suena), portada,
+    /// título, artista, popularidad (si se sabe), +, duración y menú.
     fn song_row<'a>(
         &'a self,
+        i: usize,
         track: Track,
         video: Option<&'a str>,
+        popularity: Option<f32>,
         on_play: Message,
     ) -> Element<'a, Message> {
         let cover: Element<'_, Message> = match video.and_then(|v| self.covers.get(v)) {
@@ -689,34 +751,69 @@ impl Surco {
             video.is_some_and(|v| self.now_track().and_then(|t| self.video_of_track(t)) == Some(v));
         let add = add_button(&track, None);
         let menu = song_menu(&track, None);
-        let row = button(
+        let number: Element<'_, Message> = if playing {
+            icons::waves()
+        } else {
+            text((i + 1).to_string())
+                .size(theme::SIZE_S)
+                .style(theme::secondary_text)
+                .into()
+        };
+        let mut cells = row![
+            container(number).width(28).clip(true),
             row![
                 cover,
-                column![
-                    text(track.title.clone())
-                        .size(theme::SIZE_M)
-                        .wrapping(text::Wrapping::None),
-                    text(track.artists.join(", "))
-                        .size(theme::SIZE_S)
-                        .style(theme::secondary_text)
-                        .wrapping(text::Wrapping::None),
-                ]
-                .spacing(2)
-                .width(Length::Fill)
-                .clip(true),
-                icons::waves_if(playing),
-                add,
-                text(format_duration(track.duration_ms))
-                    .size(theme::SIZE_S)
-                    .style(theme::secondary_text),
+                text(track.title.clone())
+                    .size(theme::SIZE_M)
+                    .wrapping(text::Wrapping::None)
+                    .style(if playing {
+                        theme::accent_text
+                    } else {
+                        theme::plain_text
+                    }),
             ]
             .spacing(12)
-            .align_y(Alignment::Center),
-        )
-        .on_press(on_play)
-        .padding([5, 8])
-        .width(Length::Fill)
-        .style(theme::song_row(playing));
+            .align_y(Alignment::Center)
+            .width(Length::FillPortion(3))
+            .clip(true),
+            text(track.artists.join(", "))
+                .size(theme::SIZE_S)
+                .style(theme::secondary_text)
+                .wrapping(text::Wrapping::None)
+                .width(Length::FillPortion(2)),
+        ]
+        .spacing(12)
+        .align_y(Alignment::Center);
+        if let Some(p) = popularity {
+            cells = cells.push(
+                container(
+                    iced::widget::progress_bar(0.0..=1.0, p)
+                        .girth(5)
+                        .length(70)
+                        .style(theme::meter),
+                )
+                .width(90),
+            );
+        }
+        let cells = cells
+            .push(
+                text(format_duration(track.duration_ms))
+                    .size(theme::SIZE_S)
+                    .style(theme::secondary_text)
+                    .width(48),
+            )
+            .push(add)
+            .push(
+                button(text("···").size(theme::SIZE_S).style(theme::secondary_text))
+                    .on_press(menu.clone())
+                    .padding([2, 6])
+                    .style(theme::icon_button),
+            );
+        let row = button(cells)
+            .on_press(on_play)
+            .padding([5, 8])
+            .width(Length::Fill)
+            .style(theme::song_row(playing));
         with_hover(
             iced::widget::mouse_area(row).on_right_press(menu),
             &track,
@@ -725,7 +822,6 @@ impl Surco {
     }
 
     fn view_results<'a>(&'a self, q: &'a str, r: &'a Results) -> Element<'a, Message> {
-        let mut col = Column::new().spacing(22);
         if r.songs.is_empty() && r.artists.is_empty() && r.playlists.is_empty() {
             let msg = match r.errors.first() {
                 Some(e) => trf!("No se pudo buscar: {e}", "Search failed: {e}"),
@@ -736,54 +832,190 @@ impl Surco {
                 .style(theme::secondary_text)
                 .into();
         }
-        if !r.artists.is_empty() {
-            let chips = row(r.artists.iter().enumerate().map(|(i, a)| {
-                button(text(artist_name(a)).size(theme::SIZE_S))
-                    .on_press(Message::Search(SearchMsg::OpenArtist(i)))
-                    .padding([6, 12])
-                    .style(theme::ghost_button)
-                    .into()
+        let f = self.search.filter;
+        let filters = row(Filter::ALL.iter().map(|&x| {
+            button(text(x.label()).size(theme::SIZE_S))
+                .on_press(Message::Search(SearchMsg::Filter(x)))
+                .padding([6, 14])
+                .style(theme::pill(f == x))
+                .into()
+        }))
+        .spacing(8)
+        .wrap();
+        let mut col = Column::new().spacing(24);
+        if f.shows(Filter::Artists) && !r.artists.is_empty() {
+            let take = if f == Filter::All { 4 } else { usize::MAX };
+            let cards = row(r.artists.iter().enumerate().take(take).map(|(i, a)| {
+                let name = artist_name(a);
+                let initial: String = name
+                    .chars()
+                    .next()
+                    .map(|c| c.to_uppercase().collect())
+                    .unwrap_or_default();
+                let detail = match a.followers {
+                    Some(n) => trf!(
+                        "Artista · {} suscriptores",
+                        "Artist · {} subscribers",
+                        compact_count(n)
+                    ),
+                    None => tr!("Artista", "Artist").to_owned(),
+                };
+                button(
+                    row![
+                        container(
+                            text(initial)
+                                .size(theme::SIZE_L)
+                                .color(theme::colors().on_accent)
+                        )
+                        .center(44)
+                        .style(theme::badge_round),
+                        column![
+                            text(name)
+                                .size(theme::SIZE_M)
+                                .wrapping(text::Wrapping::None),
+                            text(detail)
+                                .size(theme::SIZE_S)
+                                .style(theme::secondary_text)
+                                .wrapping(text::Wrapping::None),
+                        ]
+                        .spacing(2)
+                        .width(Length::Fill)
+                        .clip(true),
+                    ]
+                    .spacing(12)
+                    .align_y(Alignment::Center),
+                )
+                .on_press(Message::Search(SearchMsg::OpenArtist(i)))
+                .padding(12)
+                .width(250)
+                .style(theme::tile)
+                .into()
             }))
-            .spacing(8)
-            .wrap();
-            col = col.push(column![section(tr!("Artistas", "Artists")), chips].spacing(10));
+            .spacing(12)
+            .wrap()
+            .vertical_spacing(12);
+            col = col.push(column![section(tr!("Artistas", "Artists")), cards].spacing(12));
         }
-        if !r.songs.is_empty() {
+        if f == Filter::All {
+            if let Some(best) = r.songs.first() {
+                col = col.push(
+                    column![
+                        section(tr!("Mejor resultado", "Top result")),
+                        self.best_result(best),
+                    ]
+                    .spacing(12),
+                );
+            }
+        }
+        if f.shows(Filter::Songs) && !r.songs.is_empty() {
+            let max_views = r.songs.iter().filter_map(|s| s.views).max().unwrap_or(0);
             let list = Column::with_children(r.songs.iter().enumerate().map(|(i, s)| {
                 self.song_row(
+                    i,
                     track_from(s),
                     Some(s.id.as_str()),
+                    s.views
+                        .filter(|_| max_views > 0)
+                        .map(|v| popularity(v, max_views)),
                     Message::Search(SearchMsg::PlaySong(i)),
                 )
             }))
             .spacing(theme::row_gap());
-            col = col.push(column![section(tr!("Canciones", "Songs")), list].spacing(10));
+            col = col.push(
+                column![
+                    section(tr!("Canciones", "Songs")),
+                    table_header(max_views > 0),
+                    list
+                ]
+                .spacing(10),
+            );
         }
-        if !r.playlists.is_empty() {
-            let list = Column::with_children(r.playlists.iter().enumerate().map(|(i, p)| {
+        if f.shows(Filter::Playlists) && !r.playlists.is_empty() {
+            let cards = row(r.playlists.iter().enumerate().map(|(i, p)| {
                 button(
-                    column![
-                        text(&p.title)
-                            .size(theme::SIZE_M)
-                            .wrapping(text::Wrapping::None),
-                        text(p.channel.as_deref().unwrap_or("Playlist"))
-                            .size(theme::SIZE_S)
-                            .style(theme::secondary_text),
+                    row![
+                        container(icons::icon(Kind::Queue, theme::colors().accent, 20.0))
+                            .center(40)
+                            .style(theme::chip),
+                        column![
+                            text(&p.title)
+                                .size(theme::SIZE_M)
+                                .wrapping(text::Wrapping::None),
+                            text(p.channel.as_deref().unwrap_or("Playlist"))
+                                .size(theme::SIZE_S)
+                                .style(theme::secondary_text)
+                                .wrapping(text::Wrapping::None),
+                        ]
+                        .spacing(2)
+                        .width(Length::Fill)
+                        .clip(true),
                     ]
-                    .spacing(2),
+                    .spacing(12)
+                    .align_y(Alignment::Center),
                 )
                 .on_press(Message::Search(SearchMsg::OpenPlaylist(i)))
-                .padding([6, 8])
-                .width(Length::Fill)
-                .style(theme::list_button(false))
+                .padding(10)
+                .width(250)
+                .style(theme::tile)
                 .into()
             }))
-            .spacing(2);
-            col = col.push(column![section("Playlists"), list].spacing(10));
+            .spacing(12)
+            .wrap()
+            .vertical_spacing(12);
+            col = col.push(column![section("Playlists"), cards].spacing(12));
         }
-        crate::smooth::smooth(
-            scrollable(col.padding(iced::Padding::ZERO.right(16))).height(Length::Fill),
+        column![
+            filters,
+            crate::smooth::smooth(
+                scrollable(col.padding(iced::Padding::ZERO.right(16))).height(Length::Fill),
+            )
+        ]
+        .spacing(18)
+        .into()
+    }
+
+    /// La primera canción, en grande y con su botón.
+    fn best_result<'a>(&'a self, s: &'a SearchResult) -> Element<'a, Message> {
+        let video = Some(s.id.as_str());
+        let mut detail = s.channel.clone().unwrap_or_default();
+        if let Some(v) = s.views {
+            detail.push_str(&trf!(" · {} vistas", " · {} views", compact_count(v)));
+        }
+        container(
+            row![
+                crate::home::cover(self, video, 72.0),
+                column![
+                    text(s.title.clone())
+                        .size(theme::SIZE_L)
+                        .wrapping(text::Wrapping::None),
+                    text(detail)
+                        .size(theme::SIZE_S)
+                        .style(theme::secondary_text)
+                        .wrapping(text::Wrapping::None),
+                ]
+                .spacing(4)
+                .width(Length::Fill)
+                .clip(true),
+                add_button(&track_from(s), None),
+                button(
+                    row![
+                        icons::icon(Kind::Play, theme::colors().on_accent, 14.0),
+                        text(tr!("Reproducir", "Play")).size(theme::SIZE_S),
+                    ]
+                    .spacing(8)
+                    .align_y(Alignment::Center),
+                )
+                .on_press(Message::Search(SearchMsg::PlaySong(0)))
+                .padding([10, 18])
+                .style(theme::primary_button),
+            ]
+            .spacing(16)
+            .align_y(Alignment::Center),
         )
+        .padding(16)
+        .width(Length::Fill)
+        .style(theme::highlight_card)
+        .into()
     }
 
     fn view_preview<'a>(&'a self, p: &'a Preview) -> Element<'a, Message> {
@@ -812,8 +1044,10 @@ impl Surco {
         }
         let list = Column::with_children(p.tracks.iter().enumerate().map(|(i, t)| {
             self.song_row(
+                i,
                 t.clone(),
                 self.video_of_track(t),
+                None,
                 Message::Search(SearchMsg::PlayPreview(i)),
             )
         }))
@@ -842,7 +1076,72 @@ impl Surco {
 }
 
 fn section(title: &str) -> Element<'_, Message> {
-    text(title).size(theme::SIZE_M).into()
+    text(title).size(theme::SIZE_M + 1).into()
+}
+
+/// Encabezado de la tabla de canciones.
+fn table_header<'a>(popularity: bool) -> Element<'a, Message> {
+    let h = |s: &'static str| text(s).size(theme::SIZE_S).style(theme::secondary_text);
+    let mut r = row![
+        h("#").width(28),
+        h(tr!("Título", "Title")).width(Length::FillPortion(3)),
+        h(tr!("Artista", "Artist")).width(Length::FillPortion(2)),
+    ]
+    .spacing(12);
+    if popularity {
+        r = r.push(h(tr!("Popularidad", "Popularity")).width(90));
+    }
+    r = r
+        .push(h(tr!("Duración", "Length")).width(48))
+        .push(Space::new().width(56));
+    column![
+        r.padding([0, 8]),
+        container(Space::new())
+            .width(Length::Fill)
+            .height(1)
+            .style(theme::rule(theme::colors().border)),
+    ]
+    .spacing(8)
+    .into()
+}
+
+/// Popularidad de 0 a 1 según las vistas, en escala logarítmica respecto de
+/// la más vista (si no, casi todas quedarían en cero).
+fn popularity(views: u64, max: u64) -> f32 {
+    if max <= 1 {
+        return 0.0;
+    }
+    let v = (views.max(1) as f32).ln();
+    let m = (max as f32).ln();
+    (0.15 + 0.85 * (v / m)).clamp(0.0, 1.0)
+}
+
+/// 1234567 como "1,2 M" (o "1.2M" en inglés).
+fn compact_count(n: u64) -> String {
+    let (v, unit) = if n >= 1_000_000_000 {
+        (
+            n as f64 / 1e9,
+            if crate::i18n::en() { "B" } else { " mil M" },
+        )
+    } else if n >= 1_000_000 {
+        (n as f64 / 1e6, if crate::i18n::en() { "M" } else { " M" })
+    } else if n >= 1_000 {
+        (n as f64 / 1e3, if crate::i18n::en() { "K" } else { " mil" })
+    } else {
+        return n.to_string();
+    };
+    let s = if v >= 100.0 {
+        format!("{v:.0}")
+    } else {
+        format!("{v:.1}")
+    };
+    let s = s.trim_end_matches(".0").to_owned();
+    let s = if crate::i18n::en() {
+        s
+    } else {
+        s.replace('.', ",")
+    };
+    format!("{s}{unit}")
 }
 
 /// Mensaje que abre el menú "Agregar a…" de una canción.
@@ -926,6 +1225,16 @@ mod tests {
         ] {
             assert_eq!(youtube_playlist_id(url).as_deref(), id, "{url}");
         }
+    }
+
+    #[test]
+    fn compacts_counts_and_scales_popularity() {
+        crate::i18n::set(crate::i18n::Lang::Es);
+        assert_eq!(compact_count(950), "950");
+        assert_eq!(compact_count(1_200_000), "1,2 M");
+        assert_eq!(compact_count(3_000), "3 mil");
+        assert!((popularity(1000, 1000) - 1.0).abs() < 1e-6);
+        assert!(popularity(10, 1000) < popularity(100, 1000));
     }
 
     #[test]

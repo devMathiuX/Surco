@@ -22,6 +22,7 @@ mod radio;
 mod resume;
 mod search;
 mod settings;
+mod settings_view;
 mod skeleton;
 mod smooth;
 mod theme;
@@ -249,6 +250,13 @@ struct Surco {
     settings: Settings,
     /// Lo que se escribe en los campos de color del tema personalizado.
     custom_hex: [String; 2],
+    settings_tab: settings_view::Tab,
+    /// Lo escrito en "Buscar en la cola".
+    queue_filter: String,
+    /// Lo escrito en el buscador de ajustes.
+    settings_query: String,
+    /// "Buscar actualizaciones" desde Acerca de.
+    update_check: updater::ManualCheck,
     /// Qué muestra el panel principal.
     screen: Screen,
     theme: Theme,
@@ -371,6 +379,8 @@ enum Message {
     /// "Descargar" en ese diálogo: baja yt-dlp y deno si faltan.
     DownloadTools,
     ImportInputChanged(String),
+    /// "Pegar enlace": trae el portapapeles al campo de importar.
+    ImportPaste,
     Import,
     PickCsv,
     CsvPicked(Option<PathBuf>),
@@ -397,6 +407,8 @@ enum Message {
     /// Mostrar u ocultar la pantalla de ajustes.
     ToggleSettings,
     Setting(settings::Change),
+    SettingsTab(settings_view::Tab),
+    SettingsQuery(String),
     ClearAudioCache,
     /// Radio de canciones parecidas a la que suena.
     StartRadio,
@@ -409,6 +421,14 @@ enum Message {
     /// Mostrar u ocultar la cola.
     ToggleQueue,
     QueueRemove(usize),
+    /// Saltar a esa posición de la cola (historial de la cola).
+    QueueJump(usize),
+    /// Sacar todo lo que viene después de la actual.
+    QueueClear,
+    /// Guardar la cola (desde la actual) como playlist propia.
+    QueueSave,
+    /// Lo escrito en "Buscar en la cola".
+    QueueFilter(String),
     DragStart(DragList, usize),
     DragOver(DragList, usize),
     DragEnd,
@@ -429,6 +449,8 @@ enum Message {
     /// Escribieron en el buscador del inicio.
     HomeSearch(String),
     PlayRecent(usize),
+    /// "Escuchar ahora" de las más escuchadas del inicio.
+    PlayTop,
     OpenImport,
     NewPlaylist,
     StartRename(usize),
@@ -546,6 +568,10 @@ impl Surco {
             recorded: None,
             settings: Settings::default(),
             custom_hex: Default::default(),
+            settings_tab: settings_view::Tab::default(),
+            settings_query: String::new(),
+            queue_filter: String::new(),
+            update_check: updater::ManualCheck::Idle,
             screen: Screen::Home,
             theme: theme::iced_theme(),
             provider,
@@ -698,6 +724,13 @@ impl Surco {
             Message::DownloadTools => return self.download_tools(),
             Message::ImportInputChanged(s) => self.import_input = s,
             Message::Import => return self.start_import(),
+            Message::ImportPaste => {
+                return iced::clipboard::read().map(|t| {
+                    t.map_or(Message::Noop, |t| {
+                        Message::ImportInputChanged(t.trim().to_owned())
+                    })
+                })
+            }
             Message::PickCsv => {
                 return Task::perform(
                     async {
@@ -765,6 +798,11 @@ impl Surco {
                 self.filter = None;
             }
             Message::Setting(change) => return self.change_setting(change),
+            Message::SettingsTab(tab) => {
+                self.settings_tab = tab;
+                self.settings_query.clear();
+            }
+            Message::SettingsQuery(q) => self.settings_query = q,
             Message::ClearAudioCache => self.clear_audio_cache(),
             Message::StartRadio => {
                 let task = self.start_radio(false);
@@ -786,6 +824,10 @@ impl Surco {
                 self.screen = Screen::Queue;
             }
             Message::QueueRemove(pos) => self.queue_remove(pos),
+            Message::QueueJump(pos) => return self.queue_jump(pos),
+            Message::QueueClear => self.queue_clear(),
+            Message::QueueSave => return self.queue_save(),
+            Message::QueueFilter(q) => self.queue_filter = q,
             Message::DragStart(list, pos) => {
                 self.drag = Some(Drag {
                     list,
@@ -826,6 +868,7 @@ impl Surco {
             Message::GoHome => return self.go_home(),
             Message::HomeSearch(q) => return self.home_search(q),
             Message::PlayRecent(i) => return self.play_recent(i),
+            Message::PlayTop => return self.play_top(),
             Message::NewPlaylist => return self.new_playlist(None),
             Message::StartRename(i) => return self.start_rename(i),
             Message::RenameInput(name) => {
