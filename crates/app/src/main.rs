@@ -23,6 +23,7 @@ mod resume;
 mod search;
 mod settings;
 mod skeleton;
+mod smooth;
 mod theme;
 mod tools;
 mod tray;

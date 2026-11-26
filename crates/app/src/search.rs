@@ -781,9 +781,9 @@ impl Surco {
             .spacing(2);
             col = col.push(column![section("Playlists"), list].spacing(10));
         }
-        scrollable(col.padding(iced::Padding::ZERO.right(16)))
-            .height(Length::Fill)
-            .into()
+        crate::smooth::smooth(
+            scrollable(col.padding(iced::Padding::ZERO.right(16))).height(Length::Fill),
+        )
     }
 
     fn view_preview<'a>(&'a self, p: &'a Preview) -> Element<'a, Message> {
@@ -832,7 +832,9 @@ impl Surco {
             ]
             .spacing(4),
             actions,
-            scrollable(list.padding(iced::Padding::ZERO.right(16))).height(Length::Fill),
+            crate::smooth::smooth(
+                scrollable(list.padding(iced::Padding::ZERO.right(16))).height(Length::Fill)
+            ),
         ]
         .spacing(14)
         .into()

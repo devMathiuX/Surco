@@ -114,9 +114,9 @@ impl Surco {
         ]
         .spacing(28)
         .max_width(860);
-        container(scrollable(
+        container(crate::smooth::smooth(scrollable(
             container(body).padding([40, 48]).center_x(Length::Fill),
-        ))
+        )))
         .width(Length::Fill)
         .height(Length::Fill)
         .into()

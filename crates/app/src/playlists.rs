@@ -649,7 +649,9 @@ impl Surco {
                 )
                 .padding([0, 10]),
             );
-            col = col.push(scrollable(playlists).height(Length::Shrink));
+            col = col.push(crate::smooth::smooth(
+                scrollable(playlists).height(Length::Shrink),
+            ));
         }
         if let Some((p, _)) = menu
             .from
