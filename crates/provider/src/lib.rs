@@ -404,22 +404,31 @@ mod tests {
     /// yt-dlp falso que falla si le piden el cliente rápido y anota cada llamada.
     #[cfg(unix)]
     fn fake_ytdlp(name: &str, fast_works: bool) -> (std::path::PathBuf, std::path::PathBuf) {
-        use std::os::unix::fs::PermissionsExt;
         let dir = std::env::temp_dir().join(format!("surco-fast-{name}-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let log = dir.join("calls");
         let _ = std::fs::remove_file(&log);
         let script = dir.join("yt-dlp");
         let fast = if fast_works { ":" } else { "exit 1" };
-        std::fs::write(
-            &script,
-            format!(
-                "#!/bin/sh\ncase \"$*\" in *player_client=*) echo fast >> '{l}'; {fast};; *) echo normal >> '{l}';; esac\nprintf 'm4a\\n1\\nt\\nhttps://example.com/%s\\n' \"$1\"\n",
-                l = log.display()
-            ),
-        )
-        .unwrap();
-        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let body = format!(
+            "#!/bin/sh\ncase \"$*\" in *player_client=*) echo fast >> '{l}'; {fast};; *) echo normal >> '{l}';; esac\nprintf 'm4a\\n1\\nt\\nhttps://example.com/%s\\n' \"$1\"\n",
+            l = log.display()
+        );
+        // El archivo lo escribe otro proceso: si lo abriera este, otro test
+        // que lanza un proceso justo en ese momento heredaría el archivo
+        // abierto, y ejecutarlo fallaría con "Text file busy" (ETXTBSY).
+        let ok = std::process::Command::new("sh")
+            .args([
+                "-c",
+                "printf '%s' \"$1\" > \"$2\" && chmod 755 \"$2\"",
+                "sh",
+            ])
+            .arg(&body)
+            .arg(&script)
+            .status()
+            .unwrap()
+            .success();
+        assert!(ok);
         (script, log)
     }
 
