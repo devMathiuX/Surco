@@ -19,8 +19,9 @@ use iced::{window, Element, Event, Length, Rectangle, Size, Vector};
 const SPEED: f32 = 32.0;
 /// Pausa en cada punta, en segundos.
 const PAUSE: f32 = 1.6;
-/// Cuadros por segundo mientras se mueve.
-const FPS: u64 = 30;
+/// Cuadros por segundo mientras se mueve. En macOS cada cuadro cuesta más
+/// (ver `vendor/iced_tiny_skia`), así que no conviene pasarse.
+const FPS: u64 = 24;
 /// Margen al final, para que la última letra no quede pegada al borde.
 const END: f32 = 6.0;
 
@@ -71,6 +72,24 @@ fn offset_at(t: f32, travel: f32) -> f32 {
         travel - (t - 2.0 * PAUSE - slide) * SPEED
     }
     .clamp(0.0, travel)
+}
+
+/// Segundos que faltan, a los `t` de empezar, para que termine la pausa en
+/// la que está (0 si se está moviendo). Durante las pausas no hace falta
+/// pedir cuadros.
+fn still_for(t: f32, travel: f32) -> f32 {
+    let slide = travel / SPEED;
+    let cycle = 2.0 * (PAUSE + slide);
+    let t = t % cycle;
+    if t < PAUSE {
+        PAUSE - t
+    } else if t < PAUSE + slide {
+        0.0
+    } else if t < 2.0 * PAUSE + slide {
+        2.0 * PAUSE + slide - t
+    } else {
+        0.0
+    }
 }
 
 impl<Message, Theme, Renderer> Widget<Message, Theme, Renderer>
@@ -157,7 +176,10 @@ where
                 let t = now.saturating_duration_since(start).as_secs_f32();
                 state.offset_time = t;
                 state.offset = offset_at(t, state.overflow + END);
-                shell.request_redraw_at(*now + Duration::from_millis(1000 / FPS));
+                // En las pausas, el próximo cuadro es cuando vuelve a moverse.
+                let wait = Duration::from_secs_f32(still_for(t, state.overflow + END))
+                    .max(Duration::from_millis(1000 / FPS));
+                shell.request_redraw_at(*now + wait);
             } else {
                 if state.offset != 0.0 {
                     shell.request_redraw();
@@ -264,6 +286,9 @@ mod tests {
         assert!((offset_at(PAUSE + 1.0, travel) - SPEED).abs() < 0.01);
         let slide = travel / SPEED;
         assert_eq!(offset_at(PAUSE + slide + 0.5, travel), travel);
+        assert!((still_for(0.5, travel) - (PAUSE - 0.5)).abs() < 0.01);
+        assert_eq!(still_for(PAUSE + 1.0, travel), 0.0);
+        assert!((still_for(PAUSE + slide + 0.5, travel) - (PAUSE - 0.5)).abs() < 0.01);
         // Vuelta completa: de nuevo al principio.
         assert_eq!(offset_at(2.0 * (PAUSE + slide) + 0.1, travel), 0.0);
     }

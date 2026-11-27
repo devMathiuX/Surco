@@ -22,6 +22,17 @@ pub struct Surface {
     layer_stack: VecDeque<Vec<Layer>>,
     background_color: Color,
     max_age: u8,
+    /// Surco: copia propia del último cuadro, para cuando el sistema no
+    /// guarda el anterior (ver `present`).
+    retained: Option<Retained>,
+}
+
+/// Surco: último cuadro dibujado, con lo que tenía, para redibujar solo lo
+/// que cambió aunque el búfer del sistema venga vacío.
+struct Retained {
+    pixels: Vec<u32>,
+    layers: Vec<Layer>,
+    background_color: Color,
 }
 
 impl crate::graphics::Compositor for Compositor {
@@ -73,6 +84,7 @@ impl crate::graphics::Compositor for Compositor {
             layer_stack: VecDeque::new(),
             background_color: Color::BLACK,
             max_age: 0,
+            retained: None,
         };
 
         if width > 0 && height > 0 {
@@ -99,6 +111,7 @@ impl crate::graphics::Compositor for Compositor {
         surface.clip_mask =
             tiny_skia::Mask::new(width, height).expect("Create clip mask");
         surface.layer_stack.clear();
+        surface.retained = None;
     }
 
     fn information(&self) -> Information {
@@ -163,8 +176,35 @@ pub fn present(
         .buffer_mut()
         .map_err(|_| compositor::SurfaceError::Lost)?;
 
+    // Surco: en macOS (softbuffer con CoreGraphics) `age()` siempre es 0 y
+    // cada cuadro llega en un búfer nuevo y vacío, así que había que
+    // dibujar la ventana entera cada vez, aunque cambiara una sola línea
+    // (con pantalla Retina, cuatro veces los píxeles). Ahí guardamos una
+    // copia del cuadro anterior, dibujamos solo lo dañado sobre ella y la
+    // copiamos al búfer. En los demás sistemas el primer cuadro también
+    // viene con `age()` 0, pero después no: ahí no hace falta la copia.
+    // `SURCO_AGE0=1` simula el caso de macOS en otros sistemas.
+    static SIMULATE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    let simulate =
+        *SIMULATE.get_or_init(|| std::env::var_os("SURCO_AGE0").is_some());
+    let age = if simulate { 0 } else { buffer.age() };
+    if age == 0 && (cfg!(target_os = "macos") || simulate) {
+        present_retained(
+            renderer,
+            &mut surface.retained,
+            &mut surface.clip_mask,
+            &mut buffer,
+            viewport,
+            background_color,
+        );
+        on_pre_present();
+        return buffer
+            .present()
+            .map_err(|_| compositor::SurfaceError::Lost);
+    }
+    surface.retained = None;
+
     let last_layers = {
-        let age = buffer.age();
 
         surface.max_age = surface.max_age.max(age);
         surface.layer_stack.truncate(surface.max_age as usize);
@@ -197,26 +237,8 @@ pub fn present(
         surface.layer_stack.push_front(renderer.layers().to_vec());
         surface.background_color = background_color;
 
-        let damage = damage::group(
-            damage,
-            Rectangle::with_size(viewport.logical_size()),
-        );
-
-        // Surco: al desplazar una lista cambia casi todo lo que hay adentro, y
-        // salían 70-80 rectángulos dañados que cubrían casi toda la ventana.
-        // Cada uno se dibuja aparte (todo lo que lo toca, recortado con la
-        // máscara), así que la misma letra o el mismo fondo se pintaba varias
-        // veces. Si son muchos, mejor uno solo que los cubra.
-        let damage = if damage.len() > MAX_DAMAGE_RECTS {
-            damage
-                .iter()
-                .copied()
-                .reduce(|a, b| a.union(&b))
-                .into_iter()
-                .collect()
-        } else {
-            damage
-        };
+        // Surco: si son muchos rectángulos, uno solo (ver `group_damage`).
+        let damage = group_damage(damage, viewport);
 
         let mut pixels = tiny_skia::PixmapMut::from_bytes(
             bytemuck::cast_slice_mut(&mut buffer),
@@ -236,6 +258,90 @@ pub fn present(
 
     on_pre_present();
     buffer.present().map_err(|_| compositor::SurfaceError::Lost)
+}
+
+/// Surco: rectángulos para dibujar, juntados en uno si son muchos. Al
+/// desplazar una lista cambia casi todo lo que hay adentro, y salían 70-80
+/// rectángulos dañados que cubrían casi toda la ventana. Cada uno se dibuja
+/// aparte (todo lo que lo toca, recortado con la máscara), así que la misma
+/// letra o el mismo fondo se pintaba varias veces. Si son muchos, mejor uno
+/// solo que los cubra.
+fn group_damage(damage: Vec<Rectangle>, viewport: &Viewport) -> Vec<Rectangle> {
+    let damage =
+        damage::group(damage, Rectangle::with_size(viewport.logical_size()));
+    if damage.len() > MAX_DAMAGE_RECTS {
+        damage
+            .iter()
+            .copied()
+            .reduce(|a, b| a.union(&b))
+            .into_iter()
+            .collect()
+    } else {
+        damage
+    }
+}
+
+/// Surco: dibuja sobre la copia propia del cuadro anterior solo lo que
+/// cambió y la pasa al búfer del sistema (ver `present`).
+fn present_retained(
+    renderer: &mut Renderer,
+    retained: &mut Option<Retained>,
+    clip_mask: &mut tiny_skia::Mask,
+    buffer: &mut [u32],
+    viewport: &Viewport,
+    background_color: Color,
+) {
+    let physical_size = viewport.physical_size();
+    let len = physical_size.width as usize * physical_size.height as usize;
+    if buffer.len() != len {
+        return;
+    }
+
+    let damage = match retained.as_ref() {
+        Some(last)
+            if last.pixels.len() == len
+                && last.background_color == background_color =>
+        {
+            damage::diff(
+                &last.layers,
+                renderer.layers(),
+                |layer| vec![layer.bounds],
+                Layer::damage,
+            )
+        }
+        _ => {
+            *retained = None;
+            vec![Rectangle::with_size(viewport.logical_size())]
+        }
+    };
+
+    let retained = retained.get_or_insert_with(|| Retained {
+        pixels: vec![0; len],
+        layers: Vec::new(),
+        background_color,
+    });
+
+    if !damage.is_empty() {
+        let damage = group_damage(damage, viewport);
+        let mut pixels = tiny_skia::PixmapMut::from_bytes(
+            bytemuck::cast_slice_mut(&mut retained.pixels),
+            physical_size.width,
+            physical_size.height,
+        )
+        .expect("Create pixel map");
+
+        renderer.draw(
+            &mut pixels,
+            clip_mask,
+            viewport,
+            &damage,
+            background_color,
+        );
+        retained.layers = renderer.layers().to_vec();
+        retained.background_color = background_color;
+    }
+
+    buffer.copy_from_slice(&retained.pixels);
 }
 
 pub fn screenshot(

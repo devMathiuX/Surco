@@ -1232,13 +1232,41 @@ impl std::hash::Hash for StatusFeed {
     }
 }
 
-/// Emite un mensaje cada vez que el motor publica un estado nuevo.
+/// Cada cuánto, como mínimo, llega a la ventana un avance de la posición.
+/// El motor la publica cada 100 ms y cada mensaje redibuja la ventana (en
+/// macOS, caro): con medio segundo la barra igual avanza de a un píxel.
+const POSITION_STEP: Duration = Duration::from_millis(500);
+
+/// Si `new` vale la pena mostrarlo frente a `last`, lo último que se mandó:
+/// todo cambio que no sea solo la posición avanzando de a poco.
+fn worth_showing(last: Option<&Status>, new: &Status) -> bool {
+    let Some(last) = last else { return true };
+    let only_position = Status {
+        position: last.position,
+        ..new.clone()
+    } == *last;
+    !only_position
+        || new.position < last.position
+        || new.position - last.position >= POSITION_STEP
+        || new.position.as_secs() != last.position.as_secs()
+}
+
+/// Emite un mensaje cada vez que el motor publica un estado nuevo (salvo
+/// los que solo corren la posición unos milisegundos, ver [`worth_showing`]).
 fn status_stream(feed: &StatusFeed) -> impl iced::futures::Stream<Item = Message> + use<> {
-    iced::futures::stream::unfold(feed.0.clone(), |mut rx| async move {
-        rx.changed().await.ok()?;
-        let status = rx.borrow_and_update().clone();
-        Some((Message::Status(status), rx))
-    })
+    iced::futures::stream::unfold(
+        (feed.0.clone(), None::<Status>),
+        |(mut rx, mut last)| async move {
+            loop {
+                rx.changed().await.ok()?;
+                let status = rx.borrow_and_update().clone();
+                if worth_showing(last.as_ref(), &status) {
+                    last = Some(status.clone());
+                    return Some((Message::Status(status), (rx, last)));
+                }
+            }
+        },
+    )
 }
 
 /// Atajos globales (solo si ningún widget usó la tecla, p. ej. el campo de texto).
@@ -1285,4 +1313,32 @@ fn csv_path(input: &str) -> Option<PathBuf> {
         .extension()
         .is_some_and(|e| e.eq_ignore_ascii_case("csv"));
     (is_csv && path.is_file()).then_some(path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn position_updates_are_spaced() {
+        let at = |ms| Status {
+            state: PlayerState::Playing,
+            position: Duration::from_millis(ms),
+            ..Status::default()
+        };
+        assert!(worth_showing(None, &at(100)));
+        // Unos milisegundos más, dentro del mismo segundo: no.
+        assert!(!worth_showing(Some(&at(100)), &at(300)));
+        // Medio segundo, o un segundo nuevo en el reloj: sí.
+        assert!(worth_showing(Some(&at(100)), &at(600)));
+        assert!(worth_showing(Some(&at(900)), &at(1000)));
+        // Para atrás (se movió la barra): sí.
+        assert!(worth_showing(Some(&at(900)), &at(800)));
+        // Otro cambio cualquiera, aunque la posición sea casi igual: sí.
+        let paused = Status {
+            state: PlayerState::Paused,
+            ..at(150)
+        };
+        assert!(worth_showing(Some(&at(100)), &paused));
+    }
 }
