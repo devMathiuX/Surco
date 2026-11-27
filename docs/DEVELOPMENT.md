@@ -347,6 +347,20 @@ Lo que queda en Vidrio es sobre todo mezclar los paneles translúcidos sobre el 
 
 Para comparar capturas entre versiones (que el renderer cambiado dibuje igual): `compare -metric AE -fuzz 3% a.png b.png diff.png` de ImageMagick. Con 1.3.0 contra 1.2.0 dieron iguales en 5 temas al 150 % y con diferencias de antialias de 1 px al 100 %.
 
+### CPU en macOS (1.3.2)
+
+En macOS, softbuffer (CoreGraphics) no guarda el cuadro anterior: `age()` siempre es 0 y cada cuadro llega en un búfer nuevo y vacío. Hasta la 1.3.1 eso hacía dibujar la ventana entera en cada cuadro, aunque solo se moviera un título, y con pantalla Retina son cuatro veces los píxeles. Desde la 1.3.2 el renderer (`vendor/iced_tiny_skia/src/window/compositor.rs`, `present_retained`) guarda su propia copia del último cuadro, dibuja encima solo lo que cambió y la copia al búfer. `SURCO_AGE0=1` simula ese caso en Linux para medirlo.
+
+Además, los títulos que se deslizan (`marquee.rs`) no piden cuadros durante las pausas y van a 24 cuadros por segundo, y la posición de la canción llega a la ventana como mucho cada medio segundo (o al cambiar el segundo), no cada 100 ms (`worth_showing` en `main.rs`).
+
+Medido en Xvfb a 2880×1800 con escala 2 (como una Retina), ventana de 1000×640, un título deslizándose, `SURCO_AGE0=1`, % de un núcleo:
+
+| Tema | 1.3.1 | 1.3.2 |
+|---|---|---|
+| Oscuro | ~35 | ~9 |
+| Brillo | ~65 | ~11 |
+| Vidrio | ~78 | ~18 |
+
 ### Perfil release
 
 `lto = "fat"`, `codegen-units = 1`, `panic = "unwind"`, `strip = true`. Medimos `opt-level = 3` y `"z"` (perfil `release-z`):
