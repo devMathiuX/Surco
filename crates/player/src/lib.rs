@@ -8,6 +8,7 @@ pub use surco_core as core;
 
 mod decode;
 pub mod eq;
+mod output;
 pub mod queue;
 
 pub use queue::Queue;
@@ -203,6 +204,12 @@ enum Msg {
         gen: u64,
         error: String,
     },
+    /// La salida de audio dejó de servir (se desconectó el dispositivo o
+    /// cambió su frecuencia, como pasa con los auriculares Bluetooth).
+    OutputLost {
+        output: u64,
+        reason: String,
+    },
 }
 
 impl std::fmt::Debug for Msg {
@@ -219,6 +226,11 @@ impl std::fmt::Debug for Msg {
                 .debug_struct("LoadFailed")
                 .field("gen", gen)
                 .field("error", error)
+                .finish(),
+            Msg::OutputLost { output, reason } => f
+                .debug_struct("OutputLost")
+                .field("output", output)
+                .field("reason", reason)
                 .finish(),
         }
     }
@@ -263,6 +275,10 @@ struct Engine {
     status_tx: watch::Sender<Status>,
     status: Status,
     output: Result<Output, String>,
+    /// Cuántas veces se abrió la salida: descarta avisos de salidas viejas.
+    output_gen: u64,
+    /// Salida nula (pruebas).
+    null_output: bool,
     current: Option<Current>,
     next: Option<Next>,
     /// Generación de la carga actual: descarta resultados de cargas viejas.
@@ -281,7 +297,7 @@ impl Engine {
         status_tx: watch::Sender<Status>,
         options: Options,
     ) -> Self {
-        let output = open_output(options.null_output);
+        let output = open_output(options.null_output, on_output_error(tx.clone(), 1));
         let status = Status::default();
         if let Ok(out) = &output {
             out.player.set_volume(volume_curve(status.volume));
@@ -290,6 +306,8 @@ impl Engine {
             tracing::error!(error = %e, "sin salida de audio");
         }
         Self {
+            output_gen: 1,
+            null_output: options.null_output,
             provider,
             client: surco_provider::stream_client(),
             rt,
@@ -388,6 +406,9 @@ impl Engine {
                 tracing::warn!(%error, "falló la pre-carga");
                 self.drop_next();
             }
+            Msg::OutputLost { output, reason } if output == self.output_gen => {
+                self.output_lost(&reason);
+            }
             stale => tracing::debug!(?stale, "mensaje de una carga anterior, se ignora"),
         }
     }
@@ -459,7 +480,10 @@ impl Engine {
             retries,
             since: std::time::Instant::now(),
         });
-        if let Err(e) = &self.output {
+        // Si al arrancar no había salida (o se perdió), se prueba de nuevo:
+        // quizás ya se conectaron los auriculares.
+        if !self.ensure_output() {
+            let e = self.output.as_ref().err().cloned().unwrap_or_default();
             self.fail(format!("no hay salida de audio: {e}"));
             return;
         }
@@ -499,6 +523,59 @@ impl Engine {
         self.unload();
         self.status.position = position;
         self.load(source, retries, true);
+    }
+
+    /// Abre la salida si no hay una. Devuelve si quedó abierta.
+    fn ensure_output(&mut self) -> bool {
+        if self.output.is_ok() {
+            return true;
+        }
+        self.output_gen += 1;
+        self.output = open_output(
+            self.null_output,
+            on_output_error(self.tx.clone(), self.output_gen),
+        );
+        match &self.output {
+            Ok(out) => {
+                out.player.set_volume(volume_curve(self.status.volume));
+                tracing::warn!("salida de audio recuperada");
+                true
+            }
+            Err(e) => {
+                tracing::error!(error = %e, "sigue sin haber salida de audio");
+                false
+            }
+        }
+    }
+
+    /// La salida dejó de andar: se abre otra y la canción sigue donde estaba.
+    fn output_lost(&mut self, reason: &str) {
+        tracing::warn!(%reason, "se perdió la salida de audio, reabriendo");
+        let position = self.status.position;
+        let resume = matches!(
+            self.status.state,
+            PlayerState::Playing | PlayerState::Paused | PlayerState::Loading
+        );
+        self.unload();
+        // Primero se cierra la vieja: en macOS el dispositivo puede seguir
+        // tomado hasta que se suelta.
+        self.output = Err(reason.to_owned());
+        if !self.ensure_output() {
+            if resume {
+                let e = self.output.as_ref().err().cloned().unwrap_or_default();
+                self.fail(format!("no hay salida de audio: {e}"));
+            }
+            return;
+        }
+        if !resume {
+            return;
+        }
+        if let Some(cur) = &self.current {
+            let source = cur.source.clone();
+            let retries = cur.retries;
+            self.status.position = position;
+            self.load(source, retries, false);
+        }
     }
 
     fn start(&mut self, spec: AudioSpec, duration: Option<Duration>) {
@@ -785,7 +862,31 @@ fn volume_curve(v: f32) -> f32 {
     v * v
 }
 
-fn open_output(null_output: bool) -> Result<Output, String> {
+/// Avisa al motor cuando la salida queda inservible. El resto de los errores
+/// (cortes por carga, cambio de ruta que el sistema ya resolvió) solo se anotan.
+fn on_output_error(
+    tx: mpsc::Sender<Msg>,
+    output: u64,
+) -> impl FnMut(rodio::cpal::Error) + Clone + Send + 'static {
+    move |e: rodio::cpal::Error| {
+        use rodio::cpal::ErrorKind;
+        match e.kind() {
+            ErrorKind::StreamInvalidated | ErrorKind::DeviceNotAvailable => {
+                let _ = tx.send(Msg::OutputLost {
+                    output,
+                    reason: e.to_string(),
+                });
+            }
+            ErrorKind::DeviceChanged => tracing::info!(error = %e, "cambió la salida de audio"),
+            _ => tracing::debug!(error = %e, "aviso de la salida de audio"),
+        }
+    }
+}
+
+fn open_output<F>(null_output: bool, on_error: F) -> Result<Output, String>
+where
+    F: FnMut(rodio::cpal::Error) + Clone + Send + 'static,
+{
     if null_output {
         let (player, queue) = rodio::Player::new();
         std::thread::Builder::new()
@@ -797,7 +898,7 @@ fn open_output(null_output: bool) -> Result<Output, String> {
             _device: None,
         });
     }
-    let mut device = rodio::DeviceSinkBuilder::open_default_sink().map_err(|e| e.to_string())?;
+    let mut device = output::open(on_error)?;
     device.log_on_drop(false);
     let player = rodio::Player::connect_new(device.mixer());
     Ok(Output {
