@@ -781,11 +781,15 @@ impl Surco {
             .align_y(Alignment::Center)
             .width(Length::FillPortion(3))
             .clip(true),
-            text(track.artists.join(", "))
-                .size(theme::SIZE_S)
-                .style(theme::secondary_text)
-                .wrapping(text::Wrapping::None)
-                .width(Length::FillPortion(2)),
+            container(crate::marquee::marquee(
+                text(track.artists.join(", "))
+                    .size(theme::SIZE_S)
+                    .style(theme::secondary_text)
+                    .wrapping(text::Wrapping::None),
+                self.is_hovered(&track),
+            ))
+            .width(Length::FillPortion(2))
+            .clip(true),
         ]
         .spacing(12)
         .align_y(Alignment::Center);

@@ -494,11 +494,15 @@ impl Surco {
                 .align_y(Alignment::Center)
                 .width(Length::FillPortion(3))
                 .clip(true),
-                text(t.artists.join(", "))
-                    .size(theme::SIZE_S)
-                    .style(theme::secondary_text)
-                    .wrapping(text::Wrapping::None)
-                    .width(Length::FillPortion(2)),
+                container(crate::marquee::marquee(
+                    text(t.artists.join(", "))
+                        .size(theme::SIZE_S)
+                        .style(theme::secondary_text)
+                        .wrapping(text::Wrapping::None),
+                    self.is_hovered(t),
+                ))
+                .width(Length::FillPortion(2))
+                .clip(true),
                 container(crate::search::add_button(t, None)).width(28),
                 text(duration)
                     .size(theme::SIZE_S)
@@ -573,10 +577,13 @@ impl Surco {
                                     .wrapping(text::Wrapping::None),
                                 false,
                             ),
-                            text(t.artists.join(", "))
-                                .size(theme::SIZE_S)
-                                .style(theme::secondary_text)
-                                .wrapping(text::Wrapping::None),
+                            crate::marquee::marquee(
+                                text(t.artists.join(", "))
+                                    .size(theme::SIZE_S)
+                                    .style(theme::secondary_text)
+                                    .wrapping(text::Wrapping::None),
+                                false,
+                            ),
                         ]
                         .spacing(2)
                         .clip(true),

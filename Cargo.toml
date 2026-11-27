@@ -12,7 +12,7 @@ members = [
 ]
 
 [workspace.package]
-version = "1.2.0"
+version = "1.3.0"
 edition = "2021"
 rust-version = "1.88"
 license = "MIT"
@@ -41,7 +41,7 @@ directories = "6"
 # rodio 0.23 usa symphonia 0.5: decodificamos nosotros con la misma versión.
 symphonia = { version = "0.5.5", default-features = false, features = ["aac", "isomp4"] }
 rodio = { version = "0.23", default-features = false, features = ["playback"] }
-iced = { version = "0.14", default-features = false, features = ["tiny-skia", "crisp", "x11", "wayland", "tokio", "canvas", "image-without-codecs", "advanced"] }
+iced = { version = "0.14", default-features = false, features = ["tiny-skia", "wgpu", "crisp", "x11", "wayland", "tokio", "canvas", "image-without-codecs", "advanced"] }
 # Portadas: solo JPEG (las miniaturas de YouTube).
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 # MPRIS (Linux, vía zbus: sin libdbus del sistema) y SMTC (Windows).
@@ -108,3 +108,8 @@ opt-level = "s"
 
 [profile.release.package.surco-storage]
 opt-level = "s"
+
+# Copia de iced_tiny_skia 0.14.1 (MIT, del proyecto iced) con el recorte
+# más rápido: ver vendor/iced_tiny_skia/README-SURCO.md.
+[patch.crates-io]
+iced_tiny_skia = { path = "vendor/iced_tiny_skia" }

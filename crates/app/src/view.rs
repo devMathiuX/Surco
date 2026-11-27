@@ -832,10 +832,13 @@ impl Surco {
                                 .wrapping(text::Wrapping::None),
                             self.is_hovered(t),
                         ),
-                        text(t.artists.join(", "))
-                            .size(theme::SIZE_S)
-                            .style(theme::secondary_text)
-                            .wrapping(text::Wrapping::None),
+                        crate::marquee::marquee(
+                            text(t.artists.join(", "))
+                                .size(theme::SIZE_S)
+                                .style(theme::secondary_text)
+                                .wrapping(text::Wrapping::None),
+                            self.is_hovered(t),
+                        ),
                     ]
                     .spacing(2)
                     .width(Length::Fill)
@@ -1324,6 +1327,8 @@ const LIST_COVER: f32 = 36.0;
 pub(crate) const ROW_HEIGHT: f32 = 50.0;
 /// Filas extra que se arman arriba y abajo de las que se ven.
 const OVERSCAN: usize = 12;
+/// Cada cuántas filas se rearma la lista al desplazarse.
+const CHUNK: usize = 10;
 /// Alto que se supone visible antes del primer desplazamiento.
 const DEFAULT_VIEW_HEIGHT: f32 = 1400.0;
 /// Id de la lista de canciones de la playlist.
@@ -1337,8 +1342,10 @@ pub(crate) fn visible_rows((offset, height): (f32, f32), len: usize) -> (usize, 
     } else {
         DEFAULT_VIEW_HEIGHT
     };
-    let top = (offset.max(0.0) / ROW_HEIGHT) as usize;
-    let count = (height / ROW_HEIGHT).ceil() as usize + 2 * OVERSCAN;
+    // El rango avanza de a [`CHUNK`] filas: así la vista se rearma una vez
+    // cada tantas filas y no con cada fila que pasa.
+    let top = (offset.max(0.0) / ROW_HEIGHT) as usize / CHUNK * CHUNK;
+    let count = (height / ROW_HEIGHT).ceil() as usize + 2 * OVERSCAN + CHUNK;
     let first = top.saturating_sub(OVERSCAN).min(len.saturating_sub(count));
     (first, (first + count).min(len))
 }
@@ -1404,14 +1411,21 @@ mod tests {
 
     #[test]
     fn only_visible_rows_are_built() {
-        // Arriba de todo, sin saber el alto: unas 52 filas.
+        // Arriba de todo, sin saber el alto: unas 62 filas.
         let (first, last) = visible_rows((0.0, 0.0), 1837);
         assert_eq!(first, 0);
-        assert!(last > 28 && last < 60, "{last}");
+        assert!(last > 28 && last < 70, "{last}");
         // A mitad de la lista, con 500 px visibles: la fila 1000 está y hay margen.
         let (first, last) = visible_rows((1000.0 * ROW_HEIGHT, 500.0), 1837);
         assert_eq!(first, 1000 - OVERSCAN);
-        assert_eq!(last, first + 10 + 2 * OVERSCAN);
+        assert_eq!(last, first + 10 + 2 * OVERSCAN + CHUNK);
+        // Bajar unas filas no cambia el rango (no se rearma la vista), y
+        // siempre queda margen abajo.
+        for row in 1000..1000 + CHUNK {
+            let (f, l) = visible_rows((row as f32 * ROW_HEIGHT, 500.0), 1837);
+            assert_eq!((f, l), (first, last));
+            assert!(l >= row + 10 + OVERSCAN);
+        }
         // Al final no se pasa del largo, y una lista corta va entera.
         assert_eq!(visible_rows((1e9, 500.0), 1837).1, 1837);
         assert_eq!(visible_rows((0.0, 500.0), 5), (0, 5));

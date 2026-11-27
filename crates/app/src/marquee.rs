@@ -52,6 +52,8 @@ struct State {
     offset: f32,
     /// El mouse está encima.
     hovered: bool,
+    /// Segundos de animación que lleva `offset`.
+    offset_time: f32,
 }
 
 /// Corrimiento a los `t` segundos de empezar, para recorrer `travel` px.
@@ -141,9 +143,19 @@ where
             let moving = (self.active || state.hovered)
                 && state.overflow > 0.5
                 && viewport.intersects(&bounds);
-            if moving {
+            if moving && crate::smooth::scrolling(*now) {
+                // Mientras se desliza una lista, queda quieto donde estaba
+                // (corriendo el comienzo para seguir desde ahí después).
+                if let Some(start) = state.start {
+                    let t = state.offset_time;
+                    state.start =
+                        Some(now.checked_sub(Duration::from_secs_f32(t)).unwrap_or(start));
+                }
+                shell.request_redraw_at(*now + Duration::from_millis(200));
+            } else if moving {
                 let start = *state.start.get_or_insert(*now);
                 let t = now.saturating_duration_since(start).as_secs_f32();
+                state.offset_time = t;
                 state.offset = offset_at(t, state.overflow + END);
                 shell.request_redraw_at(*now + Duration::from_millis(1000 / FPS));
             } else {
@@ -152,6 +164,7 @@ where
                 }
                 state.start = None;
                 state.offset = 0.0;
+                state.offset_time = 0.0;
             }
         }
         if let Some(child) = layout.children().next() {

@@ -113,10 +113,13 @@ impl Surco {
                     .wrapping(text::Wrapping::None),
                 slide,
             ),
-            text(subtitle)
-                .size(theme::SIZE_S)
-                .style(theme::secondary_text)
-                .wrapping(text::Wrapping::None),
+            crate::marquee::marquee(
+                text(subtitle)
+                    .size(theme::SIZE_S)
+                    .style(theme::secondary_text)
+                    .wrapping(text::Wrapping::None),
+                slide,
+            ),
         ]
         .spacing(2)
         .width(Length::Fill)

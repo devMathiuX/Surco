@@ -290,6 +290,29 @@ impl Surco {
             ),
         );
 
+        push(
+            Tab::Look,
+            true,
+            tr!("Rendimiento", "Performance"),
+            "gpu placa video tarjeta graphics card rendimiento performance fluido smooth scroll vsync aceleración acceleration",
+            column![
+                setting_row(
+                    tr!("Aceleración por GPU", "GPU acceleration"),
+                    tr!(
+                        "Dibuja con la placa de video: scroll y animaciones más fluidos, sincronizados con el monitor. Usa más RAM (50-100 MB por los drivers).",
+                        "Draws with the graphics card: smoother scrolling and animations, synced to the monitor. Uses more RAM (50-100 MB for the drivers)."
+                    ),
+                    switch(self.settings.gpu, Change::Gpu),
+                ),
+                hint(tr!(
+                    "Se aplica al volver a abrir Surco. Si la placa no responde, Surco sigue dibujando con el procesador.",
+                    "Takes effect the next time you open Surco. If the graphics card doesn't respond, Surco keeps drawing with the processor."
+                )),
+            ]
+            .spacing(12)
+            .into(),
+        );
+
         // Reproducción.
         push(
             Tab::Playback,
