@@ -418,7 +418,11 @@ mod tests {
         // que lanza un proceso justo en ese momento heredaría el archivo
         // abierto, y ejecutarlo fallaría con "Text file busy" (ETXTBSY).
         let ok = std::process::Command::new("sh")
-            .args(["-c", "printf '%s' \"$1\" > \"$2\" && chmod 755 \"$2\"", "sh"])
+            .args([
+                "-c",
+                "printf '%s' \"$1\" > \"$2\" && chmod 755 \"$2\"",
+                "sh",
+            ])
             .arg(&body)
             .arg(&script)
             .status()
