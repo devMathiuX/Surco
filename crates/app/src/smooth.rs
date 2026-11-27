@@ -114,6 +114,11 @@ struct State {
     velocity: f32,
     last_frame: Option<Instant>,
     shift: bool,
+    /// Fracción de píxel que quedó sin mover (ver `update`).
+    carry: f32,
+    /// Duración de cada cuadro del deslizamiento actual (solo con
+    /// `SURCO_FRAMES=1`, para medir).
+    frames: Vec<f32>,
 }
 
 impl State {
@@ -143,6 +148,47 @@ fn step(pending: &mut f32, velocity: &mut f32, dt: f32) -> f32 {
     *pending = -d2;
     *velocity = v2;
     d2 - d
+}
+
+/// Momento del último cuadro de deslizamiento, en ms desde [`EPOCH`].
+static LAST_SCROLL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static EPOCH: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+
+fn millis(now: Instant) -> u64 {
+    let epoch = *EPOCH.get_or_init(|| now);
+    // +1: el primer cuadro no se confunde con "nunca".
+    now.saturating_duration_since(epoch).as_millis() as u64 + 1
+}
+
+/// ¿Alguna lista se está deslizando? Mientras tanto, lo que se anima solo
+/// (títulos que se deslizan) espera, para no sumar trabajo a cada cuadro.
+pub fn scrolling(now: Instant) -> bool {
+    let last = LAST_SCROLL.load(std::sync::atomic::Ordering::Relaxed);
+    last != 0 && millis(now).saturating_sub(last) < 150
+}
+
+/// ¿Se miden los cuadros? (`SURCO_FRAMES=1`).
+fn measuring() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("SURCO_FRAMES").is_some())
+}
+
+/// Deja en el log cuánto tardaron los cuadros de un deslizamiento.
+fn report(frames: &mut Vec<f32>) {
+    let mut sorted = frames.clone();
+    sorted.sort_by(f32::total_cmp);
+    let n = sorted.len();
+    let avg = sorted.iter().sum::<f32>() / n as f32;
+    let p95 = sorted[(n * 95 / 100).min(n - 1)];
+    let max = sorted[n - 1];
+    tracing::info!(
+        cuadros = n,
+        promedio_ms = format!("{avg:.1}"),
+        p95_ms = format!("{p95:.1}"),
+        max_ms = format!("{max:.1}"),
+        "scroll"
+    );
+    frames.clear();
 }
 
 impl<Message, Theme, Renderer> Widget<Message, Theme, Renderer>
@@ -241,14 +287,25 @@ where
                 shell.request_redraw();
             }
             Event::Window(window::Event::RedrawRequested(now)) if state.moving() => {
-                let dt = state
+                let elapsed = state
                     .last_frame
-                    .map(|t| now.saturating_duration_since(t).as_secs_f32())
-                    // Primer cuadro: como si hubiera pasado uno de 60 Hz.
-                    .unwrap_or(1.0 / 60.0)
-                    .min(MAX_DT);
+                    .map(|t| now.saturating_duration_since(t).as_secs_f32());
+                if let (Some(e), true) = (elapsed, measuring()) {
+                    state.frames.push(e * 1000.0);
+                }
+                // Primer cuadro: como si hubiera pasado uno de 60 Hz.
+                let dt = elapsed.unwrap_or(1.0 / 60.0).min(MAX_DT);
                 state.last_frame = Some(*now);
-                let s = step(&mut state.pending, &mut state.velocity, dt);
+                LAST_SCROLL.store(millis(*now), std::sync::atomic::Ordering::Relaxed);
+                // Se mueve de a píxeles enteros: corrido medio píxel, el
+                // texto se redibuja borroso y "tiembla". Lo que sobra queda
+                // para el cuadro siguiente.
+                let exact = step(&mut state.pending, &mut state.velocity, dt) + state.carry;
+                let s = exact.round();
+                state.carry = exact - s;
+                if !state.moving() {
+                    state.carry = 0.0;
+                }
                 // Al `scrollable` le llega como un desplazamiento en píxeles,
                 // con el mouse en el medio de la lista (aunque se haya ido).
                 let at = cursor
@@ -258,20 +315,24 @@ where
                 let wheel = Event::Mouse(mouse::Event::WheelScrolled {
                     delta: mouse::ScrollDelta::Pixels { x: 0.0, y: -s },
                 });
-                forward(
-                    &mut self.content,
-                    &self.keep,
-                    &mut children[0],
-                    &wheel,
-                    layout,
-                    mouse::Cursor::Available(at),
-                    renderer,
-                    clipboard,
-                    shell,
-                    viewport,
-                );
+                if s != 0.0 {
+                    forward(
+                        &mut self.content,
+                        &self.keep,
+                        &mut children[0],
+                        &wheel,
+                        layout,
+                        mouse::Cursor::Available(at),
+                        renderer,
+                        clipboard,
+                        shell,
+                        viewport,
+                    );
+                }
                 if state.moving() {
                     shell.request_redraw();
+                } else if !state.frames.is_empty() {
+                    report(&mut state.frames);
                 }
             }
             _ => {}

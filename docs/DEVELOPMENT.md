@@ -319,7 +319,33 @@ Medido en Linux/X11 (Xvfb), ventana vacía, 4 s después de abrir:
 
 Con wgpu, la mayor parte de la RAM son los drivers gráficos mapeados en memoria (en la medición, llvmpipe/Vulkan por software; con GPU real también son decenas de MB). Eso solo ya rompe el límite de 80 MB, así que el render por defecto es por CPU. Para una UI plana como esta (listas, texto, rectángulos) alcanza de sobra.
 
-Quien quiera GPU puede compilar con `cargo build --release --features gpu`.
+Desde la 1.3.0 el binario trae los dos motores (iced usa su `fallback::Renderer`) y el usuario elige en Ajustes > Apariencia > Rendimiento > "Aceleración por GPU" (apagada por defecto). La elección es un archivo vacío `usar-gpu` en la carpeta de datos, porque se lee en `main` antes de abrir la ventana: `gpu::choose_backend` pone `ICED_BACKEND=tiny-skia` o `wgpu,tiny-skia` (si la placa falla, sigue con el procesador). Un `ICED_BACKEND` puesto a mano se respeta. Con tiny-skia elegido, wgpu ni se inicializa: la RAM no cambia.
+
+### Fluidez del scroll (1.3.0)
+
+`SURCO_FRAMES=1` deja en el log, al terminar cada deslizamiento de una lista, cuántos cuadros hubo y cuánto tardaron (promedio, p95, máximo). Con tiny-skia no hay vsync: el tiempo entre cuadros es lo que tarda en dibujarse cada uno.
+
+Medido en Xvfb a 1600×1000 (Xeon 2,1 GHz de la nube; una PC normal es más rápida), playlist de 800 canciones, ms por cuadro:
+
+| Tema | 1.2.0 | 1.3.0 |
+|---|---|---|
+| Oscuro | ~65 | ~6 |
+| Brillo | ~110 | ~14 |
+| Vidrio | ~190 | ~21 |
+
+Con `perf` el tiempo se iba casi todo en el renderer de iced, no en Surco. Por eso hay una copia de `iced_tiny_skia` en `vendor/` (ver su `README-SURCO.md`) con estos arreglos:
+
+1. **Máscara de recorte:** cada cambio de recorte borraba una máscara del tamaño de la ventana (`memset`, ~30 %). Ahora se borra solo el rectángulo anterior.
+2. **Espacios:** los glifos vacíos no se guardaban en la caché y se volvía a armar el *hinting* de la fuente para cada espacio en cada cuadro (~15 %).
+3. **Quads recortados:** el fondo de un panel que se sale del recorte se rasterizaba entero pasando por la máscara (~40 %). Ahora se pinta en bandas rectas recortadas a mano más las cuatro esquinas.
+4. **Daño en muchos pedazos:** al desplazar salían 70-80 rectángulos a redibujar y todo lo que tocaba a varios se pintaba varias veces. Con más de 8, se junta todo en uno.
+5. **Imágenes sin escalar o sin suavizar** (los cuadritos del fondo de Vidrio y Brillo): se copian fila por fila en lugar de pasar por el shader de patrón.
+
+En Surco mismo: la rueda mueve de a píxeles enteros (el resto queda para el cuadro siguiente: si no, el texto se redibuja en otra posición de subpíxel), la lista de una playlist se rearma cada 10 filas y no con cada fila (`CHUNK` en `view.rs`), y los títulos que se deslizan quedan quietos mientras se desplaza una lista (`smooth::scrolling`).
+
+Lo que queda en Vidrio es sobre todo mezclar los paneles translúcidos sobre el fondo (inevitable por CPU). La opción "Aceleración por GPU" lo saca del procesador.
+
+Para comparar capturas entre versiones (que el renderer cambiado dibuje igual): `compare -metric AE -fuzz 3% a.png b.png diff.png` de ImageMagick. Con 1.3.0 contra 1.2.0 dieron iguales en 5 temas al 150 % y con diferencias de antialias de 1 px al 100 %.
 
 ### Perfil release
 

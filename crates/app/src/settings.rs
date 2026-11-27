@@ -78,6 +78,8 @@ pub struct Settings {
     /// Tamaño de la interfaz, en % (100 = normal).
     pub ui_scale: u32,
     pub equalizer: Equalizer,
+    /// Dibujar con la placa de video (ver [`crate::gpu`]).
+    pub gpu: bool,
 }
 
 impl Default for Settings {
@@ -91,6 +93,7 @@ impl Default for Settings {
             autoplay: true,
             ui_scale: 100,
             equalizer: Equalizer::default(),
+            gpu: false,
         }
     }
 }
@@ -115,6 +118,7 @@ pub enum Change {
     /// Se soltó un slider del ecualizador: guardar.
     EqSave,
     EqPreset(Preset),
+    Gpu(bool),
 }
 
 impl Surco {
@@ -154,6 +158,7 @@ impl Surco {
             s.equalizer = e;
         }
         eq::set(s.equalizer);
+        s.gpu = crate::gpu::enabled();
         self.settings = s;
         self.custom_hex = [theme::to_hex(s.custom.0), theme::to_hex(s.custom.1)];
         self.custom_hsv = [
@@ -252,6 +257,11 @@ impl Surco {
                 self.settings.precache = p;
                 self.save_setting(PRECACHE, p.key());
                 self.precache_dirty = true;
+                Task::none()
+            }
+            Change::Gpu(on) => {
+                self.settings.gpu = on;
+                crate::gpu::set(on);
                 Task::none()
             }
             Change::Autoplay(on) => {

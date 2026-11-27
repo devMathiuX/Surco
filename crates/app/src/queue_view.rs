@@ -256,10 +256,13 @@ impl Surco {
                                         .wrapping(text::Wrapping::None),
                                     false,
                                 ),
-                                text(t.artists.join(", "))
-                                    .size(theme::SIZE_S)
-                                    .style(theme::secondary_text)
-                                    .wrapping(text::Wrapping::None),
+                                crate::marquee::marquee(
+                                    text(t.artists.join(", "))
+                                        .size(theme::SIZE_S)
+                                        .style(theme::secondary_text)
+                                        .wrapping(text::Wrapping::None),
+                                    false,
+                                ),
                             ]
                             .spacing(2)
                             .width(Length::Fill)
@@ -379,10 +382,13 @@ impl Surco {
                             .wrapping(text::Wrapping::None),
                         !theme::minimal(),
                     ),
-                    text(t.artists.join(", "))
-                        .size(theme::SIZE_S)
-                        .style(theme::secondary_text)
-                        .wrapping(text::Wrapping::None),
+                    crate::marquee::marquee(
+                        text(t.artists.join(", "))
+                            .size(theme::SIZE_S)
+                            .style(theme::secondary_text)
+                            .wrapping(text::Wrapping::None),
+                        !theme::minimal(),
+                    ),
                     row![
                         button(
                             row![
@@ -474,10 +480,13 @@ impl Surco {
                         }),
                     self.is_hovered(t),
                 ),
-                text(t.artists.join(", "))
-                    .size(theme::SIZE_S)
-                    .style(theme::secondary_text)
-                    .wrapping(text::Wrapping::None),
+                crate::marquee::marquee(
+                    text(t.artists.join(", "))
+                        .size(theme::SIZE_S)
+                        .style(theme::secondary_text)
+                        .wrapping(text::Wrapping::None),
+                    self.is_hovered(t),
+                ),
             ]
             .spacing(2)
             .width(Length::Fill)

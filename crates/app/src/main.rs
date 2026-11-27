@@ -8,6 +8,7 @@ mod i18n;
 mod backdrop;
 mod bar;
 mod covers;
+mod gpu;
 mod greeting;
 mod home;
 mod icons;
@@ -68,9 +69,14 @@ fn main() -> anyhow::Result<()> {
     // Antes de abrir otros hilos: en Linux la zona horaria solo se puede
     // leer así mientras hay un único hilo.
     greeting::init();
+    gpu::choose_backend();
     // El guard vacía el log en disco al salir.
     let _log_guard = init_logging();
-    tracing::info!(version = env!("CARGO_PKG_VERSION"), "iniciando Surco");
+    tracing::info!(
+        version = env!("CARGO_PKG_VERSION"),
+        motor = std::env::var("ICED_BACKEND").unwrap_or_default(),
+        "iniciando Surco"
+    );
 
     let rt = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
