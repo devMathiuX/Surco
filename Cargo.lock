@@ -965,7 +965,7 @@ dependencies = [
 
 [[package]]
 name = "eval_resolver"
-version = "1.3.0"
+version = "1.3.1"
 dependencies = [
  "anyhow",
  "surco-provider",
@@ -3891,7 +3891,7 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
 name = "surco"
-version = "1.3.0"
+version = "1.3.1"
 dependencies = [
  "anyhow",
  "directories",
@@ -3919,7 +3919,7 @@ dependencies = [
 
 [[package]]
 name = "surco-core"
-version = "1.3.0"
+version = "1.3.1"
 dependencies = [
  "serde",
  "thiserror 2.0.21",
@@ -3927,7 +3927,7 @@ dependencies = [
 
 [[package]]
 name = "surco-player"
-version = "1.3.0"
+version = "1.3.1"
 dependencies = [
  "reqwest",
  "rodio",
@@ -3941,7 +3941,7 @@ dependencies = [
 
 [[package]]
 name = "surco-provider"
-version = "1.3.0"
+version = "1.3.1"
 dependencies = [
  "flate2",
  "reqwest",
@@ -3955,7 +3955,7 @@ dependencies = [
 
 [[package]]
 name = "surco-resolver"
-version = "1.3.0"
+version = "1.3.1"
 dependencies = [
  "serde",
  "strsim",
@@ -3968,7 +3968,7 @@ dependencies = [
 
 [[package]]
 name = "surco-spotify"
-version = "1.3.0"
+version = "1.3.1"
 dependencies = [
  "reqwest",
  "serde",
@@ -3981,7 +3981,7 @@ dependencies = [
 
 [[package]]
 name = "surco-storage"
-version = "1.3.0"
+version = "1.3.1"
 dependencies = [
  "rusqlite",
  "serde_json",
