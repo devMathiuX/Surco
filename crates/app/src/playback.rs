@@ -77,6 +77,8 @@ pub struct Active {
     pub queue: Queue,
     /// Sin fin: al acercarse al final se agregan canciones parecidas.
     pub endless: bool,
+    /// Índices (en `tracks`) de las parecidas que se agregaron solas.
+    pub auto: Vec<usize>,
 }
 
 impl Active {
@@ -93,7 +95,26 @@ impl Active {
             tracks,
             queue: Queue::new(len, start, shuffle, repeat, seed()),
             endless: false,
+            auto: Vec::new(),
         }
+    }
+
+    /// Saca de la cola las parecidas que se agregaron solas (menos la que
+    /// suena). Al repetir una playlist, se repiten solo sus canciones.
+    pub fn drop_auto(&mut self) {
+        if self.auto.is_empty() {
+            return;
+        }
+        let current = self.queue.current();
+        let mut p = self.queue.order().len();
+        while p > 0 {
+            p -= 1;
+            let i = self.queue.order()[p];
+            if Some(i) != current && self.auto.contains(&i) {
+                self.queue.remove_at(p);
+            }
+        }
+        self.auto.retain(|&i| Some(i) == current);
     }
 
     pub fn current(&self) -> Option<&Track> {
@@ -445,6 +466,9 @@ impl Surco {
         };
         if let Some(a) = &mut self.active {
             a.queue.set_repeat(self.repeat);
+            if self.repeat != RepeatMode::Off && a.origin.is_some() {
+                a.drop_auto();
+            }
         }
         self.update_preload();
         self.persist_modes();
@@ -706,4 +730,65 @@ pub(crate) fn seed() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos() as u64)
         .unwrap_or(0x9E37_79B9_7F4A_7C15)
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+
+    fn track(n: usize) -> Track {
+        Track {
+            title: format!("t{n}"),
+            artists: vec!["a".into()],
+            album: None,
+            duration_ms: 0,
+            isrc: None,
+            spotify_id: Some(format!("id{n}")),
+        }
+    }
+
+    #[test]
+    fn repeat_drops_auto_added_but_keeps_manual() {
+        let mut a = Active::new(
+            Some(0),
+            (0..3).map(track).collect(),
+            1,
+            false,
+            RepeatMode::Off,
+        );
+        // Una agregada a mano y dos parecidas automáticas.
+        for (n, auto) in [(3, false), (4, true), (5, true)] {
+            a.tracks.push(track(n));
+            a.queue.push(n);
+            if auto {
+                a.auto.push(n);
+            }
+        }
+        a.queue.set_repeat(RepeatMode::All);
+        a.drop_auto();
+        assert_eq!(a.queue.order(), &[0, 1, 2, 3]);
+        assert!(a.auto.is_empty());
+        assert_eq!(a.queue.current(), Some(1));
+    }
+
+    #[test]
+    fn repeat_keeps_auto_song_that_is_playing() {
+        let mut a = Active::new(
+            Some(0),
+            (0..2).map(track).collect(),
+            0,
+            false,
+            RepeatMode::Off,
+        );
+        for n in [2, 3] {
+            a.tracks.push(track(n));
+            a.queue.push(n);
+            a.auto.push(n);
+        }
+        a.queue.jump_to_pos(2);
+        a.drop_auto();
+        assert_eq!(a.queue.order(), &[0, 1, 2]);
+        assert_eq!(a.queue.current(), Some(2));
+    }
 }

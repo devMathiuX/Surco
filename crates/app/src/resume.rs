@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use iced::Task;
 use serde::{Deserialize, Serialize};
-use surco_core::Track;
+use surco_core::{RepeatMode, Track};
 use surco_player::{Command, Source};
 
 use crate::playback::Active;
@@ -33,6 +33,9 @@ struct Saved {
     index: usize,
     #[serde(default)]
     endless: bool,
+    /// Parecidas que se agregaron solas (índices en la cola de la playlist).
+    #[serde(default)]
+    auto: Vec<usize>,
     video: String,
 }
 
@@ -85,6 +88,13 @@ impl Surco {
         }
         let mut active = Active::new(origin, tracks, saved.index, self.shuffle, self.repeat);
         active.endless = saved.endless;
+        if origin.is_some() {
+            let len = active.tracks.len();
+            active.auto = saved.auto.iter().copied().filter(|&i| i < len).collect();
+            if self.repeat != RepeatMode::Off {
+                active.drop_auto();
+            }
+        }
         self.active = Some(active);
         tracing::info!(video = %saved.video, ?at, "retomando la última canción");
         self.send(Command::LoadAt {
@@ -128,6 +138,7 @@ impl Surco {
                 tracks: a.tracks[p.tracks.len()..].to_vec(),
                 index,
                 endless: a.endless,
+                auto: a.auto.clone(),
                 video: video.clone(),
             },
             None => {
@@ -139,6 +150,7 @@ impl Surco {
                     tracks: a.tracks[start..end].to_vec(),
                     index: index - start,
                     endless: a.endless,
+                    auto: Vec::new(),
                     video: video.clone(),
                 }
             }
@@ -183,6 +195,7 @@ mod tests {
             tracks: Vec::new(),
             index: 7,
             endless: false,
+            auto: vec![3],
             video: "aqz-KE-bpKQ".into(),
         };
         let json = serde_json::to_string(&s).unwrap();

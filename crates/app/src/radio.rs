@@ -185,7 +185,8 @@ impl Surco {
         let Some(a) = &self.active else {
             return Task::none();
         };
-        let wanted = a.endless || (self.settings.autoplay && self.repeat == RepeatMode::Off);
+        // Repitiendo, se repite lo que hay: nunca se agregan parecidas.
+        let wanted = self.repeat == RepeatMode::Off && (a.endless || self.settings.autoplay);
         if !wanted || self.extending || a.upcoming(ENDLESS_AHEAD).len() >= ENDLESS_AHEAD {
             return Task::none();
         }
@@ -241,6 +242,10 @@ impl Surco {
         let Some(a) = &self.active else {
             return Task::none();
         };
+        // Se activó "repetir" mientras se buscaban: no agregar nada.
+        if self.repeat != RepeatMode::Off {
+            return Task::none();
+        }
         let known: std::collections::HashSet<String> = a
             .tracks
             .iter()
@@ -273,6 +278,7 @@ impl Surco {
             for t in added {
                 a.tracks.push(t);
                 a.queue.push(a.tracks.len() - 1);
+                a.auto.push(a.tracks.len() - 1);
             }
         }
         tracing::info!(n, "parecidas agregadas a la cola");

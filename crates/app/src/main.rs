@@ -26,6 +26,7 @@ mod resume;
 mod search;
 mod settings;
 mod settings_view;
+mod sized;
 mod skeleton;
 mod smooth;
 mod theme;
@@ -230,6 +231,8 @@ struct Surco {
     import_input: String,
     importing: bool,
     notice: Option<Notice>,
+    /// Sube con cada aviso nuevo: al vencer su tiempo se borra si sigue siendo ese.
+    notice_id: u64,
     /// `None` si no hay yt-dlp.
     resolver: Option<Arc<Resolver>>,
     /// Resoluciones por clave de canción (`surco_resolver::cache_key`).
@@ -326,6 +329,9 @@ struct Surco {
     resume: resume::ResumeState,
     /// Versión nueva disponible (o instalándose).
     update: updater::Update,
+    /// Linux: versión del `.deb` antes de instalar desde la terminal; mientras
+    /// haya una, se mira si cambió para reiniciar solo.
+    deb_before: Option<Option<String>>,
     /// Ícono en la bandeja (Windows) y la ventana escondida ahí.
     tray: Option<tray::Tray>,
     hidden: Option<window::Id>,
@@ -361,11 +367,16 @@ enum Screen {
 }
 
 /// Aviso discreto en la barra lateral.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 struct Notice {
     error: bool,
     text: String,
 }
+
+/// Segundos que se ve un aviso ("Agregada a…") antes de irse solo.
+const NOTICE_SECS: u64 = 4;
+/// Lo mismo para los errores, que conviene poder leer con calma.
+const NOTICE_ERROR_SECS: u64 = 10;
 
 type ImportResult = Result<surco_spotify::Imported, String>;
 
@@ -418,6 +429,8 @@ enum Message {
     Skip(isize),
     ToggleShuffle,
     CycleRepeat,
+    /// Venció el tiempo del aviso con ese número.
+    NoticeExpired(u64),
     Cover(String, Result<image::Handle, String>),
     /// Llegó la portada grande de un video.
     LargeCover(String, Result<image::Handle, String>),
@@ -569,6 +582,7 @@ impl Surco {
             import_input: String::new(),
             importing: false,
             notice: None,
+            notice_id: 0,
             resolver,
             resolutions: HashMap::new(),
             active: None,
@@ -624,6 +638,7 @@ impl Surco {
             warm: warm::Warm::default(),
             resume: resume::ResumeState::default(),
             update: updater::Update::default(),
+            deb_before: None,
             tray: tray::create(),
             hidden: None,
         };
@@ -660,15 +675,37 @@ impl Surco {
 
     fn update(&mut self, message: Message) -> Task<Message> {
         let before = self.page();
+        let old_notice = self.notice.clone();
         let task = self.handle(message);
         if self.page() != before {
             self.repaint = self.repaint.wrapping_add(1);
         }
+        let expire = self.expire_notice(old_notice);
         let precache = self.pump_precache();
         let endless = self.extend_endless();
         let background = self.pump_background();
         self.sync_media();
-        Task::batch([task, precache, endless, background])
+        Task::batch([task, precache, endless, background, expire])
+    }
+
+    /// Un aviso nuevo se borra solo a los pocos segundos (los errores duran más).
+    fn expire_notice(&mut self, old: Option<Notice>) -> Task<Message> {
+        let Some(n) = &self.notice else {
+            return Task::none();
+        };
+        if old.as_ref() == Some(n) {
+            return Task::none();
+        }
+        self.notice_id = self.notice_id.wrapping_add(1);
+        let id = self.notice_id;
+        let wait = if n.error {
+            NOTICE_ERROR_SECS
+        } else {
+            NOTICE_SECS
+        };
+        Task::perform(tokio::time::sleep(Duration::from_secs(wait)), move |()| {
+            Message::NoticeExpired(id)
+        })
     }
 
     fn handle(&mut self, message: Message) -> Task<Message> {
@@ -922,6 +959,11 @@ impl Surco {
             Message::RecAdd(p, i) => self.add_rec(p, i),
             Message::RecPlay(p, i) => return self.play_rec(p, i),
             Message::OpenLicenses => licenses::open(),
+            Message::NoticeExpired(id) => {
+                if id == self.notice_id {
+                    self.notice = None;
+                }
+            }
             Message::Tick => self.pulse = self.pulse.wrapping_add(1),
             Message::ListScrolled(offset, height) => {
                 let before = view::visible_rows(self.list_view, usize::MAX);
@@ -1174,6 +1216,12 @@ impl Surco {
         // Minimal no anima los esqueletos de carga: quedan quietos.
         if self.is_loading() && !theme::minimal() {
             subs.push(iced::time::every(Duration::from_millis(120)).map(|_| Message::Tick));
+        }
+        if self.deb_before.is_some() {
+            subs.push(
+                iced::time::every(updater::DEB_POLL)
+                    .map(|_| Message::Update(updater::UpdateMsg::PollDeb)),
+            );
         }
         if self.drag.is_some() {
             // Soltar el botón en cualquier lado termina el arrastre.

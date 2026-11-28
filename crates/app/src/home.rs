@@ -4,8 +4,8 @@
 use std::collections::HashMap;
 
 use iced::widget::{
-    button, column, container, image, operation, responsive, row, scrollable, text, text_input,
-    Column, Id, Space,
+    button, column, container, image, operation, row, scrollable, text, text_input, Column, Id,
+    Space,
 };
 use iced::{Alignment, Element, Length, Task};
 use surco_core::{format_duration, Track};
@@ -198,7 +198,7 @@ impl Surco {
     }
 
     pub(crate) fn view_home(&self) -> Element<'_, Message> {
-        responsive(move |size| {
+        crate::sized::responsive(move |size| {
             let two = size.width >= TWO_COLUMNS;
             let mut main = Column::new().spacing(22);
             if let Some(b) = self.view_top_banner() {

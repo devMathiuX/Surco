@@ -419,3 +419,10 @@ Medido en la Fase 2 (Linux, Xvfb, reproduciendo un m4a de 3 min por HTTP): **~23
 ## Aviso legal
 
 Surco no está afiliado, asociado ni respaldado por YouTube, Google ni Spotify. El uso de contenido de YouTube y de Spotify queda bajo responsabilidad de cada usuario y de los términos de servicio de cada plataforma. Surco no aloja ni redistribuye contenido y no guarda música de forma permanente (por eso, desde la 1.0, no hay playlists descargadas para escuchar sin conexión). yt-dlp y deno no se incluyen en los paquetes: Surco los baja de sus páginas oficiales; si algún día se empaquetan, hay que sumar sus licencias (los ejecutables de yt-dlp traen partes GPLv3+).
+
+### Detalles de la 1.3.3
+
+- **`responsive` propio (`crates/app/src/sized.rs`).** El `responsive` de iced 0.14 vuelve a llamar a la vista en cada `layout`, y deslizar una lista rehace el layout en cada cuadro. Los botones de adentro se creaban de nuevo y, como el estado de un botón (`status`) vive en el widget y se fija recién en el próximo `RedrawRequested`, se dibujaban con el estilo de "deshabilitado": el "Escuchar ahora" del inicio se oscurecía mientras se deslizaba. El nuestro arma el contenido solo cuando cambia el tamaño. Se usa en todos lados en lugar del de iced.
+- **Repetir solo la playlist.** `Active::auto` guarda los índices de las parecidas que sumó la cola sin fin (`extend_endless`). Con "repetir" prendido no se suman más, y al prenderlo en una cola que salió de una playlist se sacan con `Active::drop_auto` (menos la que suena). Lo agregado a mano queda. `auto` también se guarda en el retomar (`resume.rs`).
+- **Avisos que se van solos.** `update()` compara el aviso antes y después de cada mensaje; si cambió, programa `Message::NoticeExpired(id)` a los 4 s (10 s los errores) y solo se borra si sigue siendo ese aviso.
+- **Reinicio tras instalar el `.deb` desde la terminal.** Sin `pkexec`, Surco guarda la versión de `dpkg-query -W surco` antes de abrir la terminal y la mira cada 2 s (`UpdateMsg::PollDeb`). Cuando cambia, se cierra y abre `/usr/bin/surco`, igual que con `pkexec`.
