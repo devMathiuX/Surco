@@ -1,0 +1,39 @@
+-----BEGIN PGP SIGNED MESSAGE-----
+Hash: SHA512
+
+Architectures: amd64
+Codename: stable
+Components: main
+Date: Sat, 28 Nov 2026 08:12:48 +0000
+Description: Surco: playlists de Spotify con audio de YouTube
+Label: Surco
+Origin: Surco
+Suite: stable
+MD5Sum:
+ 4aa044583e1424da7c2c6fe861b3fa69             2574 main/binary-amd64/Packages
+ 4618c671c6c91aed82149972b9f43427              994 main/binary-amd64/Packages.gz
+SHA1:
+ e1e96dd726ad4a6f39a03c9d71a0698f409eac3d             2574 main/binary-amd64/Packages
+ edc1341835d7bca4a26395a629f5e0a9c4483181              994 main/binary-amd64/Packages.gz
+SHA256:
+ cc01ff63b3e4748ec974ed50a65318101112099ce01c33036edd1309234244f9             2574 main/binary-amd64/Packages
+ b94af86bebd369b22a84f0cfeea43b56f3b52208649f20085b773435375d0795              994 main/binary-amd64/Packages.gz
+SHA512:
+ 1dc7e610de69780bad3072b105cbcf40776c7bdcdcbd4bc64e5b2ec8ac1f56787a2a6299adf54ba3dc8dde0af54316c9a2217ba6d9fc9112baeada10370e5b3f             2574 main/binary-amd64/Packages
+ 565b2c131efaeb8524e482d7602f3235028902fd42036270145506227114965b5e392f5f6b59876308b58eefb54e962e2d44630d485df789bb15bdbb5431a222              994 main/binary-amd64/Packages.gz
+-----BEGIN PGP SIGNATURE-----
+
+iQIzBAEBCgAdFiEERh7DiX16Oj7CcGTjImKUNzwlkOAFAmsKjQAACgkQImKUNzwl
+kODNJg/9Ho73qhWCM+TQRelkhH8cBxFfBPW1K7slDBfAnZOWql9RpchUPckuDb4x
+BApmKXgiAcIkX75GbxHcNwpkc9sfN1EU/r9hQJQTcpkP8r/rca/Vbo7hG2sKth43
+7ZaAFaJjop/TNGgK94xlZqQQY92iOFa+s0I0BPIDN63V1M8ub1ocH0fRMv9yLuGw
+12NkWTmrx3/aCt53aq3Kd9ISRiewRG75v4S6kx1ldl3EivLTmQ+n+EEa2qCM8fr1
+ZkbhPn7iRFQ+rX/NYI3Zr+PHPAGMWXMDay8hDNKKgDPUHTzXstKnYy8oCm98ayko
+FQOARTVgNupQ008Ja6ymHFy3LTBfUKNad4UMisqq1V7fMdaGN043IcmQxy/00K5f
+awVM0Pjzjmz6H2Gh8a9ViZqLx5tvi0bdHP2ha1FCt0q0LkferJV17yxlCwZ1WcP1
+hCPu3gvXcoN8fde5/RHMRnZ8q4Km9iPFV+WdypDN5UDmoki1+mfiD2nOY7aofPdU
+Y2uUSMYMB6NvFIRZfwgjKnj/ckgExsYBaAAoLKPcxnKHLJEDuD8Sm2wUldB0IB7J
+mYkx741eGA8y6KuELL/o6igwOoU8lj9VPauMpFEIibJehqwyGroyh1lcojULEZWp
+pYovjJgxh+wekBIgFpC3mHQjc8qjf3Vuf55MguI9sC7WTQXQVvM=
+=WLSF
+-----END PGP SIGNATURE-----

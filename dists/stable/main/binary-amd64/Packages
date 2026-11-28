@@ -1,0 +1,60 @@
+Package: surco
+Architecture: amd64
+Version: 1.3.1-1
+Priority: optional
+Section: sound
+Maintainer: mathiux
+Installed-Size: 18979
+Depends: libasound2 (>= 1.1.0), libc6 (>= 2.35), libxkbcommon0
+Suggests: yt-dlp, deno
+Filename: pool/main/s/surco/surco_1.3.1-1_amd64.deb
+Size: 6511684
+MD5sum: 73c8621ec664faa14996c269c3c1d461
+SHA1: 0abb7dd9878c6048547cc4dffcb49360d8887d86
+SHA256: 186e04842ca866f72ea0f52f570fa255ef3c0493f023db4a0150982b257729d5
+SHA512: 04de50c02d0dc3a6bd8812ae2706d60ca3cd45e7fade7a81f7c7b2d975f3a759a18c44be874488f479271f30d384151bef82afb0bc3677d22c87d9f229a9878f
+Homepage: https://github.com/devMathiuX/Surco
+Description: Reproductor de música ultraliviano: playlists de Spotify, audio desde YouTube.
+ Importa playlists de Spotify y reproduce cada canción usando YouTube como
+ fuente de audio (vía yt-dlp). Liviano: menos de 80 MB de RAM.
+
+Package: surco
+Architecture: amd64
+Version: 1.3.2-1
+Priority: optional
+Section: sound
+Maintainer: mathiux
+Installed-Size: 18988
+Depends: libasound2 (>= 1.1.0), libc6 (>= 2.35), libxkbcommon0
+Suggests: yt-dlp, deno
+Filename: pool/main/s/surco/surco_1.3.2-1_amd64.deb
+Size: 6516496
+MD5sum: f820bfdce3852c122959d164a071a2dc
+SHA1: 3dccfe1bada57c88732de62b2aedd6ae5cd829cf
+SHA256: f7f6ba70ceea36e1ac8f2a3f663eb882bcec6e71d8f8ff2f5c87a9d84c895b88
+SHA512: acce351d19693c9f953b486cb35b09473df4173d6dd5cf99bf52f51242099a04f04b24b965bbbfba857c93f7c730b0ce839a7f3510005d012e9245b2f1f56339
+Homepage: https://github.com/devMathiuX/Surco
+Description: Reproductor de música ultraliviano: playlists de Spotify, audio desde YouTube.
+ Importa playlists de Spotify y reproduce cada canción usando YouTube como
+ fuente de audio (vía yt-dlp). Liviano: menos de 80 MB de RAM.
+
+Package: surco
+Architecture: amd64
+Version: 1.3.3-1
+Priority: optional
+Section: sound
+Maintainer: mathiux
+Installed-Size: 19005
+Depends: libasound2 (>= 1.1.0), libc6 (>= 2.35), libxkbcommon0
+Suggests: yt-dlp, deno
+Filename: pool/main/s/surco/surco_1.3.3-1_amd64.deb
+Size: 6522892
+MD5sum: fcbc6e188dd9ec1967e00dd8a9e6afa2
+SHA1: 2a3734d2dfa4c76879ec552dc09a310a2f1cf1d6
+SHA256: ee4e5806854484b3a7d370a0d4c80738843d8985ac0c920449fdcec19f6b429b
+SHA512: a1fe82449b3c944a1ddc737b68d1eb75a4f8651e955a941b3abcfef575834294394f6cb693713a18bd2a416355c4b8d35c058a16f6645b427856187edd673dc7
+Homepage: https://github.com/devMathiuX/Surco
+Description: Reproductor de música ultraliviano: playlists de Spotify, audio desde YouTube.
+ Importa playlists de Spotify y reproduce cada canción usando YouTube como
+ fuente de audio (vía yt-dlp). Liviano: menos de 80 MB de RAM.
+

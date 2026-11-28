@@ -1,0 +1,876 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Surco · Tus playlists, en tu compu</title>
+<meta name="description" content="Surco es un reproductor de música liviano, gratuito y de código abierto para Windows, macOS y Linux. Pegá el link de una playlist de Spotify o YouTube y escuchala.">
+<meta name="theme-color" content="#0d1016">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Surco · Tus playlists, en tu compu">
+<meta property="og:description" content="Reproductor de música liviano y gratuito para Windows, macOS y Linux. Pegá el link de una playlist y escuchala.">
+<meta property="og:image" content="https://devmathiux.github.io/Surco/img/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" type="image/png" href="favicon.png">
+<link rel="apple-touch-icon" href="img/icono.png">
+<style>
+:root {
+  --accent: #4c7ef3;
+  --accent-rgb: 76 126 243;
+  --on-accent: #fff;
+  --bg: #0b0d12;
+  --bg-2: #10131a;
+  --panel: #141822;
+  --line: #232a37;
+  --text: #e8ebf1;
+  --muted: #8b94a5;
+  --radius: 14px;
+  --max: 1120px;
+  color-scheme: dark;
+}
+*, *::before, *::after { box-sizing: border-box; }
+html { scroll-behavior: smooth; scroll-padding-top: 80px; }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 16px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, Ubuntu, Cantarell, "Noto Sans", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+}
+img { max-width: 100%; display: block; }
+a { color: inherit; }
+code, pre { font: 14px/1.55 ui-monospace, "Cascadia Code", "JetBrains Mono", Menlo, Consolas, monospace; }
+.wrap { max-width: var(--max); margin: 0 auto; padding: 0 20px; }
+.accent { color: var(--accent); transition: color .4s; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+/* Fondo: resplandor del acento */
+.glow {
+  position: absolute; inset: 0 0 auto 0; height: 980px; pointer-events: none; z-index: -1;
+  background:
+    radial-gradient(720px 420px at 78% 18%, rgb(var(--accent-rgb) / .22), transparent 70%),
+    radial-gradient(600px 380px at 8% 0%, rgb(var(--accent-rgb) / .10), transparent 70%);
+  transition: background .5s;
+}
+
+/* Barra superior */
+header.top {
+  position: sticky; top: 0; z-index: 10;
+  background: rgb(11 13 18 / .72);
+  backdrop-filter: blur(14px) saturate(140%);
+  -webkit-backdrop-filter: blur(14px) saturate(140%);
+  border-bottom: 1px solid transparent;
+  transition: border-color .3s;
+}
+header.top.scrolled { border-bottom-color: var(--line); }
+.top .wrap { display: flex; align-items: center; gap: 24px; height: 64px; }
+.brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 20px; text-decoration: none; letter-spacing: -.01em; }
+.brand svg { width: 32px; height: 32px; }
+.top nav { display: flex; gap: 22px; margin-left: auto; }
+.top nav a { text-decoration: none; color: var(--muted); font-size: 15px; transition: color .2s; }
+.top nav a:hover { color: var(--text); }
+.top .tools { display: flex; align-items: center; gap: 10px; }
+.lang {
+  display: flex; border: 1px solid var(--line); border-radius: 999px; padding: 2px;
+}
+.lang button {
+  background: none; border: 0; color: var(--muted); font: 600 12px/1 inherit; padding: 6px 9px; border-radius: 999px; cursor: pointer;
+}
+.lang button[aria-pressed="true"] { background: var(--panel); color: var(--text); }
+.gh { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 999px; color: var(--muted); transition: color .2s, background .2s; }
+.gh:hover { color: var(--text); background: var(--panel); }
+.gh svg { width: 20px; height: 20px; }
+@media (max-width: 760px) { .top nav { display: none; } .top .tools { margin-left: auto; } }
+
+/* Botones */
+.btn {
+  display: inline-flex; align-items: center; gap: 10px;
+  padding: 13px 22px; border-radius: 999px; border: 1px solid transparent;
+  font: 600 16px/1.2 inherit; text-decoration: none; cursor: pointer;
+  transition: transform .15s, background .3s, border-color .3s, box-shadow .3s;
+}
+.btn:active { transform: scale(.97); }
+.btn svg { width: 20px; height: 20px; flex: none; }
+.btn-primary { background: var(--accent); color: var(--on-accent); box-shadow: 0 8px 28px -8px rgb(var(--accent-rgb) / .7); }
+.btn-primary:hover { box-shadow: 0 10px 34px -6px rgb(var(--accent-rgb) / .85); }
+.btn-ghost { border-color: var(--line); color: var(--text); background: rgb(255 255 255 / .02); }
+.btn-ghost:hover { border-color: #3a4357; background: rgb(255 255 255 / .05); }
+.btn small { display: block; font-weight: 400; font-size: 12.5px; opacity: .8; margin-top: 2px; }
+
+/* Hero */
+.hero { padding: 56px 0 40px; overflow: hidden; }
+.hero .wrap { display: grid; grid-template-columns: 1fr 1.15fr; gap: 56px; align-items: center; }
+.badge {
+  display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted);
+  border: 1px solid var(--line); border-radius: 999px; padding: 5px 12px 5px 6px; text-decoration: none; background: rgb(255 255 255 / .02);
+}
+.badge b { background: rgb(var(--accent-rgb) / .16); color: var(--accent); padding: 2px 8px; border-radius: 999px; font-weight: 600; transition: color .4s, background .4s; }
+h1 {
+  font-size: clamp(40px, 6vw, 68px); line-height: 1.02; letter-spacing: -.035em; margin: 20px 0 18px; font-weight: 800;
+}
+.lead { font-size: clamp(17px, 2vw, 19.5px); color: #b4bccb; margin: 0 0 30px; max-width: 34em; }
+.cta { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+.cta-note { margin: 16px 0 0; font-size: 13.5px; color: var(--muted); }
+.cta-note a { color: var(--muted); }
+.cta-note a:hover { color: var(--text); }
+
+.stage { position: relative; }
+.vinyl {
+  position: absolute; width: 74%; aspect-ratio: 1; right: -16%; top: -18%; z-index: 0;
+  animation: spin 14s linear infinite; opacity: .9;
+  filter: drop-shadow(0 30px 60px rgb(0 0 0 / .5));
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .vinyl { animation: none; } }
+.window {
+  position: relative; z-index: 1;
+  border-radius: 12px; overflow: hidden; border: 1px solid #2a3242;
+  background: var(--bg-2);
+  box-shadow: 0 40px 80px -30px rgb(0 0 0 / .8), 0 0 0 1px rgb(255 255 255 / .03) inset;
+}
+.window .bar { display: flex; gap: 7px; padding: 10px 12px; background: #161a24; border-bottom: 1px solid #222938; }
+.window .bar i { width: 11px; height: 11px; border-radius: 50%; background: #2c3446; }
+.window img { width: 100%; height: auto; aspect-ratio: 1000 / 640; object-fit: cover; object-position: left top; }
+.shots { position: relative; }
+.shots img { transition: opacity .45s; }
+.shots img + img { position: absolute; inset: 0; }
+.shots img:not(.on) { opacity: 0; }
+
+@media (max-width: 900px) {
+  .hero { padding-top: 44px; }
+  .hero .wrap { grid-template-columns: 1fr; gap: 44px; }
+  .vinyl { width: 60%; right: -10%; top: -22%; }
+}
+
+/* Selector de temas */
+.themes { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 22px; }
+.chip {
+  display: inline-flex; align-items: center; gap: 8px; cursor: pointer;
+  border: 1px solid var(--line); background: var(--bg-2); color: var(--muted);
+  padding: 7px 14px 7px 9px; border-radius: 999px; font: 500 14px/1 inherit; transition: border-color .2s, color .2s, background .2s;
+}
+.chip:hover { color: var(--text); }
+.chip .dot { width: 14px; height: 14px; border-radius: 50%; box-shadow: 0 0 0 2px rgb(255 255 255 / .08) inset; }
+.chip[aria-pressed="true"] { color: var(--text); border-color: var(--accent); background: rgb(var(--accent-rgb) / .1); }
+
+/* Secciones */
+section { padding: 96px 0; }
+.eyebrow { color: var(--accent); font-weight: 600; font-size: 14px; letter-spacing: .08em; text-transform: uppercase; margin: 0 0 10px; transition: color .4s; }
+h2 { font-size: clamp(30px, 4vw, 44px); line-height: 1.1; letter-spacing: -.025em; margin: 0 0 14px; font-weight: 750; }
+.sub { color: var(--muted); font-size: 18px; margin: 0; max-width: 40em; }
+.head { margin-bottom: 48px; }
+.head.center { text-align: center; }
+.head.center .sub { margin: 0 auto; }
+
+/* Pasos */
+.steps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; counter-reset: step; }
+.step { position: relative; padding: 28px 24px 24px; border: 1px solid var(--line); border-radius: var(--radius); background: linear-gradient(180deg, var(--panel), var(--bg-2)); }
+.step::before {
+  counter-increment: step; content: counter(step);
+  display: grid; place-items: center; width: 34px; height: 34px; border-radius: 50%;
+  background: rgb(var(--accent-rgb) / .15); color: var(--accent); font-weight: 700; margin-bottom: 16px; transition: color .4s, background .4s;
+}
+.step h3 { margin: 0 0 6px; font-size: 18px; }
+.step p { margin: 0; color: var(--muted); font-size: 15px; }
+.paste {
+  margin-top: 14px; display: flex; align-items: center; gap: 8px; padding: 9px 12px; border-radius: 10px;
+  background: var(--bg); border: 1px solid var(--line); font-size: 13px; color: #9aa3b4; overflow: hidden; white-space: nowrap;
+}
+.paste span { overflow: hidden; text-overflow: ellipsis; }
+.paste svg { width: 16px; height: 16px; flex: none; color: #1db954; }
+@media (max-width: 800px) { .steps { grid-template-columns: minmax(0, 1fr); } }
+
+/* Funciones */
+.features { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+.feature { background: var(--bg-2); padding: 28px 26px; transition: background .2s; }
+.feature:hover { background: var(--panel); }
+.feature svg { width: 26px; height: 26px; color: var(--accent); margin-bottom: 14px; transition: color .4s; }
+.feature h3 { margin: 0 0 6px; font-size: 17px; }
+.feature p { margin: 0; color: var(--muted); font-size: 15px; }
+@media (max-width: 900px) { .features { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 560px) { .features { grid-template-columns: 1fr; } }
+
+/* Galería */
+.gallery { display: grid; grid-template-columns: repeat(2, 1fr); gap: 22px; }
+.gallery figure { margin: 0; }
+.gallery .window { transition: transform .3s, box-shadow .3s; }
+.gallery figure:hover .window { transform: translateY(-4px); }
+.gallery figcaption { margin-top: 12px; color: var(--muted); font-size: 15px; }
+.gallery figcaption b { color: var(--text); font-weight: 600; }
+@media (max-width: 760px) { .gallery { grid-template-columns: 1fr; } }
+
+/* Números */
+.stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 18px; }
+.stat { padding: 22px; border-radius: var(--radius); border: 1px solid var(--line); background: var(--bg-2); }
+.stat b { display: block; font-size: 30px; letter-spacing: -.02em; line-height: 1.1; }
+.stat span { color: var(--muted); font-size: 14.5px; }
+@media (max-width: 800px) { .stats { grid-template-columns: repeat(2, 1fr); } }
+
+/* Descargas */
+#descargar { background: linear-gradient(180deg, transparent, rgb(var(--accent-rgb) / .05) 40%, transparent); }
+.tabs { display: flex; gap: 6px; padding: 5px; background: var(--bg-2); border: 1px solid var(--line); border-radius: 999px; width: max-content; margin: 0 auto 28px; max-width: 100%; }
+.tab {
+  display: inline-flex; align-items: center; gap: 8px; border: 0; background: none; color: var(--muted); cursor: pointer;
+  padding: 10px 18px; border-radius: 999px; font: 600 15px/1 inherit; transition: background .2s, color .2s;
+}
+.tab svg { width: 18px; height: 18px; }
+.tab[aria-selected="true"] { background: var(--panel); color: var(--text); box-shadow: 0 0 0 1px var(--line) inset; }
+@media (max-width: 480px) { .tab { padding: 10px 12px; font-size: 14px; } .tab svg { display: none; } }
+.panel { max-width: 820px; margin: 0 auto; border: 1px solid var(--line); border-radius: 18px; background: var(--bg-2); padding: 30px; }
+.panel[hidden] { display: none; }
+.panel h3 { margin: 0 0 4px; font-size: 22px; }
+.panel .req { color: var(--muted); margin: 0 0 22px; font-size: 15px; }
+.files { display: grid; gap: 10px; margin-bottom: 26px; }
+.file {
+  display: flex; align-items: center; gap: 14px; padding: 14px 16px; border-radius: 12px;
+  border: 1px solid var(--line); background: var(--panel); text-decoration: none; transition: border-color .2s, background .2s, transform .15s;
+}
+.file:hover { border-color: rgb(var(--accent-rgb) / .7); }
+.file:active { transform: scale(.99); }
+.file.main { border-color: rgb(var(--accent-rgb) / .55); background: rgb(var(--accent-rgb) / .08); }
+.file .ico { width: 40px; height: 40px; border-radius: 10px; display: grid; place-items: center; background: var(--bg); flex: none; color: var(--accent); transition: color .4s; }
+.file .ico svg { width: 20px; height: 20px; }
+.file .t { flex: 1; min-width: 0; }
+.file .t b { display: block; font-weight: 600; }
+.file .t span { display: block; color: var(--muted); font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.file .sz { color: var(--muted); font-size: 13.5px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.howto { margin: 0; padding-left: 20px; color: #b4bccb; }
+.howto li { margin: 6px 0; }
+.howto li::marker { color: var(--muted); }
+.note { margin: 18px 0 0; padding: 14px 16px; border-radius: 12px; background: var(--bg); border: 1px solid var(--line); color: var(--muted); font-size: 14.5px; }
+.note b { color: var(--text); }
+.cmd { position: relative; margin: 10px 0 0; }
+.cmd pre { margin: 0; padding: 14px 54px 14px 16px; border-radius: 12px; background: var(--bg); border: 1px solid var(--line); overflow-x: auto; color: #d6dbe5; }
+.cmd pre::before { content: "$ "; color: var(--muted); }
+.copy {
+  position: absolute; right: 8px; top: 8px; width: 34px; height: 34px; border-radius: 8px; display: grid; place-items: center;
+  border: 1px solid var(--line); background: var(--panel); color: var(--muted); cursor: pointer; transition: color .2s, border-color .2s;
+}
+.copy:hover { color: var(--text); }
+.copy.ok { color: var(--accent); border-color: var(--accent); }
+.copy svg { width: 16px; height: 16px; }
+.or { display: flex; align-items: center; gap: 12px; color: var(--muted); font-size: 13px; margin: 26px 0 16px; text-transform: uppercase; letter-spacing: .08em; }
+.or::before, .or::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+.all { text-align: center; margin-top: 22px; color: var(--muted); font-size: 14.5px; }
+.all a { color: var(--muted); }
+.all a:hover { color: var(--text); }
+@media (max-width: 560px) { .panel { padding: 20px 16px; } .file .sz { display: none; } }
+
+/* Preguntas */
+.faq { max-width: 820px; margin: 0 auto; }
+.faq details { border-bottom: 1px solid var(--line); }
+.faq summary { cursor: pointer; list-style: none; padding: 20px 36px 20px 0; font-weight: 600; font-size: 17px; position: relative; }
+.faq summary::-webkit-details-marker { display: none; }
+.faq summary::after { content: ""; position: absolute; right: 6px; top: 50%; width: 10px; height: 10px; border-right: 2px solid var(--muted); border-bottom: 2px solid var(--muted); transform: translateY(-70%) rotate(45deg); transition: transform .2s; }
+.faq details[open] summary::after { transform: translateY(-30%) rotate(-135deg); }
+.faq details p { margin: 0 0 20px; color: #b4bccb; }
+
+/* Pie */
+footer { border-top: 1px solid var(--line); padding: 44px 0 56px; color: var(--muted); font-size: 14px; }
+footer .row { display: flex; flex-wrap: wrap; gap: 16px 32px; align-items: center; justify-content: space-between; margin-bottom: 22px; }
+footer .links { display: flex; flex-wrap: wrap; gap: 8px 22px; }
+footer a { color: var(--muted); text-decoration: none; }
+footer a:hover { color: var(--text); }
+footer .legal { max-width: 70em; margin: 0; line-height: 1.6; font-size: 13px; }
+
+/* Aparición al hacer scroll */
+.reveal { opacity: 0; transform: translateY(18px); transition: opacity .7s ease, transform .7s ease; }
+.reveal.in { opacity: 1; transform: none; }
+@media (prefers-reduced-motion: reduce) { .reveal { opacity: 1; transform: none; transition: none; } }
+.no-js .reveal { opacity: 1; transform: none; }
+</style>
+</head>
+<body class="no-js">
+<div class="glow" aria-hidden="true"></div>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <linearGradient id="lg-accent" x1="76" y1="76" x2="180" y2="180" gradientUnits="userSpaceOnUse">
+      <stop offset="0" class="stop-light"/><stop offset="1" class="stop-dark"/>
+    </linearGradient>
+    <linearGradient id="lg-arm" x1="196" y1="42" x2="172" y2="95" gradientUnits="userSpaceOnUse">
+      <stop offset="0" class="stop-light"/><stop offset="1" class="stop-dark"/>
+    </linearGradient>
+    <linearGradient id="lg-groove" x1="40" y1="40" x2="216" y2="216" gradientUnits="userSpaceOnUse">
+      <stop offset="0" class="stop-light" stop-opacity=".85"/><stop offset=".5" class="stop-mid" stop-opacity=".3"/><stop offset="1" class="stop-light" stop-opacity=".85"/>
+    </linearGradient>
+    <!-- Logo de Surco (mismo dibujo que icons::logo de la app) -->
+    <symbol id="logo" viewBox="0 0 256 256">
+      <circle cx="128" cy="128" r="112" fill="#10131a" stroke="#283142" stroke-width="5"/>
+      <g fill="none" stroke="url(#lg-groove)" stroke-width="2">
+        <circle cx="128" cy="128" r="96"/><circle cx="128" cy="128" r="82"/><circle cx="128" cy="128" r="68"/><circle cx="128" cy="128" r="54"/>
+      </g>
+      <circle cx="128" cy="128" r="36" fill="#141820" stroke="url(#lg-accent)" stroke-width="3.5"/>
+      <circle cx="128" cy="128" r="8" fill="#10131a" stroke="url(#lg-accent)" stroke-width="3"/>
+      <path d="M196 42 L187 77 Q185.6 82.6 182.1 85.4 L172 95" fill="none" stroke="url(#lg-arm)" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+      <rect x="0" y="0" width="19" height="10" rx="3" transform="translate(155 96) rotate(-43)" fill="#141820" class="stroke-light" stroke-width="3"/>
+      <path d="M158 106 L153 111" class="stroke-light" stroke-width="3" stroke-linecap="round"/>
+    </symbol>
+    <!-- Disco grande del hero -->
+    <symbol id="disc" viewBox="0 0 256 256">
+      <circle cx="128" cy="128" r="124" fill="#0c0e13"/>
+      <g fill="none" stroke="#1b202b" stroke-width="1">
+        <circle cx="128" cy="128" r="118"/><circle cx="128" cy="128" r="112"/><circle cx="128" cy="128" r="106"/><circle cx="128" cy="128" r="100"/>
+        <circle cx="128" cy="128" r="94"/><circle cx="128" cy="128" r="88"/><circle cx="128" cy="128" r="82"/><circle cx="128" cy="128" r="76"/>
+        <circle cx="128" cy="128" r="70"/><circle cx="128" cy="128" r="64"/><circle cx="128" cy="128" r="58"/><circle cx="128" cy="128" r="52"/>
+      </g>
+      <path d="M128 4 A124 124 0 0 1 252 128" fill="none" stroke="rgb(255 255 255 / .06)" stroke-width="60" transform="rotate(-20 128 128)" stroke-dasharray="2 6"/>
+      <circle cx="128" cy="128" r="40" fill="url(#lg-accent)" opacity=".95"/>
+      <circle cx="128" cy="128" r="40" fill="none" stroke="rgb(0 0 0 / .25)" stroke-width="10" stroke-dasharray="1 3"/>
+      <circle cx="128" cy="128" r="5" fill="#0b0d12"/>
+    </symbol>
+  </defs>
+</svg>
+
+<header class="top" id="top">
+  <div class="wrap">
+    <a class="brand" href="#"><svg aria-hidden="true"><use href="#logo"/></svg>Surco</a>
+    <nav>
+      <a href="#como" data-i18n="nav.how">Cómo funciona</a>
+      <a href="#funciones" data-i18n="nav.features">Funciones</a>
+      <a href="#temas" data-i18n="nav.themes">Temas</a>
+      <a href="#descargar" data-i18n="nav.download">Descargar</a>
+    </nav>
+    <div class="tools">
+      <div class="lang" role="group" aria-label="Idioma / Language">
+        <button type="button" data-lang="es" aria-pressed="true">ES</button>
+        <button type="button" data-lang="en" aria-pressed="false">EN</button>
+      </div>
+      <a class="gh" href="https://github.com/devMathiuX/Surco" aria-label="GitHub">
+        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5a11.5 11.5 0 0 0-3.64 22.41c.58.1.79-.25.79-.56v-2c-3.2.7-3.88-1.37-3.88-1.37-.52-1.33-1.28-1.69-1.28-1.69-1.05-.71.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.77 2.7 1.26 3.36.96.1-.75.4-1.26.73-1.55-2.55-.29-5.24-1.28-5.24-5.69 0-1.26.45-2.29 1.19-3.09-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.17 1.18a11 11 0 0 1 5.77 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.8 1.19 1.83 1.19 3.09 0 4.42-2.7 5.39-5.26 5.68.41.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .5Z"/></svg>
+      </a>
+    </div>
+  </div>
+</header>
+
+<main>
+<section class="hero">
+  <div class="wrap">
+    <div>
+      <a class="badge" id="badge" href="https://github.com/devMathiuX/Surco/releases/tag/v1.3.3"><b data-ver>1.3.3</b><span data-i18n="hero.badge">Novedades de esta versión</span></a>
+      <h1 data-i18n-html="hero.title">Tus playlists,<br><span class="accent">en tu compu.</span></h1>
+      <p class="lead" data-i18n="hero.lead">Surco es un reproductor de música liviano y gratuito. Pegá el link de una playlist de Spotify o de YouTube y escuchala al toque, sin cuentas ni suscripciones.</p>
+      <div class="cta">
+        <a class="btn btn-primary" id="dl-main" href="#descargar">
+          <span id="dl-main-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0 5-5m-5 5-5-5M5 21h14"/></svg></span>
+          <span><span id="dl-main-label" data-i18n="hero.download">Descargar gratis</span><small id="dl-main-sub" data-i18n="hero.platforms">Windows, macOS y Linux</small></span>
+        </a>
+        <a class="btn btn-ghost" href="#descargar" id="dl-other" data-i18n="hero.other">Otros sistemas</a>
+      </div>
+      <p class="cta-note" data-i18n-html="hero.note">Gratis y de <a href="https://github.com/devMathiuX/Surco">código abierto</a> (MIT). Sin publicidad.</p>
+    </div>
+    <div class="stage">
+      <svg class="vinyl" aria-hidden="true"><use href="#disc"/></svg>
+      <div class="window">
+        <div class="bar" aria-hidden="true"><i></i><i></i><i></i></div>
+        <div class="shots" id="shots">
+          <img class="on" data-theme-shot="oscuro" src="img/oscuro.webp" width="1000" height="640" alt="Surco con una playlist abierta, tema Oscuro" data-i18n-alt="alt.dark">
+          <img data-theme-shot="vidrio" src="img/vidrio.webp" width="1000" height="640" alt="Surco con el tema Vidrio" loading="lazy" data-i18n-alt="alt.glass">
+          <img data-theme-shot="brillo" src="img/brillo.webp" width="1000" height="640" alt="Surco con el tema Brillo" loading="lazy" data-i18n-alt="alt.glow">
+          <img data-theme-shot="brutal" src="img/brutal.webp" width="1000" height="640" alt="Surco con el tema Brutal" loading="lazy" data-i18n-alt="alt.brutal">
+        </div>
+      </div>
+      <div class="themes" id="temas" role="group" aria-label="Temas">
+        <button type="button" class="chip" data-theme="oscuro" data-accent="76 126 243" aria-pressed="true"><span class="dot" style="background:#4c7ef3"></span><span data-i18n="theme.dark">Oscuro</span></button>
+        <button type="button" class="chip" data-theme="vidrio" data-accent="157 178 255" data-on="#0b0d12" aria-pressed="false"><span class="dot" style="background:linear-gradient(135deg,#3aa8a0,#7b4fb0 60%,#c98a6a)"></span><span data-i18n="theme.glass">Vidrio</span></button>
+        <button type="button" class="chip" data-theme="brillo" data-accent="139 124 246" aria-pressed="false"><span class="dot" style="background:#8b7cf6;box-shadow:0 0 10px #8b7cf6"></span><span data-i18n="theme.glow">Brillo</span></button>
+        <button type="button" class="chip" data-theme="brutal" data-accent="180 242 51" data-on="#0b0d12" aria-pressed="false"><span class="dot" style="background:#b4f233;border-radius:3px"></span><span data-i18n="theme.brutal">Brutal</span></button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="como">
+  <div class="wrap">
+    <div class="head center reveal">
+      <p class="eyebrow" data-i18n="how.eyebrow">Cómo funciona</p>
+      <h2 data-i18n="how.title">De link a música en segundos</h2>
+      <p class="sub" data-i18n="how.sub">Sin crear cuentas, sin configurar nada. Abrís Surco y listo.</p>
+    </div>
+    <div class="steps">
+      <div class="step reveal">
+        <h3 data-i18n="how.1.t">Pegá el link</h3>
+        <p data-i18n="how.1.p">Copiá el link de una playlist de Spotify, YouTube o YouTube Music y pegalo en Surco. También podés importar un CSV.</p>
+        <div class="paste" aria-hidden="true"><svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="11"/><path d="M6.5 9.3c3.7-1.1 8.2-.8 11.3 1M7 12.4c3.1-.9 6.8-.6 9.5.9M7.6 15.4c2.5-.7 5.4-.5 7.6.7" stroke="#0b0d12" stroke-width="1.6" stroke-linecap="round" fill="none"/></svg><span>open.spotify.com/playlist/37i9dQZF1DX4UtSsGT1Sbe</span></div>
+      </div>
+      <div class="step reveal">
+        <h3 data-i18n="how.2.t">Surco la arma</h3>
+        <p data-i18n="how.2.p">Trae los nombres y las tapas, y busca cada canción en YouTube. Si encontró una versión equivocada, elegís otra con un clic.</p>
+      </div>
+      <div class="step reveal">
+        <h3 data-i18n="how.3.t">Dale play</h3>
+        <p data-i18n="how.3.p">Escuchá sin cortes: la próxima canción se prepara mientras suena la actual. Tus playlists quedan guardadas en tu compu.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="funciones">
+  <div class="wrap">
+    <div class="head reveal">
+      <p class="eyebrow" data-i18n="feat.eyebrow">Funciones</p>
+      <h2 data-i18n="feat.title">Todo lo que esperás de un reproductor</h2>
+      <p class="sub" data-i18n="feat.sub">Y nada de lo que sobra: sin publicidad, sin cuentas, sin rastreo.</p>
+    </div>
+    <div class="features reveal">
+      <div class="feature">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        <h3 data-i18n="feat.search.t">Buscador al instante</h3>
+        <p data-i18n="feat.search.p">Canciones, artistas y playlists de YouTube, con resultados mientras escribís.</p>
+      </div>
+      <div class="feature">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h11M4 12h11M4 18h7"/><path d="M19 15v6m-3-3h6"/></svg>
+        <h3 data-i18n="feat.lists.t">Tus playlists</h3>
+        <p data-i18n="feat.lists.p">Creá las tuyas, sumá canciones desde cualquier lado y ordenalas arrastrando.</p>
+      </div>
+      <div class="feature">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="2"/><path d="M16.2 7.8a6 6 0 0 1 0 8.4M7.8 16.2a6 6 0 0 1 0-8.4M19 5a10 10 0 0 1 0 14M5 19A10 10 0 0 1 5 5"/></svg>
+        <h3 data-i18n="feat.radio.t">Radio y música sin fin</h3>
+        <p data-i18n="feat.radio.p">Armá una radio con canciones parecidas, o dejá que la cola se llene sola.</p>
+      </div>
+      <div class="feature">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l2.6 5.6L20 9.3l-4 4 1 5.7-5-2.8-5 2.8 1-5.7-4-4 5.4-.7z"/></svg>
+        <h3 data-i18n="feat.recs.t">Recomendaciones</h3>
+        <p data-i18n="feat.recs.p">Al final de cada playlist, canciones parecidas para descubrir y sumar.</p>
+      </div>
+      <div class="feature">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M4 12h10M4 17h7"/><path d="m16 15 3 3-3 3"/></svg>
+        <h3 data-i18n="feat.queue.t">Cola editable</h3>
+        <p data-i18n="feat.queue.p">Agregá, quitá y reordená lo que viene, arrastrando.</p>
+      </div>
+      <div class="feature">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="6" width="19" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M8 14h8"/></svg>
+        <h3 data-i18n="feat.keys.t">Teclas multimedia</h3>
+        <p data-i18n="feat.keys.p">Funciona con las teclas del teclado y los controles de música del sistema.</p>
+      </div>
+      <div class="feature">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 0 0 18z" fill="currentColor"/></svg>
+        <h3 data-i18n="feat.themes.t">Temas a tu gusto</h3>
+        <p data-i18n="feat.themes.p">Oscuro, claro, Vidrio, Brillo, Brutal o uno propio con tus dos colores.</p>
+      </div>
+      <div class="feature">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></svg>
+        <h3 data-i18n="feat.light.t">Liviano de verdad</h3>
+        <p data-i18n="feat.light.p">Hecho en Rust: abre rápido, pesa unos 15 MB y usa poca memoria.</p>
+      </div>
+      <div class="feature">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg>
+        <h3 data-i18n="feat.update.t">Se actualiza solo</h3>
+        <p data-i18n="feat.update.p">Te avisa cuando hay versión nueva y se instala con un clic.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="capturas">
+  <div class="wrap">
+    <div class="head center reveal">
+      <p class="eyebrow" data-i18n="shots.eyebrow">Por dentro</p>
+      <h2 data-i18n="shots.title">Simple desde el primer minuto</h2>
+    </div>
+    <div class="gallery">
+      <figure class="reveal">
+        <div class="window"><div class="bar" aria-hidden="true"><i></i><i></i><i></i></div><img src="img/bienvenida.webp" width="1000" height="640" loading="lazy" alt="Pantalla de bienvenida de Surco" data-i18n-alt="alt.welcome"></div>
+        <figcaption data-i18n-html="shots.welcome"><b>Bienvenida.</b> Elegí idioma y tema, y pegá tu primera playlist.</figcaption>
+      </figure>
+      <figure class="reveal">
+        <div class="window"><div class="bar" aria-hidden="true"><i></i><i></i><i></i></div><img src="img/inicio.webp" width="1000" height="640" loading="lazy" alt="Pantalla de inicio de Surco" data-i18n-alt="alt.home"></div>
+        <figcaption data-i18n-html="shots.home"><b>Inicio.</b> Tus playlists y lo último que escuchaste, a mano.</figcaption>
+      </figure>
+      <figure class="reveal">
+        <div class="window"><div class="bar" aria-hidden="true"><i></i><i></i><i></i></div><img src="img/buscador.webp" width="1000" height="640" loading="lazy" alt="Buscador de Surco" data-i18n-alt="alt.search"></div>
+        <figcaption data-i18n-html="shots.search"><b>Buscador.</b> Encontrá cualquier canción, artista o playlist.</figcaption>
+      </figure>
+      <figure class="reveal">
+        <div class="window"><div class="bar" aria-hidden="true"><i></i><i></i><i></i></div><img src="img/ajustes.webp" width="1000" height="640" loading="lazy" alt="Ajustes de Surco" data-i18n-alt="alt.settings"></div>
+        <figcaption data-i18n-html="shots.settings"><b>Ajustes.</b> Tema, idioma, tamaño de la interfaz y más.</figcaption>
+      </figure>
+    </div>
+  </div>
+</section>
+
+<section id="numeros" style="padding-top:24px">
+  <div class="wrap">
+    <div class="stats reveal">
+      <div class="stat"><b>~15 MB</b><span data-i18n="stat.size">de descarga</span></div>
+      <div class="stat"><b>&lt; 80 MB</b><span data-i18n="stat.ram">de memoria, con playlists enormes</span></div>
+      <div class="stat"><b>3</b><span data-i18n="stat.os">sistemas: Windows, macOS y Linux</span></div>
+      <div class="stat"><b>0</b><span data-i18n="stat.zero">cuentas, publicidades y suscripciones</span></div>
+    </div>
+  </div>
+</section>
+
+<section id="descargar">
+  <div class="wrap">
+    <div class="head center reveal">
+      <p class="eyebrow" data-i18n="dl.eyebrow">Descargar</p>
+      <h2 data-i18n="dl.title">Bajá Surco gratis</h2>
+      <p class="sub"><span data-i18n="dl.version">Versión</span> <b data-ver>1.3.3</b> · <span data-i18n="dl.sub">Elegí tu sistema. Ya marcamos el que estás usando.</span></p>
+    </div>
+
+    <div class="tabs" role="tablist" aria-label="Sistema">
+      <button type="button" class="tab" role="tab" id="tab-windows" aria-controls="p-windows" aria-selected="true" data-os="windows">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 5.1 10.4 4v7.2H3zm0 13.8 7.4 1.1v-7.1H3zm8.4 1.2L21 21.5v-8.6h-9.6zM11.4 3.9v7.3H21V2.5z"/></svg>Windows</button>
+      <button type="button" class="tab" role="tab" id="tab-mac" aria-controls="p-mac" aria-selected="false" data-os="mac">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M16.4 12.6c0-2.6 2.1-3.8 2.2-3.9-1.2-1.8-3.1-2-3.7-2-1.6-.2-3.1.9-3.9.9-.8 0-2-.9-3.4-.9-1.7 0-3.3 1-4.2 2.6-1.8 3.1-.5 7.7 1.3 10.2.9 1.2 1.9 2.6 3.2 2.6 1.3-.1 1.8-.8 3.3-.8 1.6 0 2 .8 3.4.8 1.4 0 2.3-1.3 3.1-2.5 1-1.4 1.4-2.8 1.4-2.9 0 0-2.7-1-2.7-4.1M13.9 4.9c.7-.9 1.2-2 1.1-3.2-1 0-2.3.7-3 1.6-.7.8-1.3 2-1.1 3.1 1.1.1 2.3-.6 3-1.5"/></svg>macOS</button>
+      <button type="button" class="tab" role="tab" id="tab-linux" aria-controls="p-linux" aria-selected="false" data-os="linux">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12.5 2c-2.3 0-3.6 1.9-3.6 4.4 0 1.5.3 2.4-.5 3.6-1 1.5-2.8 3.4-3.1 6-.1 1 .3 1.8.8 2.2-.6.3-1.3.7-1.1 1.4.3.9 1.9.6 3.4 1.3 1.4.6 2.6.2 3-.6h2.4c.4.8 1.6 1.4 3 .6 1.4-.8 3.2-.7 3.2-1.6 0-.6-.6-1-1.1-1.3.5-.5.9-1.4.7-2.4-.4-2.4-2.1-4.2-3-5.6-.8-1.2-.6-2.2-.6-3.6C16 3.9 14.8 2 12.5 2m-1.3 3.8c.5 0 .8.6.8 1.3 0 .3-.1.5-.2.7l-.6-.2c.1-.1.1-.3.1-.5 0-.4-.2-.6-.4-.6s-.4.3-.4.7v.2l-.5-.2v-.1c0-.7.5-1.3 1.2-1.3m2.6 0c.7 0 1.1.6 1.1 1.3 0 .2 0 .3-.1.5l-.3-.1h-.2c.1-.1.1-.3.1-.4 0-.4-.3-.7-.6-.7s-.6.3-.6.7v.2l-.5-.2c0-.8.5-1.3 1.1-1.3m-1.4 2.6c.6 0 1.4.3 2.2.6.4.1.6.4.5.7-.1.4-.4.5-.9.8-.5.3-1 .7-1.8.7s-1.2-.4-1.6-.7c-.2-.2-.4-.3-.6-.4-.4-.2-.4-.5-.2-.8.1-.2.4-.3.7-.5.6-.3 1-.4 1.7-.4"/></svg>Linux</button>
+    </div>
+
+    <!-- Windows -->
+    <div class="panel" role="tabpanel" id="p-windows" aria-labelledby="tab-windows">
+      <h3>Windows</h3>
+      <p class="req" data-i18n="dl.win.req">Windows 10 u 11, 64 bits.</p>
+      <div class="files">
+        <a class="file main" data-asset="setup" href="https://github.com/devMathiuX/Surco/releases/download/v1.3.3/Surco-1.3.3-windows-x64-setup.exe">
+          <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0 5-5m-5 5-5-5M5 21h14"/></svg></span>
+          <span class="t"><b data-i18n="dl.win.setup">Instalador</b><span data-name>Surco-1.3.3-windows-x64-setup.exe</span></span><span class="sz" data-size>7,2 MB</span>
+        </a>
+        <a class="file" data-asset="winzip" href="https://github.com/devMathiuX/Surco/releases/download/v1.3.3/Surco-1.3.3-windows-x64-portable.zip">
+          <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v16H4zM10 4v4h4V4M10 10h4v4h-4z"/></svg></span>
+          <span class="t"><b data-i18n="dl.win.zip">Portable, sin instalar</b><span data-name>Surco-1.3.3-windows-x64-portable.zip</span></span><span class="sz" data-size>7,3 MB</span>
+        </a>
+      </div>
+      <ol class="howto">
+        <li data-i18n="dl.win.1">Abrí el instalador. No pide permisos de administrador.</li>
+        <li data-i18n-html="dl.win.2">Si aparece <b>"Windows protegió su PC"</b>, tocá <b>Más información</b> y después <b>Ejecutar de todas formas</b>. Sale porque Surco no está firmado con un certificado pago.</li>
+        <li data-i18n="dl.win.3">Seguí los pasos. Surco queda en el menú Inicio.</li>
+      </ol>
+    </div>
+
+    <!-- macOS -->
+    <div class="panel" role="tabpanel" id="p-mac" aria-labelledby="tab-mac" hidden>
+      <h3>macOS</h3>
+      <p class="req" data-i18n="dl.mac.req">macOS 11 o más nuevo. Una sola descarga para Intel y Apple Silicon.</p>
+      <div class="files">
+        <a class="file main" data-asset="dmg" href="https://github.com/devMathiuX/Surco/releases/download/v1.3.3/Surco-1.3.3-macos-universal.dmg">
+          <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0 5-5m-5 5-5-5M5 21h14"/></svg></span>
+          <span class="t"><b data-i18n="dl.mac.dmg">Imagen de disco (.dmg)</b><span data-name>Surco-1.3.3-macos-universal.dmg</span></span><span class="sz" data-size>13,5 MB</span>
+        </a>
+        <a class="file" data-asset="maczip" href="https://github.com/devMathiuX/Surco/releases/download/v1.3.3/Surco-1.3.3-macos-universal.zip">
+          <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v16H4zM10 4v4h4V4M10 10h4v4h-4z"/></svg></span>
+          <span class="t"><b data-i18n="dl.mac.zip">App comprimida (.zip)</b><span data-name>Surco-1.3.3-macos-universal.zip</span></span><span class="sz" data-size>12,6 MB</span>
+        </a>
+      </div>
+      <ol class="howto">
+        <li data-i18n-html="dl.mac.1">Abrí el <code>.dmg</code> y arrastrá <b>Surco</b> a <b>Aplicaciones</b>.</li>
+        <li data-i18n-html="dl.mac.2">La primera vez, hacé <b>clic derecho sobre Surco › Abrir</b> y confirmá con <b>Abrir</b>. Desde la segunda vez abre normal.</li>
+        <li data-i18n="dl.mac.3">Si macOS dice que la app "está dañada", pegá esto en la Terminal y abrila de nuevo:</li>
+      </ol>
+      <div class="cmd"><pre><code>xattr -dr com.apple.quarantine /Applications/Surco.app</code></pre><button type="button" class="copy" aria-label="Copiar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg></button></div>
+    </div>
+
+    <!-- Linux -->
+    <div class="panel" role="tabpanel" id="p-linux" aria-labelledby="tab-linux" hidden>
+      <h3>Linux</h3>
+      <p class="req" data-i18n="dl.linux.req">64 bits (x86_64). Distros de 2022 o más nuevas, por ejemplo Ubuntu 22.04 o Debian 12.</p>
+      <p style="margin:0" data-i18n-html="dl.linux.apt"><b>Ubuntu, Debian, Mint, Pop!_OS:</b> instalalo con una línea y se actualiza con el resto del sistema.</p>
+      <div class="cmd"><pre><code>curl -fsSL https://devmathiux.github.io/Surco/install.sh | sudo sh</code></pre><button type="button" class="copy" aria-label="Copiar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg></button></div>
+      <p class="cta-note" data-i18n-html="dl.linux.after">Se actualiza solo con <code>sudo apt upgrade</code>. <a href="apt/">Instalación manual del repositorio</a>.</p>
+      <div class="or" data-i18n="dl.or">o bajá el archivo</div>
+      <div class="files">
+        <a class="file main" data-asset="deb" href="https://github.com/devMathiuX/Surco/releases/download/v1.3.3/surco_1.3.3-1_amd64.deb">
+          <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0 5-5m-5 5-5-5M5 21h14"/></svg></span>
+          <span class="t"><b data-i18n="dl.linux.deb">Paquete .deb (Ubuntu, Debian y derivadas)</b><span data-name>surco_1.3.3-1_amd64.deb</span></span><span class="sz" data-size>6,2 MB</span>
+        </a>
+        <a class="file" data-asset="appimage" href="https://github.com/devMathiuX/Surco/releases/download/v1.3.3/Surco-1.3.3-x86_64.AppImage">
+          <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 2 9 5v10l-9 5-9-5V7z"/><path d="M12 22V12M3 7l9 5 9-5"/></svg></span>
+          <span class="t"><b data-i18n="dl.linux.appimage">AppImage (cualquier distro)</b><span data-name>Surco-1.3.3-x86_64.AppImage</span></span><span class="sz" data-size>8,3 MB</span>
+        </a>
+        <a class="file" data-asset="targz" href="https://github.com/devMathiuX/Surco/releases/download/v1.3.3/surco-1.3.3-linux-x86_64.tar.gz">
+          <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v16H4zM10 4v4h4V4M10 10h4v4h-4z"/></svg></span>
+          <span class="t"><b data-i18n="dl.linux.targz">Portable (.tar.gz)</b><span data-name>surco-1.3.3-linux-x86_64.tar.gz</span></span><span class="sz" data-size>8,0 MB</span>
+        </a>
+      </div>
+    </div>
+
+    <p class="note" style="max-width:820px;margin:22px auto 0" data-i18n-html="dl.tools"><b>Primer arranque:</b> Surco usa dos programas gratuitos, <b>yt-dlp</b> y <b>deno</b>. Si te faltan, la app te ofrece bajarlos de sus páginas oficiales con un botón y después los mantiene al día.</p>
+    <p class="all"><a href="https://github.com/devMathiuX/Surco/releases" data-i18n="dl.all">Todas las versiones y notas de cambios</a></p>
+  </div>
+</section>
+
+<section id="preguntas" style="padding-top:40px">
+  <div class="wrap">
+    <div class="head center reveal">
+      <p class="eyebrow" data-i18n="faq.eyebrow">Preguntas</p>
+      <h2 data-i18n="faq.title">Lo que suelen preguntar</h2>
+    </div>
+    <div class="faq reveal">
+      <details>
+        <summary data-i18n="faq.1.q">¿Necesito Spotify Premium o alguna cuenta?</summary>
+        <p data-i18n="faq.1.a">No. Surco lee la lista de canciones de playlists públicas y busca cada una en YouTube. No hace falta iniciar sesión en ningún servicio.</p>
+      </details>
+      <details>
+        <summary data-i18n="faq.2.q">¿Es gratis de verdad?</summary>
+        <p data-i18n="faq.2.a">Sí. Es software libre bajo licencia MIT: sin publicidad, sin versión paga y con el código a la vista en GitHub.</p>
+      </details>
+      <details>
+        <summary data-i18n="faq.3.q">¿Guarda la música en mi compu?</summary>
+        <p data-i18n="faq.3.a">No. Surco reproduce en streaming. Precarga un poco de la próxima canción para que no haya cortes, y esa precarga se borra al cerrar la app. Lo que sí queda guardado son tus playlists, los videos que elegiste y tus ajustes.</p>
+      </details>
+      <details>
+        <summary data-i18n="faq.4.q">Windows o macOS me dicen que la app no es segura. ¿Por qué?</summary>
+        <p data-i18n="faq.4.a">Porque Surco no está firmado con un certificado pago de Microsoft o de Apple. Los pasos de la sección Descargar explican cómo abrirlo igual. El código está publicado y cada versión se compila en GitHub Actions.</p>
+      </details>
+      <details>
+        <summary data-i18n="faq.5.q">¿Cómo lo actualizo?</summary>
+        <p data-i18n="faq.5.a">Surco te avisa cuando sale una versión nueva y la instala con un clic. Si lo instalaste con apt, se actualiza junto con el resto del sistema.</p>
+      </details>
+    </div>
+  </div>
+</section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <div class="row">
+      <a class="brand" href="#"><svg aria-hidden="true"><use href="#logo"/></svg>Surco</a>
+      <div class="links">
+        <a href="https://github.com/devMathiuX/Surco">GitHub</a>
+        <a href="https://github.com/devMathiuX/Surco/releases" data-i18n="foot.releases">Versiones</a>
+        <a href="https://github.com/devMathiuX/Surco/issues" data-i18n="foot.issues">Reportar un problema</a>
+        <a href="apt/" data-i18n="foot.apt">Repositorio APT</a>
+        <a href="https://github.com/devMathiuX/Surco/blob/main/LICENSE" data-i18n="foot.license">Licencia MIT</a>
+      </div>
+    </div>
+    <p class="legal" data-i18n="foot.legal">Surco no está afiliado, asociado ni respaldado por YouTube, Google ni Spotify. YouTube, YouTube Music y Spotify son marcas de sus respectivos dueños y se nombran solo para indicar con qué servicios funciona Surco. El uso de contenido de esas plataformas queda bajo responsabilidad de cada usuario y de sus términos de servicio. Surco no aloja ni redistribuye contenido.</p>
+  </div>
+</footer>
+
+<script>
+(function () {
+  "use strict";
+  document.body.classList.remove("no-js");
+  var REPO = "devMathiuX/Surco";
+
+  /* ---------- Textos en inglés (el HTML trae el español) ---------- */
+  var EN = {
+    "nav.how": "How it works", "nav.features": "Features", "nav.themes": "Themes", "nav.download": "Download",
+    "hero.badge": "What's new in this version",
+    "hero.title": "Your playlists,<br><span class=\"accent\">on your computer.</span>",
+    "hero.lead": "Surco is a light, free music player. Paste a Spotify or YouTube playlist link and start listening right away, no accounts or subscriptions.",
+    "hero.download": "Download for free", "hero.platforms": "Windows, macOS and Linux", "hero.other": "Other systems",
+    "hero.note": "Free and <a href=\"https://github.com/devMathiuX/Surco\">open source</a> (MIT). No ads.",
+    "theme.dark": "Dark", "theme.glass": "Glass", "theme.glow": "Glow", "theme.brutal": "Brutal",
+    "alt.dark": "Surco with a playlist open, Dark theme", "alt.glass": "Surco with the Glass theme", "alt.glow": "Surco with the Glow theme", "alt.brutal": "Surco with the Brutal theme",
+    "alt.welcome": "Surco welcome screen", "alt.home": "Surco home screen", "alt.search": "Surco search", "alt.settings": "Surco settings",
+    "how.eyebrow": "How it works", "how.title": "From link to music in seconds", "how.sub": "No sign-ups, nothing to configure. Open Surco and you're set.",
+    "how.1.t": "Paste the link", "how.1.p": "Copy a Spotify, YouTube or YouTube Music playlist link and paste it into Surco. You can also import a CSV.",
+    "how.2.t": "Surco builds it", "how.2.p": "It brings in titles and covers and finds each song on YouTube. If it picked the wrong version, choose another in one click.",
+    "how.3.t": "Hit play", "how.3.p": "Gapless listening: the next song gets ready while the current one plays. Your playlists stay saved on your computer.",
+    "feat.eyebrow": "Features", "feat.title": "Everything you expect from a player", "feat.sub": "And nothing you don't: no ads, no accounts, no tracking.",
+    "feat.search.t": "Instant search", "feat.search.p": "YouTube songs, artists and playlists, with results as you type.",
+    "feat.lists.t": "Your playlists", "feat.lists.p": "Make your own, add songs from anywhere and reorder them by dragging.",
+    "feat.radio.t": "Radio and endless music", "feat.radio.p": "Start a radio of similar songs, or let the queue fill itself.",
+    "feat.recs.t": "Recommendations", "feat.recs.p": "At the end of every playlist, similar songs to discover and add.",
+    "feat.queue.t": "Editable queue", "feat.queue.p": "Add, remove and reorder what's coming up, by dragging.",
+    "feat.keys.t": "Media keys", "feat.keys.p": "Works with your keyboard's media keys and the system's music controls.",
+    "feat.themes.t": "Themes your way", "feat.themes.p": "Dark, light, Glass, Glow, Brutal, or your own with two colors.",
+    "feat.light.t": "Truly light", "feat.light.p": "Built in Rust: opens fast, weighs about 15 MB and uses little memory.",
+    "feat.update.t": "Updates itself", "feat.update.p": "It tells you when a new version is out and installs it in one click.",
+    "shots.eyebrow": "Inside", "shots.title": "Simple from minute one",
+    "shots.welcome": "<b>Welcome.</b> Pick a language and theme, then paste your first playlist.",
+    "shots.home": "<b>Home.</b> Your playlists and what you played last, at hand.",
+    "shots.search": "<b>Search.</b> Find any song, artist or playlist.",
+    "shots.settings": "<b>Settings.</b> Theme, language, interface size and more.",
+    "stat.size": "download", "stat.ram": "of memory, even with huge playlists", "stat.os": "systems: Windows, macOS and Linux", "stat.zero": "accounts, ads and subscriptions",
+    "dl.eyebrow": "Download", "dl.title": "Get Surco for free", "dl.version": "Version", "dl.sub": "Pick your system. We've already selected the one you're using.",
+    "dl.win.req": "Windows 10 or 11, 64-bit.", "dl.win.setup": "Installer", "dl.win.zip": "Portable, no install",
+    "dl.win.1": "Open the installer. It doesn't ask for admin rights.",
+    "dl.win.2": "If <b>\"Windows protected your PC\"</b> shows up, click <b>More info</b> and then <b>Run anyway</b>. It appears because Surco isn't signed with a paid certificate.",
+    "dl.win.3": "Follow the steps. Surco shows up in the Start menu.",
+    "dl.mac.req": "macOS 11 or newer. One download for Intel and Apple Silicon.", "dl.mac.dmg": "Disk image (.dmg)", "dl.mac.zip": "Zipped app (.zip)",
+    "dl.mac.1": "Open the <code>.dmg</code> and drag <b>Surco</b> to <b>Applications</b>.",
+    "dl.mac.2": "The first time, <b>right-click Surco › Open</b> and confirm with <b>Open</b>. After that it opens normally.",
+    "dl.mac.3": "If macOS says the app \"is damaged\", paste this in Terminal and open it again:",
+    "dl.linux.req": "64-bit (x86_64). Distros from 2022 or newer, e.g. Ubuntu 22.04 or Debian 12.",
+    "dl.linux.apt": "<b>Ubuntu, Debian, Mint, Pop!_OS:</b> install it with one line and it updates with the rest of your system.",
+    "dl.linux.after": "It updates with <code>sudo apt upgrade</code>. <a href=\"apt/\">Manual repository setup</a>.",
+    "dl.or": "or download the file",
+    "dl.linux.deb": ".deb package (Ubuntu, Debian and derivatives)", "dl.linux.appimage": "AppImage (any distro)", "dl.linux.targz": "Portable (.tar.gz)",
+    "dl.tools": "<b>First launch:</b> Surco uses two free programs, <b>yt-dlp</b> and <b>deno</b>. If they're missing, the app offers to download them from their official sites with one button and keeps them up to date.",
+    "dl.all": "All versions and release notes",
+    "faq.eyebrow": "Questions", "faq.title": "Frequently asked",
+    "faq.1.q": "Do I need Spotify Premium or any account?", "faq.1.a": "No. Surco reads the song list of public playlists and finds each song on YouTube. You don't need to sign in to any service.",
+    "faq.2.q": "Is it really free?", "faq.2.a": "Yes. It's free software under the MIT license: no ads, no paid tier, and the code is open on GitHub.",
+    "faq.3.q": "Does it store music on my computer?", "faq.3.a": "No. Surco streams. It preloads a bit of the next song so there are no gaps, and that preload is wiped when you close the app. What does stay saved are your playlists, the videos you picked and your settings.",
+    "faq.4.q": "Windows or macOS says the app isn't safe. Why?", "faq.4.a": "Because Surco isn't signed with a paid Microsoft or Apple certificate. The steps in the Download section show how to open it anyway. The code is public and every version is built on GitHub Actions.",
+    "faq.5.q": "How do I update it?", "faq.5.a": "Surco tells you when a new version is out and installs it in one click. If you installed it with apt, it updates with the rest of your system.",
+    "foot.releases": "Releases", "foot.issues": "Report a problem", "foot.apt": "APT repository", "foot.license": "MIT license",
+    "foot.legal": "Surco is not affiliated with, associated with or endorsed by YouTube, Google or Spotify. YouTube, YouTube Music and Spotify are trademarks of their respective owners and are named only to indicate which services Surco works with. Use of content from those platforms is each user's responsibility and subject to their terms of service. Surco does not host or redistribute content.",
+    "os.windows": "Download for Windows", "os.mac": "Download for macOS", "os.linux": "Download for Linux",
+    "os.windows.sub": "Installer · .exe", "os.mac.sub": "Intel and Apple Silicon · .dmg", "os.linux.sub": "Ubuntu, Debian · .deb",
+    "copy": "Copy", "copied": "Copied"
+  };
+  var ES = {
+    "os.windows": "Descargar para Windows", "os.mac": "Descargar para macOS", "os.linux": "Descargar para Linux",
+    "os.windows.sub": "Instalador · .exe", "os.mac.sub": "Intel y Apple Silicon · .dmg", "os.linux.sub": "Ubuntu, Debian · .deb",
+    "copy": "Copiar", "copied": "Copiado"
+  };
+  // Guardar el español que viene en el HTML.
+  document.querySelectorAll("[data-i18n]").forEach(function (el) { ES[el.dataset.i18n] = el.textContent; });
+  document.querySelectorAll("[data-i18n-html]").forEach(function (el) { ES[el.dataset.i18nHtml] = el.innerHTML; });
+  document.querySelectorAll("[data-i18n-alt]").forEach(function (el) { ES[el.dataset.i18nAlt] = el.alt; });
+
+  var lang = "es";
+  function t(key) { return (lang === "en" ? EN : ES)[key] || ES[key] || ""; }
+  function store(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
+  function load(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+
+  function setLang(l) {
+    lang = l === "en" ? "en" : "es";
+    document.documentElement.lang = lang;
+    document.querySelectorAll("[data-i18n]").forEach(function (el) { el.textContent = t(el.dataset.i18n); });
+    document.querySelectorAll("[data-i18n-html]").forEach(function (el) { el.innerHTML = t(el.dataset.i18nHtml); });
+    document.querySelectorAll("[data-i18n-alt]").forEach(function (el) { el.alt = t(el.dataset.i18nAlt); });
+    document.querySelectorAll(".lang button").forEach(function (b) { b.setAttribute("aria-pressed", String(b.dataset.lang === lang)); });
+    document.querySelectorAll(".copy").forEach(function (b) { b.setAttribute("aria-label", t("copy")); });
+    updateMainButton();
+  }
+  document.querySelectorAll(".lang button").forEach(function (b) {
+    b.addEventListener("click", function () { setLang(b.dataset.lang); store("surco-lang", lang); });
+  });
+
+  /* ---------- Sistema operativo ---------- */
+  function detectOS() {
+    var p = ((navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || "").toLowerCase();
+    var ua = navigator.userAgent.toLowerCase();
+    if (/android|iphone|ipad|ipod|mobile/.test(ua)) return null;
+    if (p.indexOf("win") === 0 || ua.indexOf("windows") >= 0) return "windows";
+    if (p.indexOf("mac") === 0 || ua.indexOf("mac os") >= 0) return "mac";
+    if (p.indexOf("linux") >= 0 || ua.indexOf("linux") >= 0 || ua.indexOf("x11") >= 0) return "linux";
+    return null;
+  }
+  var os = detectOS();
+  var MAIN_ASSET = { windows: "setup", mac: "dmg", linux: "deb" };
+
+  /* ---------- Último release ---------- */
+  var MATCH = {
+    setup: /windows-x64-setup\.exe$/i, winzip: /windows-x64-portable\.zip$/i,
+    dmg: /macos-universal\.dmg$/i, maczip: /macos-universal\.zip$/i,
+    deb: /_amd64\.deb$/i, appimage: /\.AppImage$/i, targz: /linux-x86_64\.tar\.gz$/i
+  };
+  var assets = {};
+  function fmtSize(b) { return b ? (b / 1048576).toFixed(1).replace(".", lang === "en" ? "." : ",") + " MB" : ""; }
+  function applyRelease(rel) {
+    if (!rel || !rel.assets) return;
+    var v = String(rel.tag_name || "").replace(/^v/, "");
+    if (v) document.querySelectorAll("[data-ver]").forEach(function (el) { el.textContent = v; });
+    if (rel.html_url) document.getElementById("badge").href = rel.html_url;
+    rel.assets.forEach(function (a) {
+      for (var k in MATCH) if (MATCH[k].test(a.name)) assets[k] = a;
+    });
+    document.querySelectorAll("[data-asset]").forEach(function (el) {
+      var a = assets[el.dataset.asset];
+      if (!a) return;
+      el.href = a.browser_download_url;
+      el.querySelector("[data-name]").textContent = a.name;
+      el.querySelector("[data-size]").textContent = fmtSize(a.size);
+    });
+    updateMainButton();
+  }
+  function updateMainButton() {
+    var btn = document.getElementById("dl-main");
+    if (!os) { document.getElementById("dl-other").hidden = true; return; }
+    document.getElementById("dl-main-label").textContent = t("os." + os);
+    document.getElementById("dl-main-sub").textContent = t("os." + os + ".sub");
+    var a = assets[MAIN_ASSET[os]];
+    btn.href = a ? a.browser_download_url : "#descargar";
+    document.getElementById("dl-main-icon").innerHTML = document.querySelector("#tab-" + os + " svg").outerHTML;
+    document.querySelectorAll("[data-size]").forEach(function (el) {
+      var k = el.parentNode.dataset.asset;
+      if (assets[k]) el.textContent = fmtSize(assets[k].size);
+    });
+  }
+  // release.json lo genera el workflow al publicar la página; si falta, la API de GitHub.
+  fetch("release.json", { cache: "no-cache" })
+    .then(function (r) { if (!r.ok) throw 0; return r.json(); })
+    .catch(function () {
+      return fetch("https://api.github.com/repos/" + REPO + "/releases/latest").then(function (r) { if (!r.ok) throw 0; return r.json(); });
+    })
+    .then(applyRelease)
+    .catch(function () {});
+
+  /* ---------- Pestañas de descarga ---------- */
+  var tabs = Array.prototype.slice.call(document.querySelectorAll(".tab"));
+  function selectTab(name, focus) {
+    tabs.forEach(function (tb) {
+      var on = tb.dataset.os === name;
+      tb.setAttribute("aria-selected", String(on));
+      tb.tabIndex = on ? 0 : -1;
+      document.getElementById(tb.getAttribute("aria-controls")).hidden = !on;
+      if (on && focus) tb.focus();
+    });
+  }
+  tabs.forEach(function (tb, i) {
+    tb.addEventListener("click", function () { selectTab(tb.dataset.os); });
+    tb.addEventListener("keydown", function (e) {
+      var d = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0;
+      if (d) { e.preventDefault(); selectTab(tabs[(i + d + tabs.length) % tabs.length].dataset.os, true); }
+    });
+  });
+  selectTab(os || "windows");
+
+  /* ---------- Copiar comandos ---------- */
+  document.querySelectorAll(".copy").forEach(function (b) {
+    b.addEventListener("click", function () {
+      var txt = b.parentNode.querySelector("code").textContent;
+      var done = function () {
+        b.classList.add("ok"); b.setAttribute("aria-label", t("copied"));
+        setTimeout(function () { b.classList.remove("ok"); b.setAttribute("aria-label", t("copy")); }, 1600);
+      };
+      if (navigator.clipboard) navigator.clipboard.writeText(txt).then(done, function () {});
+      else {
+        var r = document.createRange(); r.selectNodeContents(b.parentNode.querySelector("code"));
+        var s = getSelection(); s.removeAllRanges(); s.addRange(r);
+        try { document.execCommand("copy"); done(); } catch (e) {}
+      }
+    });
+  });
+
+  /* ---------- Temas: cambian la captura y el acento de la página ---------- */
+  var root = document.documentElement.style;
+  function hex(rgb) { return "#" + rgb.split(" ").map(function (n) { return (+n).toString(16).padStart(2, "0"); }).join(""); }
+  function setAccent(rgb) {
+    var c = rgb.split(" ").map(Number);
+    var light = c.map(function (x) { return Math.round(x + (255 - x) * 0.35); }).join(" ");
+    var dark = c.map(function (x) { return Math.round(x * 0.8); }).join(" ");
+    root.setProperty("--accent", hex(rgb));
+    root.setProperty("--accent-rgb", rgb);
+    document.querySelectorAll(".stop-light").forEach(function (s) { s.setAttribute("stop-color", hex(light)); });
+    document.querySelectorAll(".stop-dark").forEach(function (s) { s.setAttribute("stop-color", hex(dark)); });
+    document.querySelectorAll(".stop-mid").forEach(function (s) { s.setAttribute("stop-color", hex(rgb)); });
+    document.querySelectorAll(".stroke-light").forEach(function (s) { s.setAttribute("stroke", hex(light)); });
+  }
+  var chips = document.querySelectorAll(".chip");
+  function setTheme(chip) {
+    chips.forEach(function (c) { c.setAttribute("aria-pressed", String(c === chip)); });
+    document.querySelectorAll("[data-theme-shot]").forEach(function (img) {
+      img.classList.toggle("on", img.dataset.themeShot === chip.dataset.theme);
+    });
+    setAccent(chip.dataset.accent);
+    root.setProperty("--on-accent", chip.dataset.on || "#fff");
+  }
+  chips.forEach(function (c) { c.addEventListener("click", function () { setTheme(c); }); });
+  setAccent("76 126 243");
+
+  /* ---------- Detalles ---------- */
+  var header = document.getElementById("top");
+  addEventListener("scroll", function () { header.classList.toggle("scrolled", scrollY > 8); }, { passive: true });
+  if ("IntersectionObserver" in window) {
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (e) { if (e.isIntersecting) { e.target.classList.add("in"); io.unobserve(e.target); } });
+    }, { rootMargin: "0px 0px -8% 0px" });
+    document.querySelectorAll(".reveal").forEach(function (el) { io.observe(el); });
+  } else {
+    document.querySelectorAll(".reveal").forEach(function (el) { el.classList.add("in"); });
+  }
+
+  var saved = load("surco-lang");
+  setLang(saved || ((navigator.language || "es").toLowerCase().indexOf("es") === 0 ? "es" : "en"));
+})();
+</script>
+</body>
+</html>
