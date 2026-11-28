@@ -13,6 +13,9 @@ use crate::{theme, Message, Surco, RUNTIME};
 /// Espera antes de consultar GitHub, para no competir con el arranque.
 const CHECK_DELAY: Duration = Duration::from_secs(3);
 
+/// Cada cuánto se mira si terminó la instalación desde la terminal.
+pub const DEB_POLL: Duration = Duration::from_secs(2);
+
 /// Versión nueva a abrir cuando Surco termine de cerrarse.
 pub static RELAUNCH: Mutex<Option<PathBuf>> = Mutex::new(None);
 
@@ -42,6 +45,8 @@ pub enum UpdateMsg {
     CopyCommand,
     /// "Buscar actualizaciones" en Acerca de.
     CheckNow,
+    /// Mirar si el `.deb` instalado desde la terminal ya cambió.
+    PollDeb,
 }
 
 /// Estado de la búsqueda pedida a mano desde Acerca de.
@@ -132,17 +137,28 @@ impl Surco {
             }
             UpdateMsg::Installed(Ok(Installed::Restart { relaunch })) => {
                 tracing::info!("actualización instalada; reiniciando");
-                if let Ok(mut r) = RELAUNCH.lock() {
-                    *r = relaunch;
-                }
-                return iced::exit();
+                return restart(relaunch);
             }
             UpdateMsg::Installed(Ok(Installed::Opened)) => self.update = Update::Opened,
             UpdateMsg::Installed(Ok(Installed::Terminal { command })) => {
+                self.deb_before = Some(update::deb_version());
                 self.update = Update::Terminal(command)
             }
             UpdateMsg::Installed(Ok(Installed::Manual { command })) => {
+                self.deb_before = Some(update::deb_version());
                 self.update = Update::Manual(command)
+            }
+            // Se instaló el paquete nuevo (desde la terminal): reiniciar.
+            UpdateMsg::PollDeb => {
+                let Some(before) = &self.deb_before else {
+                    return Task::none();
+                };
+                let now = update::deb_version();
+                if now.is_some() && &now != before {
+                    tracing::info!(version = ?now, "paquete nuevo instalado; reiniciando");
+                    self.deb_before = None;
+                    return restart(Some(PathBuf::from("/usr/bin/surco")));
+                }
             }
             UpdateMsg::CopyCommand => {
                 if let Update::Terminal(c) | Update::Manual(c) = &self.update {
@@ -240,8 +256,8 @@ impl Surco {
             Update::Terminal(_) => column![
                 small(
                     tr!(
-                        "Se abrió una terminal: escribí tu contraseña ahí. Cuando termine, cerrá y abrí Surco.",
-                        "A terminal opened: type your password there. When it's done, close and reopen Surco."
+                        "Se abrió una terminal: escribí tu contraseña ahí. Cuando termine, Surco se reinicia solo.",
+                        "A terminal opened: type your password there. When it's done, Surco restarts by itself."
                     )
                     .into()
                 ),
@@ -312,6 +328,14 @@ impl Surco {
                 .center_y(Length::Fill),
         ]))
     }
+}
+
+/// Cierra Surco y, al terminar de cerrarse, abre `relaunch`.
+fn restart(relaunch: Option<PathBuf>) -> Task<Message> {
+    if let Ok(mut r) = RELAUNCH.lock() {
+        *r = relaunch;
+    }
+    iced::exit()
 }
 
 /// Abre `url` en el navegador del sistema.

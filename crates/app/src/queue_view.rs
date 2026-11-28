@@ -7,8 +7,7 @@
 //! sobre la misma fila es un clic: salta a esa canción.
 
 use iced::widget::{
-    button, column, container, mouse_area, responsive, row, scrollable, text, text_input, Column,
-    Space,
+    button, column, container, mouse_area, row, scrollable, text, text_input, Column, Space,
 };
 use iced::{mouse, Alignment, Element, Length, Task};
 use surco_core::{format_duration, Track};
@@ -238,7 +237,7 @@ impl Surco {
 
         // Las que ya sonaron, la última primero.
         let history: Vec<usize> = (0..pos.min(order.len())).rev().take(30).collect();
-        let body = responsive(move |size| {
+        let body = crate::sized::responsive(move |size| {
             let main = self.queue_main();
             if size.width < 900.0 {
                 return main;

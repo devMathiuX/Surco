@@ -1,8 +1,8 @@
 //! Barra inferior fija: portada, título, controles, progreso y volumen.
 
 use iced::widget::{
-    button, column, container, image, mouse_area, responsive, row, slider, text, tooltip,
-    vertical_slider, Space,
+    button, column, container, image, mouse_area, row, slider, text, tooltip, vertical_slider,
+    Space,
 };
 use iced::{Alignment, Element, Length, Task};
 use surco_core::{format_duration, PlayerState, RepeatMode};
@@ -192,7 +192,7 @@ impl Surco {
         );
         // Si la barra de volumen no entra, queda solo el ícono y la barra se
         // abre hacia arriba al pasar el mouse.
-        let right = responsive(move |size| {
+        let right = crate::sized::responsive(move |size| {
             let needed =
                 3.0 * ICON_SLOT + VOLUME_WIDTH + if has_change { CHANGE_SLOT } else { 0.0 };
             let compact = size.width < needed;

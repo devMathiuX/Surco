@@ -16,6 +16,7 @@ Funciona en **Linux**, **Windows** y **macOS** (Intel y Apple Silicon).
 - **Música sin fin**: si escuchás desde el buscador, Surco va sumando canciones parecidas a la cola para que nunca se termine.
 - **Radio**: armá una lista de canciones parecidas a la que está sonando.
 - **Editar la cola**: agregá, quitá y reordená canciones arrastrándolas.
+- **Mezclar y repetir**: aleatorio, repetir la playlist o repetir una canción. Al repetir una playlist suenan solo sus canciones.
 - **Elegir otro video** si Surco encontró una versión equivocada de una canción (en vivo, cover, etc.).
 - **Usar las teclas multimedia** del teclado y los controles de música del sistema.
 - **Cambiar el tema**: oscuro, verde, claro, claro rosa, **vidrio** (fondo de colores con paneles translúcidos), **brutal** (bordes duros y acento lima), **brillo** (oscuro con resplandor violeta), **minimal** (colores lisos, sin degradados ni efectos: el más liviano) o uno **personalizado** con tus dos colores.
@@ -172,6 +173,15 @@ Al abrir Surco, la última canción que escuchaste queda cargada en pausa, en el
 - **Buscar dentro de una playlist:** el buscador de arriba de la lista (Ctrl+F te lleva ahí).
 - **Recomendadas:** al final de cada playlist hay canciones parecidas. **Agregar** la suma a la playlist, un clic la escucha, y **Otras** trae más.
 
+### Mezclar y repetir
+
+Los botones a los lados de play, en la barra de abajo, cambian el orden:
+
+- **Aleatorio** (las flechas cruzadas): mezcla lo que falta sin cortar la canción que suena.
+- **Repetir** (las flechas en círculo): un clic repite la playlist entera, otro repite la canción actual (aparece un **1**) y otro lo apaga.
+
+Mientras repetís una playlist, Surco no le suma canciones parecidas: vuelve a empezar con las mismas. Si ya se habían sumado parecidas al final de la cola, al prender **Repetir** se sacan (las que agregaste vos a mano se quedan).
+
 ### La cola de reproducción
 
 Abrila con **Cola** en la barra lateral o con el botón de la lista en la barra de abajo. Ahí ves la canción actual y las que siguen:
@@ -186,11 +196,15 @@ Cuando Surco no está seguro de haber encontrado la canción correcta, la marca 
 
 ### Radio
 
-El botón de ondas de la barra de abajo arma la playlist "Radio" con unas 25 canciones parecidas a la que suena. En **Ajustes**, la opción **"Al terminar, seguir con canciones parecidas"** (prendida de entrada) arranca una radio sola cuando se termina la cola.
+El botón de ondas de la barra de abajo arma la playlist "Radio" con unas 25 canciones parecidas a la que suena. En **Ajustes**, la opción **"Al terminar, seguir con canciones parecidas"** (prendida de entrada) va sumando parecidas cuando se está por terminar la cola. Con **Repetir** prendido no suma nada.
+
+### Avisos
+
+Los avisos chicos de la barra lateral (por ejemplo "Agregada a «Mi playlist»") se van solos a los 4 segundos. Los de error duran 10, para que se puedan leer.
 
 ### Actualizaciones
 
-Al abrir Surco, si hay internet, se fija si salió una versión nueva. Si hay, aparece un aviso abajo a la izquierda con **Instalar**: baja la versión que corresponde a cómo lo instalaste (instalador o portable en Windows, AppImage, `.deb` o portable en Linux) y Surco se reinicia solo. Con el `.deb`, el sistema pide tu contraseña; si tu sistema no tiene `pkexec`, se abre una terminal para que la escribas ahí (y si tampoco hay terminal, Surco te muestra el comando para copiarlo). En macOS se abre el `.dmg` para que arrastres la app a Aplicaciones.
+Al abrir Surco, si hay internet, se fija si salió una versión nueva. Si hay, aparece un aviso en el centro con **Instalar**: baja la versión que corresponde a cómo lo instalaste (instalador o portable en Windows, AppImage, `.deb` o portable en Linux) y Surco se cierra y se vuelve a abrir solo, ya actualizado. Con el `.deb`, el sistema pide tu contraseña; si tu sistema no tiene `pkexec`, se abre una terminal para que la escribas ahí, y apenas termina de instalar Surco se reinicia solo (si tampoco hay terminal, Surco te muestra el comando para copiarlo y se reinicia cuando lo corras). En macOS se abre el `.dmg` para que arrastres la app a Aplicaciones. También podés buscar actualizaciones a mano en **Ajustes > Acerca de**.
 
 ### Bandeja de Windows
 
@@ -210,7 +224,9 @@ El engranaje de arriba a la izquierda abre los ajustes:
 
 - **Idioma:** español o inglés. De entrada, español si tu computadora está en español, e inglés si no.
 - **Tamaño de la interfaz:** de 70 % a 160 %, para agrandar o achicar todo.
-- **Tema** de colores. Con **Personalizado** elegís el fondo y el acento: tocá una muestra o escribí el color (`#1E2A3A`). Los demás colores salen solos de esos dos.
+- **Tema** de colores. Con **Personalizado** elegís el fondo y el acento con el selector de color, tocando una muestra o escribiendo el color (`#1E2A3A`). Los demás colores salen solos de esos dos.
+- **Ecualizador** de 10 bandas, con ajustes de fábrica.
+- **Aceleración por GPU:** dibuja la ventana con la placa de video. El deslizamiento queda más fluido, pero usa más memoria (entre 50 y 100 MB más). Se aplica al volver a abrir Surco.
 - **Portadas en la lista** de canciones.
 - **Precargar canciones:** baja de antemano las próximas 5 canciones, o toda la playlist, para que no haya que esperar ni dependan de la conexión. Usa hasta 2 GB de disco y dura lo que dura la sesión: se borra al cerrar Surco. **Vaciar** la borra en el momento.
 

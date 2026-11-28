@@ -127,7 +127,7 @@ impl Surco {
         if !crate::backdrop::active() {
             return app;
         }
-        let back = iced::widget::responsive(|size| {
+        let back = crate::sized::responsive(|size| {
             let Some(t) = crate::backdrop::tiles(size.width, size.height) else {
                 return Space::new().into();
             };

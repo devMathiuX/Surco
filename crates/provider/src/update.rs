@@ -274,6 +274,18 @@ pub async fn install(
     }
 }
 
+/// Versión del paquete `surco` instalado con dpkg (`None` si no está o no
+/// hay dpkg). Sirve para ver cuándo terminó una instalación desde la terminal.
+pub fn deb_version() -> Option<String> {
+    let out = Command::new("dpkg-query")
+        .args(["-W", "-f=${Version}", "surco"])
+        .output()
+        .ok()?;
+    let v = String::from_utf8(out.stdout).ok()?;
+    let v = v.trim();
+    (out.status.success() && !v.is_empty()).then(|| v.to_owned())
+}
+
 /// Carpeta de descargas del usuario (o la temporal si no hay).
 fn downloads_dir() -> PathBuf {
     std::env::var_os("HOME")
@@ -313,8 +325,9 @@ const TERMINALS: &[(&str, &[&str])] = &[
 /// cerrarse, para que se lea el resultado. `false` si no hay ninguna.
 fn open_terminal(command: &str) -> bool {
     let script = format!(
-        "echo 'Surco: instalando la versión nueva (te va a pedir tu contraseña)'; {command}; \
-         echo; echo 'Listo. Cerrá Surco y abrilo de nuevo. Enter para cerrar.'; read _"
+        "echo 'Surco: instalando la versión nueva (te va a pedir tu contraseña)'; \
+         if {command}; then echo; echo 'Listo: Surco se reinicia solo.'; sleep 2; \
+         else echo; echo 'No se pudo instalar. Enter para cerrar.'; read _; fi"
     );
     for (name, flag) in TERMINALS {
         let Some(path) = find_in_path(name) else {

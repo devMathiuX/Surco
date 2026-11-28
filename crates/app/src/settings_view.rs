@@ -3,8 +3,8 @@
 //! en su tarjeta. Con la ventana ancha, en dos columnas.
 
 use iced::widget::{
-    button, column, container, progress_bar, responsive, row, scrollable, text, text_input,
-    toggler, Column, Space,
+    button, column, container, progress_bar, row, scrollable, text, text_input, toggler, Column,
+    Space,
 };
 use iced::{Alignment, Element, Length};
 use surco_player::eq::{Preset, BANDS, MAX_GAIN};
@@ -166,7 +166,7 @@ impl Surco {
         ]
         .align_y(Alignment::Center);
 
-        let content = responsive(move |size| {
+        let content = crate::sized::responsive(move |size| {
             let sections: Vec<Section<'_>> = self
                 .settings_sections()
                 .into_iter()
